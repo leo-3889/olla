@@ -1,4 +1,6 @@
 # Olla Configuration (default)
+# This file is used to configure the Olla server and its components for local deployment.
+# By default, it uses localhost for Ollama and LM Studio instances.
 server:
   host: "localhost"
   port: 19841
