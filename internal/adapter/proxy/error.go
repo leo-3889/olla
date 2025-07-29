@@ -11,6 +11,16 @@ import (
 	"time"
 )
 
+var (
+	// ErrNoHealthyEndpoints is returned when no healthy endpoints are available
+	ErrNoHealthyEndpoints = errors.New("no healthy endpoints available")
+)
+
+// MakeUserFriendlyError is the exported version for external packages
+func MakeUserFriendlyError(err error, duration time.Duration, errorContext string, responseTimeout time.Duration) error {
+	return makeUserFriendlyError(err, duration, errorContext, responseTimeout)
+}
+
 // makeUserFriendlyError converts technical errors into user-friendly messages with actionable guidance
 // all implementations should use this function to ensure consistent error handling with detailed context
 // for TUI output and logging.
