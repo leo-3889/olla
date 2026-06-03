@@ -202,6 +202,27 @@ When a forwarded request is assembled, headers are applied in this order:
 The `auth:` block intentionally wins over `headers:` for the credential header. This prevents
 an operator from accidentally overriding a resolved secret with a static `headers:` entry.
 
+## Request and Response Headers
+
+The precedence rules above apply to the **request** path (Olla to the backend). The **response**
+path (backend to your client) is handled separately, and the two do not interact.
+
+Client request headers pass through to the backend untouched, apart from hop-by-hop headers and
+the inbound `Authorization` / `Cookie` strip that protects against client credentials leaking
+upstream. Configuring `auth:` or `headers:` on an endpoint does not strip or rewrite anything a
+client sends.
+
+On the response path, Olla strips a small set of headers the backend returns before forwarding
+to the client:
+
+- A static list: `Authorization`, `Proxy-Authorization`, `Set-Cookie`, `X-Api-Key`, `X-Auth-Token`
+- Any header name configured in that endpoint's `auth:` or `headers:` block
+
+The second rule guards against reflection. If you inject `X-Custom-Auth: <secret>` toward a
+backend and that backend echoes the header back in its response, Olla removes it so the injected
+credential cannot leak back out. The strip is keyed on the header *name* you configured, not on
+anything the client sends, so custom client headers keep working as before.
+
 ## Fatal Startup Behaviour
 
 Auth validation runs before the HTTP server starts. The process exits immediately on:
