@@ -1500,6 +1500,34 @@ func TestCorsConfig_Validate(t *testing.T) {
 			},
 			errContains: "allow_credentials",
 		},
+		{
+			// rs/cors treats a nil slice as allow-all; reject it so the operator
+			// must be explicit rather than accidentally opening up all origins.
+			name: "nil allowed_origins when enabled is rejected",
+			cors: CorsConfig{
+				Enabled:        true,
+				AllowedOrigins: nil,
+			},
+			errContains: "allowed_origins",
+		},
+		{
+			// Same as nil — an empty slice is indistinguishable to rs/cors and
+			// equally surprising to an operator who left the key blank.
+			name: "empty allowed_origins slice when enabled is rejected",
+			cors: CorsConfig{
+				Enabled:        true,
+				AllowedOrigins: []string{},
+			},
+			errContains: "allowed_origins",
+		},
+		{
+			// Disabled CORS skips validation, so a nil origins list is fine.
+			name: "nil allowed_origins when disabled is accepted",
+			cors: CorsConfig{
+				Enabled:        false,
+				AllowedOrigins: nil,
+			},
+		},
 	}
 
 	for _, tc := range testCases {

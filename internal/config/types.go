@@ -78,6 +78,12 @@ func (c *CorsConfig) Validate() error {
 	if !c.Enabled {
 		return nil
 	}
+	// rs/cors treats an empty AllowedOrigins list as allow-all, which is the
+	// opposite of what an operator expects when they write allowed_origins: [].
+	// Require an explicit ["*"] to opt into allow-all so the intent is unambiguous.
+	if len(c.AllowedOrigins) == 0 {
+		return errors.New("cors: allowed_origins must not be empty when cors is enabled; set [\"*\"] to allow all origins explicitly")
+	}
 	if c.MaxAge < 0 {
 		return fmt.Errorf("cors.max_age must be non-negative, got %d", c.MaxAge)
 	}
