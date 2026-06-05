@@ -10,6 +10,7 @@ require (
 	github.com/mattn/go-isatty v0.0.22
 	github.com/pterm/pterm v0.12.83
 	github.com/puzpuzpuz/xsync/v4 v4.5.0
+	github.com/rs/cors v1.11.1
 	github.com/stretchr/testify v1.11.1
 	github.com/tidwall/gjson v1.19.0
 	golang.org/x/sync v0.19.0
@@ -31,7 +32,6 @@ require (
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/rs/cors v1.11.1 // indirect
 	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
