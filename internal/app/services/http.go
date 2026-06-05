@@ -10,6 +10,7 @@ import (
 	"github.com/thushan/olla/internal/util"
 
 	"github.com/thushan/olla/internal/app/handlers"
+	"github.com/thushan/olla/internal/app/middleware"
 	"github.com/thushan/olla/internal/config"
 	"github.com/thushan/olla/internal/core/domain"
 	"github.com/thushan/olla/internal/core/ports"
@@ -138,9 +139,18 @@ func (s *HTTPService) Start(ctx context.Context) error {
 	securityAdapters := s.application.GetSecurityAdapters()
 	routeRegistry.WireUpWithSecurityChain(mux, securityAdapters)
 
+	var root http.Handler = mux
+	root = applyCORS(root, s.fullConfig.Server.Cors)
+
+	if s.fullConfig.Server.Cors.Enabled {
+		s.logger.Info("CORS enabled",
+			"allowed_origins", s.fullConfig.Server.Cors.AllowedOrigins,
+			"allow_credentials", s.fullConfig.Server.Cors.AllowCredentials)
+	}
+
 	s.server = &http.Server{
 		Addr:         s.config.GetAddress(),
-		Handler:      mux,
+		Handler:      root,
 		ReadTimeout:  readTimeout,
 		WriteTimeout: writeTimeout,
 		IdleTimeout:  idleTimeout,
@@ -164,6 +174,15 @@ func (s *HTTPService) Start(ctx context.Context) error {
 
 	s.printWarnings()
 	return nil
+}
+
+// applyCORS wraps the root handler with CORS when enabled. Kept as a seam so the
+// enable/disable wiring is testable without standing up the full HTTP server.
+func applyCORS(handler http.Handler, cfg config.CorsConfig) http.Handler {
+	if !cfg.Enabled {
+		return handler
+	}
+	return middleware.NewCORS(cfg).Handler(handler)
 }
 
 func (s *HTTPService) printWarnings() {
