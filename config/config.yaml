@@ -6,6 +6,30 @@ server:
   write_timeout: 0s # for LLMs streaming, leave this as 0s
   shutdown_timeout: 10s # Graceful shutdown timeout, increase this for heavy sites that have long-running requests or lots of endpoints (30s is a good)
   request_logging: true # logs Http Requests, may be useful for debugging, noise for other use cases
+
+  # CORS (Cross-Origin Resource Sharing) for browser-based clients (OpenWebUI, dashboards).
+  # Off by default. Non-browser clients (curl, SDKs, coding agents) ignore CORS entirely,
+  # so enabling this has no effect on them. When a request carries no Origin header it is
+  # passed through untouched.
+  #
+  # Caveat: allow_credentials: true is incompatible with allowed_origins: ["*"] (the CORS
+  # spec forbids it and browsers reject the response). List explicit origins when using
+  # credentials. exposed_headers left empty auto-exposes the full X-Olla-* response header
+  # set, so browser clients can read routing/model metadata.
+  cors:
+    enabled: false                   # opt-in: only enable when browser clients need access
+    allowed_origins:
+      - "*"
+    allowed_methods:
+      - "GET"
+      - "POST"
+      - "OPTIONS"
+    allowed_headers:
+      - "*"
+    exposed_headers: []              # empty: auto-exposes the X-Olla-* headers
+    allow_credentials: false         # set true only with explicit allowed_origins (not "*")
+    max_age: 300                     # preflight cache in seconds (5 minutes)
+
   request_limits:
     max_body_size: 52428800  # 50MB
     max_header_size: 524288  # 512KB
