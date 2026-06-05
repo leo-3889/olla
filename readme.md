@@ -52,7 +52,7 @@ For Large GPU deployments, Enterprise & Data-Centre use, see [TensorFoundry Foun
 - **🔧 Self-Healing**: Automatic model discovery refresh when endpoints recover
 - **📊 Request Tracking**: Detailed response headers and [statistics](https://thushan.github.io/olla/api-reference/overview/#response-headers)
 - **⚡🔄 Anthropic Messages API**: [Passthrough for backends with native support; automatic translation for others](https://thushan.github.io/olla/integrations/api-translation/anthropic/)
-- **🛡️ Production Ready**: Rate limiting, request size limits, graceful shutdown
+- **🛡️ Production Ready**: Rate limiting, request size limits, optional CORS for browser clients, graceful shutdown
 - **⚡ High Performance**: Sub-millisecond endpoint selection with lock-free atomic stats
 - **🎯 LLM-Optimised**: Streaming-first design with optimised timeouts for long inference
 - **⚙️ High Performance**: Designed to be very [lightweight & efficient](https://thushan.github.io/olla/configuration/practices/performance/), runs on less than 50Mb RAM.

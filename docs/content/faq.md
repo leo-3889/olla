@@ -79,6 +79,14 @@ OLLA_LOG_LEVEL=debug
 
 However, some settings like `proxy.profile` must be set in the YAML configuration file.
 
+### Do I need to enable CORS?
+
+Only if a browser connects **directly** to Olla, such as a custom web dashboard or a UI configured for browser-direct connections. CORS is disabled by default.
+
+You do **not** need CORS for CLI tools, SDKs, coding agents, or server-side apps. This includes the standard OpenWebUI setup, where OpenWebUI's own backend calls Olla server-to-server (no browser `Origin` is involved). If Olla sits behind a reverse proxy (nginx, Traefik), handle CORS there instead.
+
+When you do enable it, list explicit origins rather than `*` if you also set `allow_credentials: true` (the combination is forbidden by the CORS spec and Olla rejects it at startup). See [CORS configuration](configuration/practices/security.md#cors).
+
 ## Troubleshooting
 
 ### Streaming responses arrive all at once
@@ -322,6 +330,8 @@ Olla adds several headers to responses:
 - `X-Olla-Response-Time`: Total processing time
 
 If missing, check you're using the `/olla/` prefix in your requests.
+
+If a **browser** client cannot read these headers (server-side clients are unaffected), the browser is hiding them, not Olla. Cross-origin JavaScript can only read response headers that are explicitly exposed. Enable CORS and leave `exposed_headers` empty to auto-expose the full `X-Olla-*` set. See [CORS configuration](configuration/practices/security.md#cors).
 
 ### Connection refused errors
 

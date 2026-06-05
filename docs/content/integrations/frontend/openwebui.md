@@ -16,6 +16,9 @@ export OLLAMA_BASE_URL="http://localhost:40114/olla/ollama"
 
 You can find an example integration of OpenWebUI with Olla and Ollama instances in <code>examples/ollama-openwebui</code> - see [latest in Github](https://github.com/thushan/olla/tree/main/examples/ollama-openwebui).
 
+!!! note "CORS is not required for this setup"
+    OpenWebUI's backend connects to Olla server-to-server (the `OLLAMA_BASE_URL` above is read by the OpenWebUI server, not the browser), so no browser `Origin` reaches Olla and CORS does not apply. You only need to enable [Olla's CORS support](../../configuration/practices/security.md#cors) if a browser connects **directly** to Olla, such as a UI configured for browser-direct connections.
+
 ## Overview
 
 <table>
