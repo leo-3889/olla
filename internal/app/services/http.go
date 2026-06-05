@@ -176,8 +176,15 @@ func (s *HTTPService) Start(ctx context.Context) error {
 	return nil
 }
 
-// applyCORS wraps the root handler with CORS when enabled. Kept as a seam so the
-// enable/disable wiring is testable without standing up the full HTTP server.
+// applyCORS wraps the root handler with CORS as the outermost layer so that
+// browser preflight (OPTIONS) requests are answered directly by rs/cors and
+// never reach the per-route security chain (rate-limiting, access logging).
+// This is correct CORS behaviour: preflights carry no credentials or body and
+// never reach a backend, so letting the security chain return 401/403/429 to
+// a preflight probe would break legitimate browser clients. Actual GET/POST
+// requests pass through rs/cors and then traverse the full security chain as
+// normal. Kept as a seam so the enable/disable wiring is testable without
+// standing up the full HTTP server.
 func applyCORS(handler http.Handler, cfg config.CorsConfig) http.Handler {
 	if !cfg.Enabled {
 		return handler

@@ -230,6 +230,7 @@ Always run `make ready` before committing changes.
 "github.com/puzpuzpuz/xsync/v4"  // Concurrent maps/counters
 "github.com/tidwall/gjson"       // Fast JSON parsing
 "github.com/jellydator/ttlcache" // Time-to-live cache
+"github.com/rs/cors"             // CORS middleware for browser clients
 "golang.org/x/sync"              // errgroup
 "golang.org/x/time"              // rate limiting
 ```
