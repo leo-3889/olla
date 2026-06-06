@@ -127,6 +127,35 @@ server:
       - "172.16.0.0/12"
 ```
 
+### CORS {#cors}
+
+Cross-Origin Resource Sharing settings. Only relevant when browser clients (OpenWebUI, custom dashboards) connect directly to Olla. Disabled by default; non-browser clients (curl, SDKs, coding agents) are unaffected regardless of this setting.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `cors.enabled` | bool | `false` | Enable CORS middleware |
+| `cors.allowed_origins` | []string | `["*"]` | Permitted origins. Must be explicit URLs when `allow_credentials` is `true` |
+| `cors.allowed_methods` | []string | `["GET","POST","OPTIONS"]` | Permitted HTTP methods |
+| `cors.allowed_headers` | []string | `["*"]` | Permitted request headers |
+| `cors.exposed_headers` | []string | `[]` | Response headers exposed to browser JS. Empty = auto-expose full `X-Olla-*` set |
+| `cors.allow_credentials` | bool | `false` | Send `Access-Control-Allow-Credentials: true` |
+| `cors.max_age` | int | `300` | Preflight cache duration in seconds |
+
+!!! warning "Credentials + wildcard origin"
+    Setting `allow_credentials: true` with `allowed_origins: ["*"]` is forbidden by the CORS spec. Olla rejects this combination at startup with a fatal error. List explicit origins when credentials are required.
+
+Example:
+
+```yaml
+server:
+  cors:
+    enabled: true
+    allowed_origins:
+      - "http://localhost:3000"
+    allow_credentials: true
+    max_age: 600
+```
+
 ## Proxy Configuration
 
 Proxy engine and request handling settings.

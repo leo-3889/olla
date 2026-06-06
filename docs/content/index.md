@@ -39,7 +39,7 @@ Olla works alongside API gateways like [LiteLLM](https://github.com/BerriAI/lite
 - **Intelligent Load Balancing**: Priority-based, round-robin, and least-connections strategies
 - **Health Monitoring**: Circuit breakers and automatic failover
 - **High Performance**: Connection pooling, object pooling, and lock-free statistics
-- **Security**: Built-in rate limiting and request validation
+- **Security**: Built-in rate limiting, request validation, and optional CORS for browser clients
 - **Observability**: Comprehensive metrics and request tracing
 - **API Translation**: [Anthropic Messages API](concepts/api-translation.md) support for Claude-compatible clients
 

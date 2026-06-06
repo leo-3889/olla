@@ -339,6 +339,89 @@ Any header named in an endpoint's `auth.header` field or in the `headers:` map i
 !!! note "Custom header names"
     If you configure a non-standard credential header (e.g. `auth.header: X-My-Token`), Olla strips `X-My-Token` from responses as well. No additional configuration is needed.
 
+## CORS {#cors}
+
+CORS is **disabled by default**. It is only relevant when a browser client (OpenWebUI, a custom dashboard, or a web app) connects directly to Olla. CLI tools, SDKs, and coding agents send no `Origin` header and pass through Olla completely untouched regardless of this setting.
+
+### When to enable
+
+Enable CORS when:
+
+- You are running a browser-based UI (e.g. OpenWebUI) that talks directly to Olla rather than through a reverse proxy that handles CORS itself.
+- You have a custom JavaScript dashboard consuming Olla's API.
+
+Do **not** enable CORS when all clients are server-side or CLI-based -- it adds no value and broadens the attack surface.
+
+### Permissive configuration (development)
+
+Suitable for local development where any origin should be allowed:
+
+```yaml
+server:
+  cors:
+    enabled: true
+    allowed_origins:
+      - "*"
+    allowed_methods:
+      - "GET"
+      - "POST"
+      - "OPTIONS"
+    allowed_headers:
+      - "*"
+    max_age: 300
+```
+
+### Locked-down configuration (production)
+
+Restrict to known origins and expose only the headers your UI needs to read:
+
+```yaml
+server:
+  cors:
+    enabled: true
+    allowed_origins:
+      - "https://my-dashboard.example.com"
+    allowed_methods:
+      - "GET"
+      - "POST"
+      - "OPTIONS"
+    allowed_headers:
+      - "Authorization"
+      - "Content-Type"
+    allow_credentials: true
+    max_age: 600
+```
+
+!!! warning "Credentials + wildcard origin"
+    Setting `allow_credentials: true` alongside `allowed_origins: ["*"]` is forbidden by the CORS specification. Olla rejects this combination at startup with a fatal error. Always list explicit origins when enabling credentials.
+
+### Exposed headers
+
+When `exposed_headers` is left empty (the default), Olla automatically exposes the full `X-Olla-*` response header set to browser clients:
+
+- `X-Olla-Endpoint`, `X-Olla-Model`, `X-Olla-Backend-Type`, `X-Olla-Request-ID`, `X-Olla-Response-Time`
+- Routing headers: `X-Olla-Routing-Strategy`, `X-Olla-Routing-Decision`, `X-Olla-Routing-Reason`
+- Sticky session headers: `X-Olla-Sticky-Session`, `X-Olla-Sticky-Key-Source`, `X-Olla-Session-ID`
+
+This means browser JavaScript can read routing and model metadata without any additional configuration. Override by listing specific headers in `exposed_headers` if you want to restrict what the browser can access.
+
+### Environment variable overrides
+
+| Variable | Type | Example |
+|----------|------|---------|
+| `OLLA_SERVER_CORS_ENABLED` | bool | `true` |
+| `OLLA_SERVER_CORS_ALLOWED_ORIGINS` | comma-separated | `https://app.example.com,https://admin.example.com` |
+| `OLLA_SERVER_CORS_ALLOWED_METHODS` | comma-separated | `GET,POST,OPTIONS` |
+| `OLLA_SERVER_CORS_ALLOWED_HEADERS` | comma-separated | `Authorization,Content-Type` |
+| `OLLA_SERVER_CORS_EXPOSED_HEADERS` | comma-separated | `X-Olla-Model,X-Olla-Endpoint` |
+| `OLLA_SERVER_CORS_ALLOW_CREDENTIALS` | bool | `true` |
+| `OLLA_SERVER_CORS_MAX_AGE` | int (seconds) | `600` |
+
+!!! note "No spaces in comma-separated values"
+    Env var lists use commas with no surrounding spaces: `https://a.com,https://b.com` not `https://a.com, https://b.com`.
+
+See [Configuration Reference](../reference.md#cors) for the full field reference.
+
 ## Secrets Resolution
 
 Credential values in `auth:` and `headers:` blocks support two forms:
@@ -454,6 +537,7 @@ Production deployment checklist:
 - [ ] Implement log rotation
 - [ ] Set up alerting
 - [ ] Document security procedures
+- [ ] Enable CORS only if browser clients connect directly; use explicit origins in production
 
 ## Incident Response
 

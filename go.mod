@@ -10,6 +10,7 @@ require (
 	github.com/mattn/go-isatty v0.0.22
 	github.com/pterm/pterm v0.12.83
 	github.com/puzpuzpuz/xsync/v4 v4.5.0
+	github.com/rs/cors v1.11.1
 	github.com/stretchr/testify v1.11.1
 	github.com/tidwall/gjson v1.19.0
 	golang.org/x/sync v0.19.0
