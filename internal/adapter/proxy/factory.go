@@ -47,8 +47,12 @@ func NewFactory(statsCollector ports.StatsCollector, metricsExtractor ports.Metr
 		sherpaConfig.ReadTimeout = config.GetReadTimeout()
 		sherpaConfig.StreamBufferSize = config.GetStreamBufferSize()
 		sherpaConfig.Profile = config.GetProxyProfile()
-		if tlsCfg, ok := config.(interface{ GetTLSHandshakeTimeout() time.Duration }); ok {
+		if tlsCfg, ok := config.(interface {
+			GetTLSHandshakeTimeout() time.Duration
+			GetResponseHeaderTimeout() time.Duration
+		}); ok {
 			sherpaConfig.TLSHandshakeTimeout = tlsCfg.GetTLSHandshakeTimeout()
+			sherpaConfig.ResponseHeaderTimeout = tlsCfg.GetResponseHeaderTimeout()
 		}
 		return sherpa.NewService(discovery, selector, sherpaConfig, collector, metricsExtractor, logger)
 	})
