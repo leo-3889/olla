@@ -184,6 +184,7 @@ proxy:
 | `connection_timeout` | duration | `30s` | Backend connection timeout |
 | `response_timeout` | duration | `10m` | Response timeout |
 | `read_timeout` | duration | `120s` | Read timeout |
+| `response_header_timeout` | duration | `30s` | Max wait for the backend's first response header. Raise it for backends that load models on demand (e.g. Lemonade), where the first request blocks until the model is resident and the 30s default would abort the cold start. |
 
 Example:
 
@@ -192,6 +193,7 @@ proxy:
   connection_timeout: 45s
   response_timeout: 0s    # Disable for streaming
   read_timeout: 0s
+  response_header_timeout: 180s  # allow slow on-demand model loads
 ```
 
 ### Retry Behaviour

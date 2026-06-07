@@ -19,12 +19,13 @@ const (
 
 func updateProxyConfiguration(config *config.Config) *proxy.Configuration {
 	return &proxy.Configuration{
-		ConnectionTimeout:   config.Proxy.ConnectionTimeout,
-		ConnectionKeepAlive: DefaultConnectionKeepAlive,
-		ResponseTimeout:     config.Proxy.ResponseTimeout,
-		ReadTimeout:         config.Proxy.ReadTimeout,
-		ProxyPrefix:         constants.ContextRoutePrefixKey,
-		StreamBufferSize:    getStreamBufferSize(config),
+		ConnectionTimeout:     config.Proxy.ConnectionTimeout,
+		ConnectionKeepAlive:   DefaultConnectionKeepAlive,
+		ResponseTimeout:       config.Proxy.ResponseTimeout,
+		ReadTimeout:           config.Proxy.ReadTimeout,
+		ResponseHeaderTimeout: config.Proxy.ResponseHeaderTimeout,
+		ProxyPrefix:           constants.ContextRoutePrefixKey,
+		StreamBufferSize:      getStreamBufferSize(config),
 	}
 }
 func getStreamBufferSize(config *config.Config) int {

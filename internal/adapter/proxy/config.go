@@ -29,11 +29,12 @@ type Configuration struct {
 	ProxyPrefix string
 	Profile     string
 
-	ConnectionTimeout   time.Duration
-	ConnectionKeepAlive time.Duration
-	ResponseTimeout     time.Duration
-	ReadTimeout         time.Duration
-	StreamBufferSize    int
+	ConnectionTimeout     time.Duration
+	ConnectionKeepAlive   time.Duration
+	ResponseTimeout       time.Duration
+	ReadTimeout           time.Duration
+	ResponseHeaderTimeout time.Duration
+	StreamBufferSize      int
 
 	// Olla-specific fields for advanced connection pooling
 	IdleConnTimeout time.Duration
@@ -80,6 +81,13 @@ func (c *Configuration) GetReadTimeout() time.Duration {
 		return DefaultReadTimeout
 	}
 	return c.ReadTimeout
+}
+
+// GetResponseHeaderTimeout returns the configured response-header timeout, or 0
+// when unset. The Olla engine applies its own default (DefaultResponseHeaderTimeout)
+// for a zero value, so the raw value is passed through here.
+func (c *Configuration) GetResponseHeaderTimeout() time.Duration {
+	return c.ResponseHeaderTimeout
 }
 
 func (c *Configuration) GetStreamBufferSize() int {

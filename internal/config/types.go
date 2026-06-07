@@ -139,17 +139,18 @@ type StickySessionConfig struct {
 
 // ProxyConfig holds proxy-specific configuration
 type ProxyConfig struct {
-	ProfileFilter     *domain.FilterConfig `yaml:"profile_filter,omitempty"`
-	Engine            string               `yaml:"engine"`
-	LoadBalancer      string               `yaml:"load_balancer"`
-	Profile           string               `yaml:"profile"`
-	StickySessions    StickySessionConfig  `yaml:"sticky_sessions"`
-	ConnectionTimeout time.Duration        `yaml:"connection_timeout"`
-	ResponseTimeout   time.Duration        `yaml:"response_timeout"`
-	ReadTimeout       time.Duration        `yaml:"read_timeout"`
-	RetryBackoff      time.Duration        `yaml:"retry_backoff"` // Deprecated: Use model_registry.routing_strategy instead. TODO: Removal: v0.1.0
-	StreamBufferSize  int                  `yaml:"stream_buffer_size"`
-	MaxRetries        int                  `yaml:"max_retries"` // Deprecated: Use model_registry.routing_strategy instead. TODO: Removal: v0.1.0
+	ProfileFilter         *domain.FilterConfig `yaml:"profile_filter,omitempty"`
+	Engine                string               `yaml:"engine"`
+	LoadBalancer          string               `yaml:"load_balancer"`
+	Profile               string               `yaml:"profile"`
+	StickySessions        StickySessionConfig  `yaml:"sticky_sessions"`
+	ConnectionTimeout     time.Duration        `yaml:"connection_timeout"`
+	ResponseTimeout       time.Duration        `yaml:"response_timeout"`
+	ReadTimeout           time.Duration        `yaml:"read_timeout"`
+	ResponseHeaderTimeout time.Duration        `yaml:"response_header_timeout"`
+	RetryBackoff          time.Duration        `yaml:"retry_backoff"` // Deprecated: Use model_registry.routing_strategy instead. TODO: Removal: v0.1.0
+	StreamBufferSize      int                  `yaml:"stream_buffer_size"`
+	MaxRetries            int                  `yaml:"max_retries"` // Deprecated: Use model_registry.routing_strategy instead. TODO: Removal: v0.1.0
 }
 
 // DiscoveryConfig holds service discovery configuration

@@ -218,7 +218,7 @@ func createOptimisedTransport(config *Configuration) *http.Transport {
 		TLSHandshakeTimeout:   DefaultTLSHandshakeTimeout,
 		DisableCompression:    true,
 		ForceAttemptHTTP2:     true,
-		ResponseHeaderTimeout: proxyconfig.DefaultResponseHeaderTimeout,
+		ResponseHeaderTimeout: config.GetResponseHeaderTimeout(),
 		// Olla targets local inference backends; outbound proxy env vars are not
 		// honoured here because they would route credentialled requests through an
 		// intermediary on plain HTTP. Health probes (no credentials) keep the proxy
