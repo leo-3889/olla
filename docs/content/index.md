@@ -101,7 +101,7 @@ Olla provides detailed response headers for observability:
 |--------|-------------|
 | `X-Olla-Endpoint` | Backend endpoint name |
 | `X-Olla-Model` | Model used for the request |
-| `X-Olla-Backend-Type` | Backend type (ollama/openai/openai-compatible/lm-studio/llamacpp/vllm/sglang/lemonade/lmdeploy/omlx) |
+| `X-Olla-Backend-Type` | Backend type (ollama/openai/openai-compatible/lm-studio/llamacpp/vllm/sglang/lemonade/lmdeploy/docker-model-runner/omlx) |
 | `X-Olla-Request-ID` | Unique request identifier |
 | `X-Olla-Response-Time` | Total processing time |
 

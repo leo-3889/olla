@@ -167,7 +167,7 @@ curl -X POST http://localhost:40114/olla/omlx/v1/chat/completions \
 
 When `"stream": true`:
 
-```
+```text
 data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","created":1705334400,"model":"Qwen2.5-7B-Instruct-4bit","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
 
 data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","created":1705334400,"model":"Qwen2.5-7B-Instruct-4bit","choices":[{"index":0,"delta":{"content":"MLX"},"finish_reason":null}]}

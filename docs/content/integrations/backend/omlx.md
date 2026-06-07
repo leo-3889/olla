@@ -203,7 +203,7 @@ The following endpoints are supported by the oMLX integration profile:
   </tr>
   <tr>
     <td><code>/v1/messages/count_tokens</code></td>
-    <td>Anthropic token count (forwarded path; see note above)</td>
+    <td>Anthropic token count -- forwarded to oMLX via this prefix; the <code>/olla/anthropic</code> route uses Olla's local estimator (<code>token_count: false</code>)</td>
   </tr>
   <tr>
     <td><code>/v1/responses</code></td>

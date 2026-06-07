@@ -178,4 +178,53 @@ func TestOpenAIParser_Parse(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to parse OpenAI-compatible response")
 	})
+
+	t.Run("owned_by is mapped to Publisher", func(t *testing.T) {
+		t.Parallel()
+
+		response := `{
+			"object": "list",
+			"data": [
+				{
+					"id": "mlx-community/Llama-3.2-3B-Instruct-4bit",
+					"object": "model",
+					"owned_by": "omlx"
+				}
+			]
+		}`
+
+		models, err := parser.Parse([]byte(response))
+		require.NoError(t, err)
+		require.Len(t, models, 1)
+
+		m := models[0]
+		require.NotNil(t, m.Details)
+		require.NotNil(t, m.Details.Publisher)
+		assert.Equal(t, "omlx", *m.Details.Publisher)
+	})
+
+	t.Run("empty owned_by does not set Publisher", func(t *testing.T) {
+		t.Parallel()
+
+		response := `{
+			"object": "list",
+			"data": [
+				{
+					"id": "some-model",
+					"object": "model",
+					"owned_by": ""
+				}
+			]
+		}`
+
+		models, err := parser.Parse([]byte(response))
+		require.NoError(t, err)
+		require.Len(t, models, 1)
+
+		// empty string must not produce a Details entry or a Publisher pointer
+		m := models[0]
+		if m.Details != nil {
+			assert.Nil(t, m.Details.Publisher)
+		}
+	})
 }

@@ -245,6 +245,10 @@ func (p *openAIParser) Parse(data []byte) ([]*domain.ModelInfo, error) {
 				details.MaxContextLength = model.MaxModelLen
 			}
 
+			if model.OwnedBy != nil && *model.OwnedBy != "" {
+				details.Publisher = model.OwnedBy
+			}
+
 			modelInfo.Details = details
 		}
 
