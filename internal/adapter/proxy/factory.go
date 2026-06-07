@@ -65,10 +65,12 @@ func NewFactory(statsCollector ports.StatsCollector, metricsExtractor ports.Metr
 			GetMaxIdleConns() int
 			GetIdleConnTimeout() time.Duration
 			GetMaxConnsPerHost() int
+			GetResponseHeaderTimeout() time.Duration
 		}); ok {
 			ollaConfig.MaxIdleConns = ollaSpecific.GetMaxIdleConns()
 			ollaConfig.IdleConnTimeout = ollaSpecific.GetIdleConnTimeout()
 			ollaConfig.MaxConnsPerHost = ollaSpecific.GetMaxConnsPerHost()
+			ollaConfig.ResponseHeaderTimeout = ollaSpecific.GetResponseHeaderTimeout()
 		} else {
 			// fallback option with defaults
 			ollaConfig.MaxIdleConns = 200

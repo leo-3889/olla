@@ -171,12 +171,13 @@ func (s *ProxyServiceWrapper) Dependencies() []string {
 // for Olla engine).
 func (s *ProxyServiceWrapper) createProxyConfiguration() *proxy.Configuration {
 	return &proxy.Configuration{
-		ProxyPrefix:         "",
-		ConnectionTimeout:   s.config.ConnectionTimeout,
-		ConnectionKeepAlive: 30 * time.Second,
-		ResponseTimeout:     s.config.ResponseTimeout,
-		ReadTimeout:         s.config.ReadTimeout,
-		StreamBufferSize:    s.config.StreamBufferSize,
+		ProxyPrefix:           "",
+		ConnectionTimeout:     s.config.ConnectionTimeout,
+		ConnectionKeepAlive:   30 * time.Second,
+		ResponseTimeout:       s.config.ResponseTimeout,
+		ReadTimeout:           s.config.ReadTimeout,
+		ResponseHeaderTimeout: s.config.ResponseHeaderTimeout,
+		StreamBufferSize:      s.config.StreamBufferSize,
 	}
 }
 

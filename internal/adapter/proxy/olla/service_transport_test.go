@@ -131,3 +131,18 @@ func TestCreateOptimisedTransport_ResponseHeaderTimeout(t *testing.T) {
 		t.Errorf("transport.ResponseHeaderTimeout = %v, want %v", transport.ResponseHeaderTimeout, want)
 	}
 }
+
+// TestCreateOptimisedTransport_ResponseHeaderTimeout_Configurable verifies the
+// transport's ResponseHeaderTimeout is driven by config when set, so cold-loading
+// backends (e.g. Lemonade loading a model on first request) can send their first
+// response header later than the 30s default without the proxy aborting with a 502.
+// The default-when-unset case is covered by TestCreateOptimisedTransport_ResponseHeaderTimeout.
+func TestCreateOptimisedTransport_ResponseHeaderTimeout_Configurable(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Configuration{}
+	cfg.ResponseHeaderTimeout = 180 * time.Second
+	if got := createOptimisedTransport(cfg).ResponseHeaderTimeout; got != 180*time.Second {
+		t.Errorf("configured ResponseHeaderTimeout: want 180s, got %v", got)
+	}
+}

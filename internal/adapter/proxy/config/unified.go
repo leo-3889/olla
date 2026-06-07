@@ -51,13 +51,26 @@ type ProxyConfig interface {
 
 // BaseProxyConfig contains common configuration fields for all proxy implementations
 type BaseProxyConfig struct {
-	ProxyPrefix         string
-	Profile             string
-	ConnectionTimeout   time.Duration
-	ConnectionKeepAlive time.Duration
-	ResponseTimeout     time.Duration
-	ReadTimeout         time.Duration
-	StreamBufferSize    int
+	ProxyPrefix           string
+	Profile               string
+	ConnectionTimeout     time.Duration
+	ConnectionKeepAlive   time.Duration
+	ResponseTimeout       time.Duration
+	ReadTimeout           time.Duration
+	ResponseHeaderTimeout time.Duration
+	StreamBufferSize      int
+}
+
+// GetResponseHeaderTimeout returns the maximum time the transport waits for a
+// backend's first response header, defaulting to DefaultResponseHeaderTimeout.
+// Raise it for backends that load models on demand (e.g. Lemonade), where the
+// first request blocks until the model is resident and the 30s default would
+// abort a legitimate cold start.
+func (c *BaseProxyConfig) GetResponseHeaderTimeout() time.Duration {
+	if c.ResponseHeaderTimeout == 0 {
+		return DefaultResponseHeaderTimeout
+	}
+	return c.ResponseHeaderTimeout
 }
 
 // GetProxyProfile returns the proxy profile, defaulting to "auto" if not set
