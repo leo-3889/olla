@@ -95,7 +95,7 @@ func NewService(
 		MaxIdleConns:          DefaultMaxIdleConns,
 		IdleConnTimeout:       DefaultIdleConnTimeout,
 		DisableCompression:    DefaultDisableCompression,
-		TLSHandshakeTimeout:   DefaultTLSHandshakeTimeout,
+		TLSHandshakeTimeout:   configuration.GetTLSHandshakeTimeout(),
 		MaxIdleConnsPerHost:   DefaultMaxIdleConnsPerHost,
 		ResponseHeaderTimeout: DefaultResponseHeaderTimeout,
 		// Olla targets local inference backends; outbound proxy env vars are not
