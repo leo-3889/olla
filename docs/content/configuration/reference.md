@@ -69,6 +69,7 @@ server:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `read_timeout` | duration | `30s` | Time to read request |
+| `read_header_timeout` | duration | `10s` | Max time to read request headers. Protects against Slowloris attacks; unset defaults to 10s. |
 | `write_timeout` | duration | `0s` | Response write timeout (must be 0 for streaming) |
 | `idle_timeout` | duration | `0s` | Keep-alive timeout (0 = use read_timeout) |
 | `shutdown_timeout` | duration | `10s` | Graceful shutdown timeout |
@@ -78,6 +79,7 @@ Example:
 ```yaml
 server:
   read_timeout: 30s
+  read_header_timeout: 10s
   write_timeout: 0s      # Required for streaming
   idle_timeout: 120s
   shutdown_timeout: 30s
@@ -182,18 +184,22 @@ proxy:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `connection_timeout` | duration | `30s` | Backend connection timeout |
+| `connection_keep_alive` | duration | `30s` | TCP keep-alive interval for backend connections |
 | `response_timeout` | duration | `10m` | Response timeout |
 | `read_timeout` | duration | `120s` | Read timeout |
 | `response_header_timeout` | duration | `30s` | Max wait for the backend's first response header. Raise it for backends that load models on demand (e.g. Lemonade), where the first request blocks until the model is resident and the 30s default would abort the cold start. |
+| `tls_handshake_timeout` | duration | `10s` | Maximum time allowed for a TLS handshake with a backend |
 
 Example:
 
 ```yaml
 proxy:
   connection_timeout: 45s
+  connection_keep_alive: 30s
   response_timeout: 0s    # Disable for streaming
   read_timeout: 0s
   response_header_timeout: 180s  # allow slow on-demand model loads
+  tls_handshake_timeout: 10s
 ```
 
 ### Retry Behaviour
@@ -875,6 +881,7 @@ server:
   host: "localhost"
   port: 40114
   read_timeout: 30s
+  read_header_timeout: 10s
   write_timeout: 0s
   # idle_timeout: 0s  # Optional (0 = use read_timeout)
   shutdown_timeout: 10s
@@ -902,6 +909,9 @@ proxy:
   connection_timeout: 30s
   response_timeout: 10m
   read_timeout: 120s
+  response_header_timeout: 30s
+  connection_keep_alive: 30s
+  tls_handshake_timeout: 10s
   # DEPRECATED as of v0.0.16 - retry is now automatic
   # max_retries: 3
   # retry_backoff: 1s
