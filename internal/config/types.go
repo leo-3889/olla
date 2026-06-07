@@ -60,16 +60,17 @@ type CorsConfig struct {
 
 // ServerConfig holds HTTP server configuration
 type ServerConfig struct {
-	Host            string              `yaml:"host"`
-	Cors            CorsConfig          `yaml:"cors"`
-	RateLimits      ServerRateLimits    `yaml:"rate_limits"`
-	RequestLimits   ServerRequestLimits `yaml:"request_limits"`
-	Port            int                 `yaml:"port"`
-	ReadTimeout     time.Duration       `yaml:"read_timeout"`
-	WriteTimeout    time.Duration       `yaml:"write_timeout"`
-	IdleTimeout     time.Duration       `yaml:"idle_timeout"`
-	ShutdownTimeout time.Duration       `yaml:"shutdown_timeout"`
-	RequestLogging  bool                `yaml:"request_logging"`
+	Host              string              `yaml:"host"`
+	Cors              CorsConfig          `yaml:"cors"`
+	RateLimits        ServerRateLimits    `yaml:"rate_limits"`
+	RequestLimits     ServerRequestLimits `yaml:"request_limits"`
+	Port              int                 `yaml:"port"`
+	ReadTimeout       time.Duration       `yaml:"read_timeout"`
+	ReadHeaderTimeout time.Duration       `yaml:"read_header_timeout"`
+	WriteTimeout      time.Duration       `yaml:"write_timeout"`
+	IdleTimeout       time.Duration       `yaml:"idle_timeout"`
+	ShutdownTimeout   time.Duration       `yaml:"shutdown_timeout"`
+	RequestLogging    bool                `yaml:"request_logging"`
 }
 
 // Validate checks CORS configuration for spec-violating combinations that would
@@ -145,9 +146,11 @@ type ProxyConfig struct {
 	Profile               string               `yaml:"profile"`
 	StickySessions        StickySessionConfig  `yaml:"sticky_sessions"`
 	ConnectionTimeout     time.Duration        `yaml:"connection_timeout"`
+	ConnectionKeepAlive   time.Duration        `yaml:"connection_keep_alive"`
 	ResponseTimeout       time.Duration        `yaml:"response_timeout"`
 	ReadTimeout           time.Duration        `yaml:"read_timeout"`
 	ResponseHeaderTimeout time.Duration        `yaml:"response_header_timeout"`
+	TLSHandshakeTimeout   time.Duration        `yaml:"tls_handshake_timeout"`
 	RetryBackoff          time.Duration        `yaml:"retry_backoff"` // Deprecated: Use model_registry.routing_strategy instead. TODO: Removal: v0.1.0
 	StreamBufferSize      int                  `yaml:"stream_buffer_size"`
 	MaxRetries            int                  `yaml:"max_retries"` // Deprecated: Use model_registry.routing_strategy instead. TODO: Removal: v0.1.0
