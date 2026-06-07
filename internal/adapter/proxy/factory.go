@@ -47,12 +47,13 @@ func NewFactory(statsCollector ports.StatsCollector, metricsExtractor ports.Metr
 		sherpaConfig.ReadTimeout = config.GetReadTimeout()
 		sherpaConfig.StreamBufferSize = config.GetStreamBufferSize()
 		sherpaConfig.Profile = config.GetProxyProfile()
-		if tlsCfg, ok := config.(interface {
-			GetTLSHandshakeTimeout() time.Duration
-			GetResponseHeaderTimeout() time.Duration
-		}); ok {
-			sherpaConfig.TLSHandshakeTimeout = tlsCfg.GetTLSHandshakeTimeout()
-			sherpaConfig.ResponseHeaderTimeout = tlsCfg.GetResponseHeaderTimeout()
+		// Each optional getter is asserted independently so a config that supports
+		// only one timeout does not silently drop the other back to its default.
+		if rh, ok := config.(interface{ GetResponseHeaderTimeout() time.Duration }); ok {
+			sherpaConfig.ResponseHeaderTimeout = rh.GetResponseHeaderTimeout()
+		}
+		if tls, ok := config.(interface{ GetTLSHandshakeTimeout() time.Duration }); ok {
+			sherpaConfig.TLSHandshakeTimeout = tls.GetTLSHandshakeTimeout()
 		}
 		return sherpa.NewService(discovery, selector, sherpaConfig, collector, metricsExtractor, logger)
 	})
@@ -68,23 +69,30 @@ func NewFactory(statsCollector ports.StatsCollector, metricsExtractor ports.Metr
 		ollaConfig.StreamBufferSize = config.GetStreamBufferSize()
 		ollaConfig.Profile = config.GetProxyProfile()
 
+		// Pool tunables travel together and define the "is this an Olla-specific
+		// config" check, so they stay in one assertion.
 		if ollaSpecific, ok := config.(interface {
 			GetMaxIdleConns() int
 			GetIdleConnTimeout() time.Duration
 			GetMaxConnsPerHost() int
-			GetResponseHeaderTimeout() time.Duration
-			GetTLSHandshakeTimeout() time.Duration
 		}); ok {
 			ollaConfig.MaxIdleConns = ollaSpecific.GetMaxIdleConns()
 			ollaConfig.IdleConnTimeout = ollaSpecific.GetIdleConnTimeout()
 			ollaConfig.MaxConnsPerHost = ollaSpecific.GetMaxConnsPerHost()
-			ollaConfig.ResponseHeaderTimeout = ollaSpecific.GetResponseHeaderTimeout()
-			ollaConfig.TLSHandshakeTimeout = ollaSpecific.GetTLSHandshakeTimeout()
 		} else {
 			// fallback option with defaults
 			ollaConfig.MaxIdleConns = 200
 			ollaConfig.IdleConnTimeout = 90 * time.Second
 			ollaConfig.MaxConnsPerHost = 50
+		}
+
+		// Timeouts are independent of the pool tunables, so they are asserted
+		// separately to avoid one missing getter dropping the others to defaults.
+		if rh, ok := config.(interface{ GetResponseHeaderTimeout() time.Duration }); ok {
+			ollaConfig.ResponseHeaderTimeout = rh.GetResponseHeaderTimeout()
+		}
+		if tls, ok := config.(interface{ GetTLSHandshakeTimeout() time.Duration }); ok {
+			ollaConfig.TLSHandshakeTimeout = tls.GetTLSHandshakeTimeout()
 		}
 
 		return olla.NewService(discovery, selector, ollaConfig, collector, metricsExtractor, logger)
