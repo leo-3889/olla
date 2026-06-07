@@ -1570,3 +1570,52 @@ func TestConfigValidate_CorsInvalidPropagates(t *testing.T) {
 		t.Errorf("expected error to mention allow_credentials, got: %v", err)
 	}
 }
+
+// TestEnvOverrides_NewTunables verifies that the four tunables added on the
+// feature/config-tunables branch are each individually honoured by
+// applyEnvOverrides, so the docs claim (all settings support OLLA_ prefix) holds.
+// Not parallel: env vars are process-global; sequential subtests prevent bleed.
+func TestEnvOverrides_NewTunables(t *testing.T) {
+	testCases := []struct {
+		envVar  string
+		value   string
+		checkFn func(*Config) bool
+	}{
+		{
+			envVar:  "OLLA_SERVER_READ_HEADER_TIMEOUT",
+			value:   "15s",
+			checkFn: func(c *Config) bool { return c.Server.ReadHeaderTimeout == 15*time.Second },
+		},
+		{
+			envVar:  "OLLA_PROXY_CONNECTION_KEEP_ALIVE",
+			value:   "90s",
+			checkFn: func(c *Config) bool { return c.Proxy.ConnectionKeepAlive == 90*time.Second },
+		},
+		{
+			envVar:  "OLLA_PROXY_RESPONSE_HEADER_TIMEOUT",
+			value:   "180s",
+			checkFn: func(c *Config) bool { return c.Proxy.ResponseHeaderTimeout == 180*time.Second },
+		},
+		{
+			envVar:  "OLLA_PROXY_TLS_HANDSHAKE_TIMEOUT",
+			value:   "20s",
+			checkFn: func(c *Config) bool { return c.Proxy.TLSHandshakeTimeout == 20*time.Second },
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.envVar, func(t *testing.T) {
+			os.Setenv(tc.envVar, tc.value)
+			defer os.Unsetenv(tc.envVar)
+
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load failed: %v", err)
+			}
+
+			if !tc.checkFn(cfg) {
+				t.Errorf("%s=%s was not applied: got %+v", tc.envVar, tc.value, cfg.Proxy)
+			}
+		})
+	}
+}

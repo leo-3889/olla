@@ -369,6 +369,26 @@ func applyEnvOverrides(config *Config) {
 			config.Proxy.ReadTimeout = duration
 		}
 	}
+	if val := os.Getenv("OLLA_PROXY_RESPONSE_HEADER_TIMEOUT"); val != "" {
+		if duration, err := time.ParseDuration(val); err == nil {
+			config.Proxy.ResponseHeaderTimeout = duration
+		}
+	}
+	if val := os.Getenv("OLLA_PROXY_TLS_HANDSHAKE_TIMEOUT"); val != "" {
+		if duration, err := time.ParseDuration(val); err == nil {
+			config.Proxy.TLSHandshakeTimeout = duration
+		}
+	}
+	if val := os.Getenv("OLLA_PROXY_CONNECTION_KEEP_ALIVE"); val != "" {
+		if duration, err := time.ParseDuration(val); err == nil {
+			config.Proxy.ConnectionKeepAlive = duration
+		}
+	}
+	if val := os.Getenv("OLLA_SERVER_READ_HEADER_TIMEOUT"); val != "" {
+		if duration, err := time.ParseDuration(val); err == nil {
+			config.Server.ReadHeaderTimeout = duration
+		}
+	}
 	if val := os.Getenv("OLLA_PROXY_LOAD_BALANCER"); val != "" {
 		config.Proxy.LoadBalancer = val
 	}
