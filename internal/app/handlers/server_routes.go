@@ -340,6 +340,13 @@ func getStaticProviders(a *Application) map[string]staticProvider {
 				{path: "", handler: a.providerProxyHandler, description: "vLLM proxy", isProxy: true},
 			},
 		},
+		constants.ProviderTypeOMLX: {
+			prefixes: []string{constants.ProviderPrefixOMLX},
+			routes: []staticRoute{
+				{path: "v1/models", handler: a.genericProviderModelsHandler(constants.ProviderTypeOMLX, constants.ProviderTypeOpenAI), description: "oMLX models (OpenAI format)", method: "GET"},
+				{path: "", handler: a.providerProxyHandler, description: "oMLX proxy", isProxy: true},
+			},
+		},
 	}
 }
 

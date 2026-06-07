@@ -138,6 +138,25 @@ func TestProviderCompatibility(t *testing.T) {
 			providerType: "lemonade",
 			compatible:   false,
 		},
+		// oMLX provider should only accept omlx endpoints
+		{
+			name:         "omlx provider accepts omlx",
+			endpointType: "omlx",
+			providerType: "omlx",
+			compatible:   true,
+		},
+		{
+			name:         "omlx provider rejects ollama",
+			endpointType: "ollama",
+			providerType: "omlx",
+			compatible:   false,
+		},
+		{
+			name:         "omlx provider rejects vllm",
+			endpointType: "vllm",
+			providerType: "omlx",
+			compatible:   false,
+		},
 		// Unknown provider should reject everything
 		{
 			name:         "unknown provider rejects ollama",
@@ -215,6 +234,26 @@ func TestProviderCompatibility_RealFactory(t *testing.T) {
 			providerType: "openai-compatible",
 			endpointType: "openai",
 			wantCompat:   true,
+		},
+		// oMLX is OpenAI-compatible — openai provider must include it
+		{
+			name:         "openai provider accepts omlx-typed endpoint",
+			providerType: "openai",
+			endpointType: "omlx",
+			wantCompat:   true,
+		},
+		// oMLX provider stays scoped to its own endpoints
+		{
+			name:         "omlx provider accepts omlx-typed endpoint",
+			providerType: "omlx",
+			endpointType: "omlx",
+			wantCompat:   true,
+		},
+		{
+			name:         "omlx provider rejects ollama-typed endpoint",
+			providerType: "omlx",
+			endpointType: "ollama",
+			wantCompat:   false,
 		},
 		// Provider-specific routes must stay scoped.
 		{
