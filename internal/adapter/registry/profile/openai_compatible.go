@@ -8,8 +8,9 @@ type OpenAICompatibleResponse struct {
 
 // OpenAICompatibleModel represents a model in OpenAI-compatible response
 type OpenAICompatibleModel struct {
-	Created *int64  `json:"created,omitempty"`
-	OwnedBy *string `json:"owned_by,omitempty"`
-	ID      string  `json:"id"`
-	Object  string  `json:"object"`
+	Created     *int64  `json:"created,omitempty"`
+	OwnedBy     *string `json:"owned_by,omitempty"`
+	MaxModelLen *int64  `json:"max_model_len,omitempty"`
+	ID          string  `json:"id"`
+	Object      string  `json:"object"`
 }

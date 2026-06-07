@@ -23,10 +23,15 @@ api:
   # oMLX exposes /v1/messages AND /v1/messages/count_tokens natively,
   # so Anthropic-format requests can be forwarded directly without
   # the Anthropic-to-OpenAI translation layer.
+  #
+  # token_count stays false: oMLX has a native /v1/messages/count_tokens
+  # endpoint, but Olla does not yet forward to it (the token-count handler
+  # always uses the local estimator), so advertising the capability would
+  # be misleading. Flip to true once native count_tokens passthrough lands.
   anthropic_support:
     enabled: true
     messages_path: /v1/messages
-    token_count: true
+    token_count: false
 
   paths:
     # Health endpoint — dedicated path, not model-discovery
@@ -49,6 +54,9 @@ api:
 
     # OpenAI Responses API
     - /v1/responses            # 8: OpenAI Responses API
+
+    # Reranking endpoint (Cohere/Jina-compatible)
+    - /v1/rerank               # 9: reranking API
 
   model_discovery_path: /v1/models
   health_check_path: /health
@@ -89,6 +97,7 @@ path_indices:
   chat_completions: 3
   completions: 4
   embeddings: 5
+  v1_rerank: 9
 
 # Model handling
 models:
