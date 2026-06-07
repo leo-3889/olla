@@ -307,6 +307,7 @@ api:
 | llama.cpp | b4847+ | Yes | Only backend with full token counting |
 | LM Studio | v0.4.1+ | No | Desktop inference |
 | Ollama | v0.14.0+ | No | Popular local inference |
+| oMLX | -- | No | Apple Silicon (MLX) multi-model server; passthrough supported, token counting not yet forwarded |
 
 When a client sends a request to `/olla/anthropic/v1/messages` and a backend has `anthropic_support.enabled: true`, Olla will bypass format translation and forward the request directly. This is referred to as **passthrough mode** and has near-zero overhead. See [API Translation](api-translation.md#passthrough-mode) for details.
 
@@ -664,7 +665,9 @@ Don't update versions in natively supported profiles however.
 | lemonade | `lemonade` | `lemonade` | `/v1/models` |
 | llamacpp | `llamacpp` | `llamacpp`, `llama-cpp`, `llama_cpp` | None |
 | vllm | `vllm` | `vllm` | None |
+| vllm-mlx | `vllm-mlx` | `vllm-mlx` | None |
 | sglang | `sglang` | `sglang` | None |
+| omlx | `omlx` | `omlx` | None |
 | openai-compatible | `openai-compatible` (or `openai` — alias) | `openai`, `openai-compatible` | None |
 
 ### Required Fields

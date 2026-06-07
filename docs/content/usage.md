@@ -129,7 +129,7 @@ server:
 
 ## How Olla is Used
 
-Olla sits between your applications and local AI runtimes (eg. Ollama, LM Studio, vLLM etc) to:
+Olla sits between your applications and local AI runtimes (eg. Ollama, LM Studio, vLLM, oMLX etc) to:
 
 * **Unify multiple local backends** under one consistent API.
 * **Route intelligently** between models based on size, speed, and task fit.
@@ -232,7 +232,7 @@ claude
 - ✅ **Streaming**: Real-time responses with Server-Sent Events
 - ✅ **Tool Use**: Function calling and tool integration
 - ✅ **Vision**: Multi-modal image input support
-- ✅ **Local Models**: Use Ollama, LM Studio, vLLM, llama.cpp
+- ✅ **Local Models**: Use Ollama, LM Studio, vLLM, llama.cpp, oMLX
 - ✅ **Load Balancing**: Automatic failover across backends
 
 ### Integration Guides

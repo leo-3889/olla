@@ -87,6 +87,12 @@ Proxy endpoints for Lemonade SDK servers with AMD Ryzen AI support.
 - `/olla/lemonade/*` - Lemonade SDK API endpoints
 - Includes ONNX and GGUF model support with hardware acceleration
 
+### [oMLX API](omlx.md)
+Proxy endpoints for oMLX -- the multi-model Apple Silicon (MLX) inference server.
+
+- `/olla/omlx/*` - oMLX API endpoints
+- OpenAI-compatible endpoints with native Anthropic Messages API passthrough
+
 ## Translated APIs
 
 APIs that translate between different formats in real-time.
@@ -153,7 +159,7 @@ All responses include:
 | `X-Olla-Request-ID` | Unique request identifier |
 | `X-Olla-Endpoint` | Backend endpoint name |
 | `X-Olla-Model` | Model used (if applicable) |
-| `X-Olla-Backend-Type` | Provider type, examples: <br> `ollama/lm-studio/llamacpp/openai/openai-compatible/vllm/sglang/lemonade/lmdeploy` |
+| `X-Olla-Backend-Type` | Provider type, examples: <br> `ollama/lm-studio/llamacpp/openai/openai-compatible/vllm/sglang/lemonade/lmdeploy/omlx` |
 | `X-Olla-Response-Time` | Total processing time |
 | `X-Olla-Routing-Strategy` | Routing strategy used (when model routing is active) |
 | `X-Olla-Routing-Decision` | Routing decision made (routed/fallback/rejected) |

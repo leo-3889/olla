@@ -59,6 +59,7 @@ Olla's Anthropic API Translation enables Claude-compatible clients (Claude Code,
                 <li>llama.cpp</li>
                 <li>Lemonade SDK</li>
                 <li>LiteLLM</li>
+                <li>oMLX</li>
                 <li>Any OpenAI-compatible endpoint</li>
             </ul>
         </td>
