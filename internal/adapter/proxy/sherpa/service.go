@@ -95,9 +95,9 @@ func NewService(
 		MaxIdleConns:          DefaultMaxIdleConns,
 		IdleConnTimeout:       DefaultIdleConnTimeout,
 		DisableCompression:    DefaultDisableCompression,
-		TLSHandshakeTimeout:   DefaultTLSHandshakeTimeout,
+		TLSHandshakeTimeout:   configuration.GetTLSHandshakeTimeout(),
 		MaxIdleConnsPerHost:   DefaultMaxIdleConnsPerHost,
-		ResponseHeaderTimeout: DefaultResponseHeaderTimeout,
+		ResponseHeaderTimeout: configuration.GetResponseHeaderTimeout(),
 		// Olla targets local inference backends; outbound proxy env vars are not
 		// honoured here because they would route credentialled requests through an
 		// intermediary on plain HTTP. Health probes (no credentials) keep the proxy

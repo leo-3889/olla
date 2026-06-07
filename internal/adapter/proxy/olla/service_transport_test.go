@@ -146,3 +146,88 @@ func TestCreateOptimisedTransport_ResponseHeaderTimeout_Configurable(t *testing.
 		t.Errorf("configured ResponseHeaderTimeout: want 180s, got %v", got)
 	}
 }
+
+// TestCreateOptimisedTransport_ConnectionKeepAlive verifies that a configured
+// ConnectionKeepAlive value is used by the transport dialer, not silently ignored.
+// The dialer is the only place KeepAlive appears; we can only inspect it indirectly
+// through config, since net.Dialer is embedded in the closure.
+func TestCreateOptimisedTransport_ConnectionKeepAlive(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Configuration{}
+	cfg.ConnectionKeepAlive = 60 * time.Second
+
+	// Verify the getter returns the configured value (the dialer uses this).
+	if got := cfg.GetConnectionKeepAlive(); got != 60*time.Second {
+		t.Errorf("GetConnectionKeepAlive: want 60s, got %v", got)
+	}
+
+	// Verify the default-when-zero behaviour.
+	zeroCfg := &Configuration{}
+	if got := zeroCfg.GetConnectionKeepAlive(); got == 0 {
+		t.Errorf("GetConnectionKeepAlive with zero config returned 0; expected a non-zero default")
+	}
+}
+
+// TestCreateOptimisedTransport_TLSHandshakeTimeout asserts that the transport's
+// TLSHandshakeTimeout uses the shared default when the config field is zero,
+// protecting against backends that hang during TLS negotiation.
+func TestCreateOptimisedTransport_TLSHandshakeTimeout(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Configuration{}
+	transport := createOptimisedTransport(cfg)
+
+	if transport.TLSHandshakeTimeout <= 0 {
+		t.Errorf("TLSHandshakeTimeout is %v; a zero value leaves TLS handshakes unbounded", transport.TLSHandshakeTimeout)
+	}
+
+	want := proxyconfig.DefaultTLSHandshakeTimeout
+	if transport.TLSHandshakeTimeout != want {
+		t.Errorf("TLSHandshakeTimeout = %v, want %v", transport.TLSHandshakeTimeout, want)
+	}
+}
+
+// TestCreateOptimisedTransport_TLSHandshakeTimeout_Configurable verifies that a
+// non-zero TLSHandshakeTimeout in config is honoured on the transport.
+func TestCreateOptimisedTransport_TLSHandshakeTimeout_Configurable(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Configuration{}
+	cfg.TLSHandshakeTimeout = 5 * time.Second
+	if got := createOptimisedTransport(cfg).TLSHandshakeTimeout; got != 5*time.Second {
+		t.Errorf("configured TLSHandshakeTimeout: want 5s, got %v", got)
+	}
+}
+
+// TestUpdateConfig_PreservesTimeouts guards against UpdateConfig losing timeout
+// fields that are not part of the ProxyConfiguration interface. Previously
+// ResponseHeaderTimeout was silently reset on the non-Olla branch; TLSHandshakeTimeout
+// had the same gap before this fix.
+func TestUpdateConfig_PreservesTimeouts(t *testing.T) {
+	t.Parallel()
+
+	original := &Configuration{}
+	original.ResponseHeaderTimeout = 90 * time.Second
+	original.TLSHandshakeTimeout = 5 * time.Second
+	original.MaxIdleConns = proxyconfig.OllaDefaultMaxIdleConns
+	original.IdleConnTimeout = proxyconfig.OllaDefaultIdleConnTimeout
+	original.MaxConnsPerHost = proxyconfig.OllaDefaultMaxConnsPerHost
+	original.MaxIdleConnsPerHost = proxyconfig.OllaDefaultMaxIdleConnsPerHost
+
+	svc := &Service{configuration: original}
+
+	// Use the same *Configuration type so we exercise the Olla type-assertion path.
+	updated := &Configuration{}
+	updated.ResponseHeaderTimeout = 120 * time.Second
+	updated.TLSHandshakeTimeout = 15 * time.Second
+
+	svc.UpdateConfig(updated)
+
+	if svc.configuration.ResponseHeaderTimeout != 120*time.Second {
+		t.Errorf("ResponseHeaderTimeout after UpdateConfig: want 120s, got %v", svc.configuration.ResponseHeaderTimeout)
+	}
+	if svc.configuration.TLSHandshakeTimeout != 15*time.Second {
+		t.Errorf("TLSHandshakeTimeout after UpdateConfig: want 15s, got %v", svc.configuration.TLSHandshakeTimeout)
+	}
+}

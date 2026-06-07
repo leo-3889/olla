@@ -3,6 +3,7 @@ server:
   host: "localhost" # Use 0.0.0.0 to bind to all interfaces (so it's accessible externally)
   port: 40114 # default port for Olla - 4-OLLA
   read_timeout: 20s
+  read_header_timeout: 10s # max time to read request headers; guards against Slowloris, 10s suits any legitimate client
   write_timeout: 0s # for LLMs streaming, leave this as 0s
   shutdown_timeout: 10s # Graceful shutdown timeout, increase this for heavy sites that have long-running requests or lots of endpoints (30s is a good)
   request_logging: true # logs Http Requests, may be useful for debugging, noise for other use cases
@@ -62,9 +63,12 @@ proxy:
   load_balancer: "least-connections" # Available: round-robin, least-connections, priority
   stream_buffer_size: 8192 # Buffer size per request - larger = fewer syscalls, more memory
   connection_timeout: 60s
+  connection_keep_alive: 30s # TCP keep-alive interval for backend connections
   response_timeout: 900s
   read_timeout: 600s
-  
+  response_header_timeout: 30s # max wait for the backend's first response header; raise for backends that load models on demand (e.g. Lemonade)
+  tls_handshake_timeout: 10s # max time allowed for a TLS handshake with a backend
+
   # KV-cache affinity routing (opt-in)
   # Routes repeat turns in a conversation to the same backend, maximising KV-cache
   # hit rates for long multi-turn sessions at the cost of reduced load distribution.
