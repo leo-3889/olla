@@ -17,6 +17,13 @@ import (
 	"github.com/thushan/olla/internal/logger"
 )
 
+const (
+	// defaultReadHeaderTimeout protects the inbound server against Slowloris-style
+	// attacks. A legitimate client sends its full header set well within 10 s; slow
+	// backends are handled by proxy.ConnectionTimeout which applies much later.
+	defaultReadHeaderTimeout = 10 * time.Second
+)
+
 // HTTPService manages the HTTP server lifecycle and route registration. It coordinates
 // with other services to ensure the server only starts accepting requests after all
 // dependencies are initialised and health checks have completed.
@@ -107,6 +114,10 @@ func (s *HTTPService) Start(ctx context.Context) error {
 	}
 
 	readTimeout := s.config.ReadTimeout
+	readHeaderTimeout := s.config.ReadHeaderTimeout
+	if readHeaderTimeout == 0 {
+		readHeaderTimeout = defaultReadHeaderTimeout
+	}
 	writeTimeout := s.config.WriteTimeout
 	idleTimeout := s.config.IdleTimeout
 
@@ -149,17 +160,19 @@ func (s *HTTPService) Start(ctx context.Context) error {
 	}
 
 	s.server = &http.Server{
-		Addr:         s.config.GetAddress(),
-		Handler:      root,
-		ReadTimeout:  readTimeout,
-		WriteTimeout: writeTimeout,
-		IdleTimeout:  idleTimeout,
+		Addr:              s.config.GetAddress(),
+		Handler:           root,
+		ReadTimeout:       readTimeout,
+		ReadHeaderTimeout: readHeaderTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
 	}
 
 	go func() {
 		s.logger.Info("HTTP server listening",
 			"address", s.server.Addr,
 			"readTimeout", readTimeout,
+			"readHeaderTimeout", readHeaderTimeout,
 			"writeTimeout", writeTimeout,
 			"idleTimeout", idleTimeout)
 

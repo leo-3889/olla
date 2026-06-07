@@ -34,6 +34,7 @@ type Configuration struct {
 	ResponseTimeout       time.Duration
 	ReadTimeout           time.Duration
 	ResponseHeaderTimeout time.Duration
+	TLSHandshakeTimeout   time.Duration
 	StreamBufferSize      int
 
 	// Olla-specific fields for advanced connection pooling
@@ -88,6 +89,12 @@ func (c *Configuration) GetReadTimeout() time.Duration {
 // for a zero value, so the raw value is passed through here.
 func (c *Configuration) GetResponseHeaderTimeout() time.Duration {
 	return c.ResponseHeaderTimeout
+}
+
+// GetTLSHandshakeTimeout returns the TLS handshake timeout, or 0 when unset.
+// The Olla engine applies DefaultTLSHandshakeTimeout for a zero value.
+func (c *Configuration) GetTLSHandshakeTimeout() time.Duration {
+	return c.TLSHandshakeTimeout
 }
 
 func (c *Configuration) GetStreamBufferSize() int {

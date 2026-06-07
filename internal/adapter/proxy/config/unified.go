@@ -32,6 +32,11 @@ const (
 	// DefaultHealthResponseHeaderTimeout is shorter than the proxy timeout because
 	// health probes are latency-sensitive and already bounded by CheckTimeout.
 	DefaultHealthResponseHeaderTimeout = 10 * time.Second
+
+	// DefaultTLSHandshakeTimeout caps the TLS negotiation phase. 10 s matches the
+	// Go stdlib default and is sufficient for local inference backends; slow TLS
+	// handshakes on these hosts usually indicate a misconfiguration.
+	DefaultTLSHandshakeTimeout = 10 * time.Second
 )
 
 // ProxyConfig defines the interface for all proxy configurations
@@ -58,6 +63,7 @@ type BaseProxyConfig struct {
 	ResponseTimeout       time.Duration
 	ReadTimeout           time.Duration
 	ResponseHeaderTimeout time.Duration
+	TLSHandshakeTimeout   time.Duration
 	StreamBufferSize      int
 }
 
@@ -71,6 +77,16 @@ func (c *BaseProxyConfig) GetResponseHeaderTimeout() time.Duration {
 		return DefaultResponseHeaderTimeout
 	}
 	return c.ResponseHeaderTimeout
+}
+
+// GetTLSHandshakeTimeout returns the TLS handshake timeout, defaulting to
+// DefaultTLSHandshakeTimeout. Exposed so operators can extend it for backends
+// behind slow TLS terminators, though the default covers all local backends.
+func (c *BaseProxyConfig) GetTLSHandshakeTimeout() time.Duration {
+	if c.TLSHandshakeTimeout == 0 {
+		return DefaultTLSHandshakeTimeout
+	}
+	return c.TLSHandshakeTimeout
 }
 
 // GetProxyProfile returns the proxy profile, defaulting to "auto" if not set

@@ -47,6 +47,9 @@ func NewFactory(statsCollector ports.StatsCollector, metricsExtractor ports.Metr
 		sherpaConfig.ReadTimeout = config.GetReadTimeout()
 		sherpaConfig.StreamBufferSize = config.GetStreamBufferSize()
 		sherpaConfig.Profile = config.GetProxyProfile()
+		if tlsCfg, ok := config.(interface{ GetTLSHandshakeTimeout() time.Duration }); ok {
+			sherpaConfig.TLSHandshakeTimeout = tlsCfg.GetTLSHandshakeTimeout()
+		}
 		return sherpa.NewService(discovery, selector, sherpaConfig, collector, metricsExtractor, logger)
 	})
 
@@ -66,11 +69,13 @@ func NewFactory(statsCollector ports.StatsCollector, metricsExtractor ports.Metr
 			GetIdleConnTimeout() time.Duration
 			GetMaxConnsPerHost() int
 			GetResponseHeaderTimeout() time.Duration
+			GetTLSHandshakeTimeout() time.Duration
 		}); ok {
 			ollaConfig.MaxIdleConns = ollaSpecific.GetMaxIdleConns()
 			ollaConfig.IdleConnTimeout = ollaSpecific.GetIdleConnTimeout()
 			ollaConfig.MaxConnsPerHost = ollaSpecific.GetMaxConnsPerHost()
 			ollaConfig.ResponseHeaderTimeout = ollaSpecific.GetResponseHeaderTimeout()
+			ollaConfig.TLSHandshakeTimeout = ollaSpecific.GetTLSHandshakeTimeout()
 		} else {
 			// fallback option with defaults
 			ollaConfig.MaxIdleConns = 200
