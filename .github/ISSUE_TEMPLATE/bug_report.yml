@@ -1,0 +1,127 @@
+name: 🐛 Bug Report
+description: Report something that is not working as expected
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. A clear report with the details below lets us reproduce and fix it quickly, with less back and forth.
+
+        Please check the [documentation](https://thushan.github.io/olla/) and [existing issues](https://github.com/thushan/olla/issues?q=is%3Aissue) first.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight checks
+      options:
+        - label: I have searched existing issues and this is not a duplicate
+          required: true
+        - label: I am running a recent release or a build from `main`
+          required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected to happen instead.
+      placeholder: When I send a request to ... Olla returns ... but I expected ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps so we can reproduce it. Include the request you sent (curl is ideal).
+      placeholder: |
+        1. Start Olla with the config below
+        2. Run: curl -X POST http://localhost:40114/olla/ollama/v1/chat/completions -d '...'
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Proxy engine
+      description: Which engine is configured (`proxy.engine` in your config)?
+      options:
+        - Olla (default)
+        - Sherpa
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How are you running Olla?
+      options:
+        - Binary release
+        - Docker
+        - Built from source
+    validations:
+      required: true
+
+  - type: dropdown
+    id: backends
+    attributes:
+      label: Backend(s) involved
+      description: Which inference backends are behind Olla for this issue? Select all that apply.
+      multiple: true
+      options:
+        - Ollama
+        - LM Studio
+        - llama.cpp
+        - vLLM
+        - vLLM-MLX
+        - SGLang
+        - LMDeploy
+        - LiteLLM
+        - Lemonade
+        - Docker Model Runner
+        - oMLX
+        - OpenAI-compatible (other)
+        - Not backend specific
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration
+      description: The relevant part of your config (config.yaml / profiles). Redact any secrets, tokens or internal hostnames.
+      render: yaml
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: Logs around the failure. Redact secrets, tokens and internal hostnames before posting. For more detail, restart with debug logging via `OLLA_LOG_LEVEL=debug ./olla` (or `make run-debug`). This is automatically formatted, no backticks needed.
+      render: shell
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Olla version
+      description: Output of `olla --version`, or `curl http://localhost:40114/version` for JSON including the build commit.
+      placeholder: v0.x.x
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      multiple: true
+      options:
+        - Linux (amd64)
+        - Linux (arm64)
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Windows (amd64)
+        - Windows (arm64)
+    validations:
+      required: true

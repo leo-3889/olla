@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📖 Documentation
+    url: https://thushan.github.io/olla/
+    about: Configuration, integrations and concepts are documented here. Please check before opening an issue.
+  - name: 💬 Questions & Discussion
+    url: https://github.com/thushan/olla/discussions
+    about: Have a question, an idea or want to share how you run Olla? Start a discussion instead of an issue.
+  - name: 🛡️ Security Vulnerability
+    url: https://github.com/thushan/olla/security/advisories/new
+    about: Please report security issues privately via a security advisory, not as a public issue.

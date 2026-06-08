@@ -1,0 +1,60 @@
+name: 💡 Feature Request
+description: Suggest an improvement or new capability
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea. To request support for a new inference backend, please use the **Backend / Integration support** template instead.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight checks
+      options:
+        - label: I have searched existing issues and discussions for this idea
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the use case or pain point. What are you trying to do that Olla makes hard today?
+      placeholder: I run ... and I want to ... but currently ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would you like Olla to do? Config examples or expected behaviour are helpful.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      description: Which part of Olla does this touch?
+      options:
+        - Load balancing / routing
+        - Health checking / circuit breakers
+        - Sticky sessions
+        - Model unification / discovery
+        - API translation (Anthropic / OpenAI)
+        - Proxy engine (Sherpa / Olla)
+        - Security (rate limits / size limits / CORS)
+        - Configuration
+        - Observability / stats / headers
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any workarounds you currently use, or other approaches you have thought about.
+    validations:
+      required: false

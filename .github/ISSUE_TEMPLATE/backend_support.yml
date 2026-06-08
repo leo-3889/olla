@@ -1,0 +1,67 @@
+name: 🔌 Backend / Integration Support
+description: Request support for a new inference backend or endpoint
+labels: ["integration", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Olla focuses on self-hosted and locally-run inference engines. Hosted API-only providers are generally out of scope.
+
+        See the [integrations overview](https://thushan.github.io/olla/integrations/overview/) for what is already supported and how profiles work.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight checks
+      options:
+        - label: This backend is not already supported and has no open request
+          required: true
+        - label: This backend can be self-hosted or run locally
+          required: true
+
+  - type: input
+    id: backend-name
+    attributes:
+      label: Backend name
+      placeholder: e.g. TGI, KoboldCpp, ...
+    validations:
+      required: true
+
+  - type: input
+    id: backend-url
+    attributes:
+      label: Project / documentation link
+      placeholder: https://github.com/...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: api-compat
+    attributes:
+      label: API compatibility
+      description: What API surface does it expose?
+      options:
+        - OpenAI-compatible (/v1/chat/completions etc.)
+        - Ollama-compatible
+        - Anthropic Messages API
+        - Custom / proprietary
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: endpoints
+    attributes:
+      label: Key endpoints
+      description: The model-listing and inference endpoints, plus any health endpoint. Sample responses help a lot.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: Quirks, auth requirements, streaming behaviour or other details that affect routing and discovery.
+    validations:
+      required: false
