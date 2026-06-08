@@ -97,7 +97,7 @@ body:
     id: logs
     attributes:
       label: Relevant log output
-      description: Logs around the failure. For more detail, restart with debug logging via `OLLA_LOG_LEVEL=debug ./olla` (or `make run-debug`). This is automatically formatted, no backticks needed.
+      description: Logs around the failure. Redact secrets, tokens and internal hostnames before posting. For more detail, restart with debug logging via `OLLA_LOG_LEVEL=debug ./olla` (or `make run-debug`). This is automatically formatted, no backticks needed.
       render: shell
     validations:
       required: false

@@ -23,7 +23,7 @@ Fixes #
 
 ## Checklist
 
-- [ ] `make ready` passes (test + race + fmt + vet + lint)
+- [ ] `make ready` passes (test-short + test-race + fmt + vet + lint + align)
 - [ ] Tests added or updated for the change
 - [ ] Documentation updated (`./docs`) if behaviour or config changed
 - [ ] No new dependencies added (or called out and justified below)
