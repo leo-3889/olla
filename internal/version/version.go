@@ -39,6 +39,7 @@ var (
 		"llamacpp",
 		"lmdeploy",
 		"lm_studio",
+		"omlx",
 		"sglang",
 		"vllm",
 		"vllm-mlx",

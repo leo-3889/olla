@@ -6,6 +6,42 @@ import (
 	"github.com/thushan/olla/internal/core/constants"
 )
 
+func TestOMLXProviderConstants(t *testing.T) {
+	t.Parallel()
+
+	t.Run("provider type constant", func(t *testing.T) {
+		t.Parallel()
+		expected := "omlx"
+		if constants.ProviderTypeOMLX != expected {
+			t.Errorf("ProviderTypeOMLX: expected %q, got %q", expected, constants.ProviderTypeOMLX)
+		}
+	})
+
+	t.Run("display name constant", func(t *testing.T) {
+		t.Parallel()
+		expected := "oMLX"
+		if constants.ProviderDisplayOMLX != expected {
+			t.Errorf("ProviderDisplayOMLX: expected %q, got %q", expected, constants.ProviderDisplayOMLX)
+		}
+	})
+
+	t.Run("routing prefix", func(t *testing.T) {
+		t.Parallel()
+		expected := "omlx"
+		if constants.ProviderPrefixOMLX != expected {
+			t.Errorf("ProviderPrefixOMLX: expected %q, got %q", expected, constants.ProviderPrefixOMLX)
+		}
+	})
+
+	t.Run("type and prefix match", func(t *testing.T) {
+		t.Parallel()
+		// oMLX uses a single prefix that matches the type directly — no alias variations needed
+		if constants.ProviderTypeOMLX != constants.ProviderPrefixOMLX {
+			t.Errorf("ProviderTypeOMLX %q should equal ProviderPrefixOMLX %q", constants.ProviderTypeOMLX, constants.ProviderPrefixOMLX)
+		}
+	})
+}
+
 func TestLlamaCppProviderConstants(t *testing.T) {
 	t.Run("provider type constant", func(t *testing.T) {
 		expected := "llamacpp"

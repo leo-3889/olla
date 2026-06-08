@@ -227,13 +227,26 @@ func (p *openAIParser) Parse(data []byte) ([]*domain.ModelInfo, error) {
 			LastSeen: now,
 		}
 
-		// openai is stingy with metadata
-		if (model.Created != nil && *model.Created > 0) || model.OwnedBy != nil {
+		// openai is stingy with metadata, but some compatible backends (e.g. oMLX)
+		// include max_model_len which is worth surfacing
+		hasDetails := (model.Created != nil && *model.Created > 0) ||
+			model.OwnedBy != nil ||
+			(model.MaxModelLen != nil && *model.MaxModelLen > 0)
+
+		if hasDetails {
 			details := &domain.ModelDetails{}
 
 			if model.Created != nil && *model.Created > 0 {
 				createdTime := time.Unix(*model.Created, 0)
 				details.ModifiedAt = &createdTime
+			}
+
+			if model.MaxModelLen != nil && *model.MaxModelLen > 0 {
+				details.MaxContextLength = model.MaxModelLen
+			}
+
+			if model.OwnedBy != nil && *model.OwnedBy != "" {
+				details.Publisher = model.OwnedBy
 			}
 
 			modelInfo.Details = details

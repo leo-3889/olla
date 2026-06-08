@@ -59,6 +59,7 @@ Olla's Anthropic API Translation enables Claude-compatible clients (Claude Code,
                 <li>llama.cpp</li>
                 <li>Lemonade SDK</li>
                 <li>LiteLLM</li>
+                <li>oMLX</li>
                 <li>Any OpenAI-compatible endpoint</li>
             </ul>
         </td>
@@ -526,6 +527,7 @@ These backends natively support the Anthropic Messages API and benefit from pass
 | **llama.cpp** | b4847+ | Yes | `api.anthropic_support` in `config/profiles/llamacpp.yaml` |
 | **LM Studio** | v0.4.1+ | No | `api.anthropic_support` in `config/profiles/lmstudio.yaml` |
 | **Ollama** | v0.14.0+ | No | `api.anthropic_support` in `config/profiles/ollama.yaml` |
+| **oMLX** | -- | No | `api.anthropic_support` in `config/profiles/omlx.yaml` |
 
 When using these backends, Olla automatically detects native Anthropic support and forwards requests directly. You can verify passthrough mode is active by checking the `X-Olla-Mode: passthrough` response header.
 

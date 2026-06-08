@@ -101,6 +101,7 @@ func (c *HTTPModelDiscoveryClient) discoverWithAutoDetection(ctx context.Context
 		domain.ProfileLlamaCpp,
 		domain.ProfileLmStudio,
 		domain.ProfileVLLM,
+		domain.ProfileOMLX,             // Apple Silicon only; tried after other common servers
 		domain.ProfileOpenAICompatible, /* last ditch effort */
 	}
 

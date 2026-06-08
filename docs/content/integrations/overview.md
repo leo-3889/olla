@@ -24,6 +24,7 @@ Olla natively supports the following backends:
 | [Lemonade SDK](./backend/lemonade.md) | `lemonade` | Native support for [Lemonade SDK](https://lemonade-server.ai/), AMD's local inference solution with Ryzen AI optimisation, including model unification |
 | [LiteLLM](./backend/litellm.md) | `litellm` | Native support for [LiteLLM](https://github.com/BerriAI/litellm), providing unified gateway to 100+ LLM providers |
 | [Docker Model Runner](./backend/docker-model-runner.md) | `docker-model-runner` | Native support for [Docker Model Runner](https://docs.docker.com/ai/model-runner/), Docker Desktop's built-in LLM inference server with multi-engine support (llama.cpp and vLLM), OCI model distribution, and native Anthropic Messages API |
+| [oMLX](./backend/omlx.md) | `omlx` | Native support for [oMLX](https://github.com/jundot/omlx), a multi-model Apple Silicon (MLX) inference server managed from the macOS menu bar, with native Anthropic Messages API passthrough |
 | [OpenAI Compatible](https://platform.openai.com/docs/overview) | `openai` | Generic support for any OpenAI-compatible API |
 
 You can use the `type` in [Endpoint Configurations](/olla/configuration/overview/#endpoint-configuration) when adding new endpoints.

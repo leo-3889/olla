@@ -40,10 +40,12 @@ func (a *Application) createProviderProfile(providerType string) *domain.Request
 				}
 			}
 		} else {
-			// Tests get a minimal set without full profile loading
+			// Test/static fallback — must track the openai-compatible types in
+			// isProviderSupported (handler_common.go) and getStaticProviders (server_routes.go)
 			profile.AddSupportedProfile(constants.ProviderTypeOpenAI)
 			profile.AddSupportedProfile(constants.ProviderTypeVLLM)
 			profile.AddSupportedProfile(constants.ProviderTypeLemonade)
+			profile.AddSupportedProfile(constants.ProviderTypeOMLX)
 		}
 	} else {
 		// Non-OpenAI providers only route to their specific backend type

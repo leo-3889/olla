@@ -123,6 +123,7 @@ func TestIsProviderSupported(t *testing.T) {
 			{"lm_studio supported", "lm_studio", true},
 			{"openai supported", "openai", true},
 			{"vllm supported", "vllm", true},
+			{"omlx supported", "omlx", true},
 			{"unknown not supported", "unknown", false},
 			{"empty not supported", "", false},
 		}

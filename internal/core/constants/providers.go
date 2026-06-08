@@ -12,6 +12,7 @@ const (
 	ProviderTypeVLLM         = "vllm"
 	ProviderTypeVLLMMLX      = "vllm-mlx"
 	ProviderTypeDockerMR     = "docker-model-runner"
+	ProviderTypeOMLX         = "omlx"
 
 	// Provider display names
 	ProviderDisplayOllama   = "Ollama"
@@ -24,6 +25,7 @@ const (
 	ProviderDisplayVLLM     = "vLLM"
 	ProviderDisplayVLLMMLX  = "vLLM-MLX"
 	ProviderDisplayDockerMR = "Docker Model Runner"
+	ProviderDisplayOMLX     = "oMLX"
 
 	// Common provider prefixes
 	// llama.cpp provider prefixes
@@ -38,4 +40,6 @@ const (
 	ProviderPrefixVLLMMLX2 = "vllmmlx"
 	// Docker Model Runner provider prefix
 	ProviderPrefixDockerMR = "dmr"
+	// oMLX provider prefix
+	ProviderPrefixOMLX = "omlx"
 )
