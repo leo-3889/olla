@@ -6,7 +6,7 @@ keywords: Claude Code, Olla, Anthropic API, Messages API, local LLM, Ollama, vLL
 
 # Claude Code Integration with Anthropic API
 
-Claude Code can connect to Olla's Anthropic Messages API translation endpoint, enabling you to use Anthropic's official CLI coding assistant with local LLM infrastructure—no cloud API costs.
+Claude Code can connect to Olla's Anthropic Messages API translation endpoint, enabling you to use Anthropic's official CLI coding assistant with local LLM infrastructure and no cloud API costs.
 
 **Set in Claude Code:**
 
@@ -565,12 +565,12 @@ curl http://localhost:40114/internal/health
 docker compose ps
 ```
 
-**Check Claude Code logs** (location varies by OS and version — check [official docs](https://docs.anthropic.com/en/docs/claude-code) for your version):
+**Check Claude Code logs** (location varies by OS and version, check the [official docs](https://docs.anthropic.com/en/docs/claude-code) for your version):
 ```bash
-# macOS/Linux — typical location
+# macOS/Linux, typical location
 tail -f ~/.claude/logs/claude.log
 
-# Windows — typical location
+# Windows, typical location
 type %USERPROFILE%\.claude\logs\claude.log
 ```
 

@@ -42,7 +42,7 @@ keywords: LMDeploy, Olla proxy, TurboMind, InternLM, LLM inference, GPU optimisa
         <th>Unsupported</th>
         <td>
             <ul>
-                <li><code>/v1/embeddings</code> (returns HTTP 400 — use <code>/pooling</code>)</li>
+                <li><code>/v1/embeddings</code> (returns HTTP 400, use <code>/pooling</code>)</li>
                 <li><code>proxy_server</code> component (no <code>/health</code> endpoint)</li>
                 <li>Model Management (loading/unloading)</li>
             </ul>
@@ -95,7 +95,7 @@ discovery:
         check_timeout: 2s
 ```
 
-The default port for `lmdeploy serve api_server` is **23333**. Register individual `api_server` instances directly — do not point Olla at the `proxy_server` component, which lacks a `/health` endpoint and only forwards a subset of routes.
+The default port for `lmdeploy serve api_server` is **23333**. Register individual `api_server` instances directly. Do not point Olla at the `proxy_server` component, which lacks a `/health` endpoint and only forwards a subset of routes.
 
 ### Authentication
 
@@ -231,7 +231,7 @@ curl -X POST http://localhost:40114/olla/lmdeploy/v1/encode \
 ### Pooling (Reward/Score)
 
 ```bash
-# Use /pooling — not /v1/embeddings (which returns HTTP 400)
+# Use /pooling, not /v1/embeddings (which returns HTTP 400)
 curl -X POST http://localhost:40114/olla/lmdeploy/pooling \
   -H "Content-Type: application/json" \
   -d '{
@@ -280,7 +280,7 @@ lmdeploy serve api_server internlm/internlm2_5-7b-chat \
 
 ### VLM Inference
 
-Vision-language models use the same `api_server` entrypoint — no separate binary:
+Vision-language models use the same `api_server` entrypoint, with no separate binary:
 
 ```bash
 lmdeploy serve api_server InternLM/internlm-xcomposer2-7b \
@@ -318,7 +318,7 @@ Olla treats a sleeping engine as transiently unavailable and will route around i
 
 ### Embeddings vs Pooling
 
-LMDeploy does not implement `/v1/embeddings`. The correct path for reward-model scoring and embedding-style pooling is `/pooling`. This is a deliberate upstream design decision — using TurboMind's native pooling path rather than the OpenAI embeddings spec.
+LMDeploy does not implement `/v1/embeddings`. The correct path for reward-model scoring and embedding-style pooling is `/pooling`. This is a deliberate upstream design decision that uses TurboMind's native pooling path rather than the OpenAI embeddings spec.
 
 ### Model Naming
 
@@ -335,8 +335,8 @@ LMDeploy ships two server components:
 
 | Component | Port | Use with Olla? |
 |-----------|------|----------------|
-| `api_server` | 23333 | Yes — has `/health`, full route support |
-| `proxy_server` | 8000 | No — no `/health`, limited routes |
+| `api_server` | 23333 | Yes, has `/health`, full route support |
+| `proxy_server` | 8000 | No, no `/health`, limited routes |
 
 Always register individual `api_server` instances. The `proxy_server` is LMDeploy's own load balancer and is redundant when Olla is in the stack.
 

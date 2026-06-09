@@ -48,7 +48,7 @@ Olla provides Anthropic Messages API translation, enabling Claude-compatible cli
 | [OpenCode](./frontend/opencode.md) | Open-source AI coding assistant (SST fork) | OpenAI or Anthropic API |
 | [Crush CLI](./frontend/crush-cli.md) | Modern terminal AI assistant by Charmbracelet | Dual OpenAI/Anthropic support |
 
-These clients can use local models (Ollama, LM Studio, vLLM, vLLM-MLX, llama.cpp) through Olla's API translation layer.
+These clients can use local models across any supported backend through Olla's Anthropic translation layer. Backends with native Anthropic support (Ollama, LM Studio, vLLM, vLLM-MLX, llama.cpp, Docker Model Runner, oMLX) use zero-overhead passthrough; the rest (SGLang, LMDeploy, Lemonade, LiteLLM, generic OpenAI-compatible) are served via translation.
 
 ### API Translation
 

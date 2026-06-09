@@ -11,7 +11,7 @@ keywords: [llamacpp, llama.cpp, Olla proxy, GGUF models, CPU inference, slot man
         <th>Home</th>
         <td>
           <a href="https://github.com/ggml-org/llama.cpp">github.com/ggml-org/llama.cpp</a> <br/>
-          <a href="ttps://github.com/ikawrakow/ik_llama.cpp">github.com/gikawrakow/ik_llama.cpp</a> <br/>
+          <a href="https://github.com/ikawrakow/ik_llama.cpp">github.com/ikawrakow/ik_llama.cpp</a> <br/>
         </td>
     </tr>
     <tr>

@@ -28,7 +28,7 @@ OpenCode is an open-source AI coding assistant that can connect to Olla's API en
 }
 ```
 
-The `models` map is required — OpenCode will not expose any models for the provider if this field is absent. Keys must match the model IDs that appear in `/v1/models` responses from your backend.
+The `models` map is required. OpenCode will not expose any models for the provider if this field is absent. Keys must match the model IDs that appear in `/v1/models` responses from your backend.
 
 **What you get via Olla**
 
@@ -199,7 +199,7 @@ proxy:
   response_timeout: 1800s      # 30 min for long generations
   read_timeout: 600s
 
-# OpenAI is the native format — no translator needed.
+# OpenAI is the native format, no translator needed.
 # Anthropic translator enables the /olla/anthropic/v1/messages endpoint.
 translators:
   anthropic:
@@ -227,7 +227,7 @@ Key points about the Olla config:
 - `server.rate_limits` (under `server:`, not a top-level `security:` block) controls rate limiting.
 - Endpoint health fields are flat: `health_check_url`, `check_interval`, `check_timeout`. There is no nested `health_check:` block.
 - Only `translators.anthropic` exists as a translator. OpenAI is the native format, not a translator.
-- `proxy.write_timeout` does not exist — use `server.write_timeout: 0s` if you need to override it (0 disables the server-level write timeout, which is required for streaming).
+- `proxy.write_timeout` does not exist. Use `server.write_timeout: 0s` if you need to override it (0 disables the server-level write timeout, which is required for streaming).
 
 ### 3. Start Services
 
@@ -299,7 +299,7 @@ mkdir -p ~/.config/opencode
 }
 ```
 
-**Important**: The `models` map is required. Without it, OpenCode won't know which models to show for the provider. The keys must match the model IDs returned by Olla's `/v1/models` endpoint — check with:
+**Important**: The `models` map is required. Without it, OpenCode won't know which models to show for the provider. The keys must match the model IDs returned by Olla's `/v1/models` endpoint. Check with:
 
 ```bash
 curl http://localhost:40114/olla/openai/v1/models | jq '.data[].id'
@@ -323,7 +323,7 @@ Select a model using the `/models` command within the OpenCode UI. Try prompts l
 
 **Location**: `~/.config/opencode/opencode.json` (global), or `opencode.json` in your project root (project-level, highest precedence).
 
-**Configuration merging**: OpenCode merges configs from multiple sources — later configs override only conflicting keys. This lets you have a global Olla provider and project-specific model selections.
+**Configuration merging**: OpenCode merges configs from multiple sources, where later configs override only conflicting keys. This lets you have a global Olla provider and project-specific model selections.
 
 **Complete Example**:
 
@@ -475,7 +475,7 @@ Use the exact IDs returned here as keys in your `models` map.
 > Write a Python function that calculates the Fibonacci sequence recursively
 > Refactor the user authentication in auth.js to use async/await
 > Explain this code: [paste code snippet]
-> I'm getting this error: [paste error] — help me fix it
+> I'm getting this error: [paste error], help me fix it
 ```
 
 ## Docker Deployment (Production)
@@ -646,7 +646,7 @@ curl http://localhost:1234/v1/models
 **Ensure high-performance proxy engine is active**:
 ```yaml
 proxy:
-  engine: olla   # not sherpa — sherpa is maintenance-mode
+  engine: olla   # not sherpa; sherpa is maintenance-mode
   profile: streaming
 ```
 
@@ -714,9 +714,9 @@ Olla doesn't enforce API keys by default. If OpenCode requires one, set any plac
 
 ### Anthropic Endpoint Issues
 
-If you want to use the Anthropic Messages API format (via `@ai-sdk/anthropic` pointing at Olla), be aware there is an [active bug in OpenCode](https://github.com/sst/opencode/issues/21737) where the API key is dropped at runtime when using a custom `baseURL` with the `@ai-sdk/anthropic` package. The workaround is to use `@ai-sdk/openai-compatible` with the OpenAI endpoint (`/olla/openai/v1`) instead — it works reliably and requires no translation overhead.
+If you want to use the Anthropic Messages API format (via `@ai-sdk/anthropic` pointing at Olla), be aware there is an [active bug in OpenCode](https://github.com/sst/opencode/issues/21737) where the API key is dropped at runtime when using a custom `baseURL` with the `@ai-sdk/anthropic` package. The workaround is to use `@ai-sdk/openai-compatible` with the OpenAI endpoint (`/olla/openai/v1`) instead. It works reliably and requires no translation overhead.
 
-If you do need Anthropic format specifically, use `@ai-sdk/openai-compatible` pointed at the Anthropic-compatible endpoint is **not** the right approach; see the Olla Anthropic translator docs for passthrough mode.
+If you specifically need the Anthropic Messages format, point a separate provider at Olla's `/olla/anthropic/v1` endpoint. Olla serves that format for every backend (passthrough where native support exists, translation otherwise), so the backend does not need to speak Anthropic itself. See the [Anthropic API Translation](../api-translation/anthropic.md) docs for how passthrough and translation are selected.
 
 ## Advanced Configuration
 

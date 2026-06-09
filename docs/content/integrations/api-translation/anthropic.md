@@ -331,7 +331,7 @@ discovery:
 
 proxy:
   load_balancer: priority  # Use priority-based routing
-  engine: sherpa          # or: olla (for high performance)
+  engine: olla            # default high-performance engine (sherpa is maintenance-mode)
   profile: streaming      # Low-latency streaming
 ```
 
@@ -620,27 +620,31 @@ See [Claude Code Integration](../frontend/claude-code.md) for complete setup.
 
 ### OpenCode
 
-Configure OpenCode in `~/.opencode/config.json`:
+Configure OpenCode in `~/.config/opencode/opencode.json`. The recommended setup points at Olla's OpenAI endpoint via `@ai-sdk/openai-compatible` (the `@ai-sdk/anthropic` package has a [known bug](https://github.com/sst/opencode/issues/21737) that drops the API key with a custom `baseURL`):
 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
   "provider": {
-    "olla-anthropic": {
-      "npm": "@ai-sdk/anthropic",
+    "olla": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Olla",
       "options": {
-        "baseURL": "http://localhost:40114/olla/anthropic/v1"
+        "baseURL": "http://localhost:40114/olla/openai/v1"
+      },
+      "models": {
+        "llama3.2:latest": { "name": "Llama 3.2" }
       }
     }
   }
 }
 ```
 
-See [OpenCode Integration](../frontend/opencode.md) for complete setup.
+The `models` map is required; OpenCode exposes no models for the provider without it. See [OpenCode Integration](../frontend/opencode.md) for complete setup.
 
 ### Crush CLI
 
-Configure Crush in `~/.crush/config.json`:
+Configure Crush in `~/.config/crush/crush.json` (`%LOCALAPPDATA%\crush\crush.json` on Windows). A custom provider must declare both `base_url` and a non-empty `models` array or Crush silently skips it:
 
 ```json
 {
@@ -648,8 +652,15 @@ Configure Crush in `~/.crush/config.json`:
     "olla-anthropic": {
       "type": "anthropic",
       "base_url": "http://localhost:40114/olla/anthropic/v1",
-      "api_key": "not-required"
+      "api_key": "not-required",
+      "models": [
+        { "id": "llama3.2:latest", "name": "Llama 3.2" }
+      ]
     }
+  },
+  "models": {
+    "large": { "model": "llama3.2:latest", "provider": "olla-anthropic" },
+    "small": { "model": "llama3.2:latest", "provider": "olla-anthropic" }
   }
 }
 ```

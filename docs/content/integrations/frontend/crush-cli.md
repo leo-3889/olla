@@ -6,7 +6,7 @@ keywords: Crush CLI, Olla, Charmbracelet, OpenAI API, Anthropic API, dual API, l
 
 # Crush CLI Integration with Dual API Support
 
-Crush CLI is a modern terminal AI assistant by Charmbracelet that natively supports both OpenAI and Anthropic APIs. Connect it to Olla to use local LLM infrastructure with seamless provider switching—no cloud API costs.
+Crush CLI is a modern terminal AI assistant by Charmbracelet that natively supports both OpenAI and Anthropic APIs. Connect it to Olla to use local LLM infrastructure with seamless provider switching and no cloud API costs.
 
 **Set in Crush CLI (`~/.config/crush/crush.json`):**
 
@@ -16,12 +16,18 @@ Crush CLI is a modern terminal AI assistant by Charmbracelet that natively suppo
     "olla-anthropic": {
       "type": "anthropic",
       "base_url": "http://localhost:40114/olla/anthropic/v1",
-      "api_key": "not-required"
+      "api_key": "not-required",
+      "models": [
+        { "id": "llama3.2:latest", "name": "Llama 3.2" }
+      ]
     },
     "olla-openai": {
       "type": "openai-compat",
       "base_url": "http://localhost:40114/olla/openai/v1",
-      "api_key": "not-required"
+      "api_key": "not-required",
+      "models": [
+        { "id": "llama3.2:latest", "name": "Llama 3.2" }
+      ]
     }
   },
   "models": {
@@ -30,6 +36,9 @@ Crush CLI is a modern terminal AI assistant by Charmbracelet that natively suppo
   }
 }
 ```
+
+!!! warning "Custom providers must list their models"
+    A custom provider (any provider not built into Crush's catwalk catalogue, which is the case for Olla) is **silently skipped at load time unless it declares both `base_url` and a non-empty `models` array**. Each entry needs at least an `id` that matches a model ID Olla returns from `/olla/openai/v1/models`. The top-level `models.large` / `models.small` keys only *select* a model; they do not register it.
 
 **What you get via Olla**
 
@@ -200,7 +209,7 @@ proxy:
   read_timeout: 600s
 
 # Anthropic translator enables /olla/anthropic/v1/*
-# OpenAI is the native format — no translator needed
+# OpenAI is the native format, no translator needed
 translators:
   anthropic:
     enabled: true
@@ -292,12 +301,18 @@ Crush also checks `.crush.json` or `crush.json` in the current project directory
     "olla-openai": {
       "type": "openai-compat",
       "base_url": "http://localhost:40114/olla/openai/v1",
-      "api_key": "not-required"
+      "api_key": "not-required",
+      "models": [
+        { "id": "llama3.2:latest", "name": "Llama 3.2" }
+      ]
     },
     "olla-anthropic": {
       "type": "anthropic",
       "base_url": "http://localhost:40114/olla/anthropic/v1",
-      "api_key": "not-required"
+      "api_key": "not-required",
+      "models": [
+        { "id": "llama3.2:latest", "name": "Llama 3.2" }
+      ]
     }
   },
   "models": {
@@ -333,12 +348,18 @@ Edit `~/.config/crush/crush.json` to customise provider settings.
     "olla-openai": {
       "type": "openai-compat",
       "base_url": "http://localhost:40114/olla/openai/v1",
-      "api_key": "not-required"
+      "api_key": "not-required",
+      "models": [
+        { "id": "llama3.2:latest", "name": "Llama 3.2" }
+      ]
     },
     "olla-anthropic": {
       "type": "anthropic",
       "base_url": "http://localhost:40114/olla/anthropic/v1",
-      "api_key": "not-required"
+      "api_key": "not-required",
+      "models": [
+        { "id": "llama3.2:latest", "name": "Llama 3.2" }
+      ]
     }
   },
   "models": {
@@ -522,7 +543,7 @@ Configure which provider handles each role via the top-level `models` key:
 }
 ```
 
-For project-specific overrides, place a `crush.json` or `.crush.json` in the project root — it takes precedence over the global config.
+For project-specific overrides, place a `crush.json` or `.crush.json` in the project root and it takes precedence over the global config.
 
 See the [Crush CLI repository](https://github.com/charmbracelet/crush) for the full list of supported configuration options and CLI flags.
 
@@ -914,7 +935,11 @@ Crush checks `.crush.json` or `crush.json` in your current directory before fall
     "coding": {
       "type": "openai-compat",
       "base_url": "http://localhost:40114/olla/openai/v1",
-      "api_key": "not-required"
+      "api_key": "not-required",
+      "models": [
+        { "id": "qwen2.5-coder:32b", "name": "Qwen 2.5 Coder 32B" },
+        { "id": "qwen2.5-coder:7b",  "name": "Qwen 2.5 Coder 7B" }
+      ]
     }
   },
   "models": {

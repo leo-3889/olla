@@ -78,7 +78,7 @@ keywords: [Docker Model Runner, DMR, Olla proxy, Docker Desktop, LLM inference, 
 </table>
 
 !!! note "Lazy Model Loading"
-    Docker Model Runner loads models into memory on the first inference request, not at startup. The `/engines/v1/models` endpoint returns `200` with an empty `data` array when no models have been pulled yet — this is normal and does not indicate an unhealthy endpoint.
+    Docker Model Runner loads models into memory on the first inference request, not at startup. The `/engines/v1/models` endpoint returns `200` with an empty `data` array when no models have been pulled yet. This is normal and does not indicate an unhealthy endpoint.
 
 ## Configuration
 
@@ -168,7 +168,7 @@ api:
 **Key details**:
 
 - Native token counting metadata (`/anthropic/v1/messages/count_tokens`): Supported by the DMR profile. Olla's public `/olla/anthropic/v1/messages/count_tokens` endpoint currently uses local translator estimation rather than proxying DMR's native endpoint.
-- Passthrough mode is automatic — no client-side configuration needed
+- Passthrough mode is automatic, no client-side configuration needed
 - Responses include `X-Olla-Mode: passthrough` header when passthrough is active
 - Falls back to translation mode if passthrough conditions are not met
 
@@ -352,7 +352,7 @@ DMR does not load models into memory until the first inference request. This mea
 
 - The `/engines/v1/models` endpoint returns an empty `data` array until at least one model has been used
 - The first request after startup (or after a model is idle) may have higher latency
-- Olla treats an empty model list as a healthy state for DMR endpoints — this does not trigger circuit breaker logic
+- Olla treats an empty model list as a healthy state for DMR endpoints, so this does not trigger circuit breaker logic
 
 ### Supported Platforms
 
@@ -547,12 +547,12 @@ discovery:
       - url: "http://localhost:12434"
         name: "dmr-local"
         type: "docker-model-runner"
-        priority: 95   # High priority — local, built-in
+        priority: 95   # High priority, local, built-in
 
       - url: "http://localhost:11434"
         name: "ollama-local"
         type: "ollama"
-        priority: 80   # Lower priority — fallback
+        priority: 80   # Lower priority, fallback
 ```
 
 ## Integration with Tools
