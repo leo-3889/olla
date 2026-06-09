@@ -133,6 +133,11 @@ func DefaultConfig() *Config {
 			Unification: UnificationConfig{
 				Enabled:  true,
 				CacheTTL: 10 * time.Minute,
+				// Mirror config.yaml so a no-config-file run prunes on the same cadence
+				// as the shipped config. These are honoured by the unifier (via
+				// CreateWithConfig), so the values genuinely take effect.
+				StaleThreshold:  24 * time.Hour,
+				CleanupInterval: 10 * time.Minute,
 				CustomRules: []UnificationRuleConfig{
 					{
 						Platform: "ollama",

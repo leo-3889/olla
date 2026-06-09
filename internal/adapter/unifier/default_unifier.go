@@ -38,10 +38,27 @@ type DefaultUnifier struct {
 }
 
 func NewDefaultUnifier() ports.ModelUnifier {
+	return NewDefaultUnifierWithConfig(DefaultConfig())
+}
+
+// NewDefaultUnifierWithConfig builds a DefaultUnifier honouring the supplied
+// cleanup interval and model TTL. Zero values fall back to the package defaults,
+// so a partially-populated config is safe to pass. This is what lets the
+// model_registry.unification.cleanup_interval / stale_threshold config actually
+// take effect rather than being silently ignored.
+func NewDefaultUnifierWithConfig(config Config) ports.ModelUnifier {
+	cleanupInterval := config.CleanupInterval
+	if cleanupInterval <= 0 {
+		cleanupInterval = 5 * time.Minute
+	}
+	staleThreshold := config.ModelTTL
+	if staleThreshold <= 0 {
+		staleThreshold = 24 * time.Hour
+	}
 	return &DefaultUnifier{
-		store:          NewCatalogStore(5 * time.Minute),
+		store:          NewCatalogStore(cleanupInterval),
 		extractor:      NewModelExtractor(),
-		staleThreshold: 24 * time.Hour,
+		staleThreshold: staleThreshold,
 	}
 }
 

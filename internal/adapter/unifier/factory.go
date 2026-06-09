@@ -78,7 +78,7 @@ func (f *Factory) CreateWithConfig(name string, config Config) (ports.ModelUnifi
 	case LifecycleUnifierType:
 		return NewLifecycleUnifier(config, f.logger), nil
 	case DefaultUnifierType:
-		return NewDefaultUnifier(), nil
+		return NewDefaultUnifierWithConfig(config), nil
 	default:
 		return f.Create(name)
 	}
