@@ -233,7 +233,7 @@ discovery:
       - name: localai-primary
         url: http://localai:8080
         priority: 1
-        type: openai-compatible  # or "openai" — accepted alias
+        type: openai-compatible  # or "openai" - accepted alias
 
       - name: localai-backup
         url: http://localai2:8080

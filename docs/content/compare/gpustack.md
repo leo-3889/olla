@@ -100,7 +100,7 @@ discovery:
       - name: gpustack-pool-1
         url: http://gpustack-1.internal:8080
         priority: 1
-        type: openai-compatible  # or "openai" — accepted alias
+        type: openai-compatible  # or "openai" - accepted alias
 
       - name: gpustack-pool-2
         url: http://gpustack-2.internal:8080

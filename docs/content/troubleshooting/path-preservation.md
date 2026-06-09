@@ -68,7 +68,7 @@ discovery:
     endpoints:
       - url: "http://endpoint:8080/api/v1"
         name: "api-endpoint"
-        type: "openai-compatible"  # or "openai" — accepted alias
+        type: "openai-compatible"  # or "openai" - accepted alias
         preserve_path: true  # Enable path preservation
 ```
 
@@ -166,7 +166,7 @@ discovery:
     endpoints:
       - url: "http://api.internal/llm/prod/v1"
         name: "gateway-prod"
-        type: "openai-compatible"  # or "openai" — accepted alias
+        type: "openai-compatible"  # or "openai" - accepted alias
         preserve_path: true  # Keep gateway routing path
 ```
 

@@ -14,11 +14,11 @@ They make it easier to adopt and manage local models in corporate or home enviro
 
 More companies are moving workloads to local or on-premises (or own-cloud hosted) models because they offer:
 
-* **Data privacy** – Sensitive information stays inside your network.
-* **Compliance** – Easier to meet regulatory requirements without sending data to third-party APIs.
-* **Cost control** – No unpredictable API bills; you pay once for hardware and run as much as you like.
-* **Latency** – Responses are generated within your own LAN, not across the internet.
-* **Customisation** – Fine-tune or swap models without vendor lock-in.
+* **Data privacy** - Sensitive information stays inside your network.
+* **Compliance** - Easier to meet regulatory requirements without sending data to third-party APIs.
+* **Cost control** - No unpredictable API bills; you pay once for hardware and run as much as you like.
+* **Latency** - Responses are generated within your own LAN, not across the internet.
+* **Customisation** - Fine-tune or swap models without vendor lock-in.
 
 ## Use Cases
 

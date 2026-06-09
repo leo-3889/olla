@@ -93,7 +93,7 @@ discovery:
       - name: localai-gpu
         url: http://gpu-server:8080
         priority: 1
-        type: openai-compatible  # or "openai" — accepted alias
+        type: openai-compatible  # or "openai" - accepted alias
 
       - name: localai-cpu
         url: http://cpu-server:8080
