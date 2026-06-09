@@ -44,6 +44,14 @@ func (a *Application) executePassthroughRequest(
 		return
 	}
 
+	// The proxy selector chooses the actual endpoint later, so only override the
+	// translator default when every candidate backend agrees on the same native
+	// path. Mixed native-Anthropic backends can require different paths (for
+	// example DMR uses /anthropic/v1/messages while vLLM uses /v1/messages).
+	if targetPath := a.resolvePassthroughTargetPath(endpoints, passthroughReq.TargetPath); targetPath != "" {
+		passthroughReq.TargetPath = targetPath
+	}
+
 	// Update proxy request details - capture streaming flag for accurate metrics
 	// (StreamingMs isn't populated in passthrough mode since we don't intercept the stream)
 	pr.isStreaming = passthroughReq.IsStreaming
@@ -54,6 +62,7 @@ func (a *Application) executePassthroughRequest(
 	pr.requestLogger.Debug("using passthrough mode (native Anthropic support)",
 		"model", passthroughReq.ModelName,
 		"streaming", passthroughReq.IsStreaming,
+		"target_path", passthroughReq.TargetPath,
 		"endpoints", len(endpoints))
 
 	// Set request body and path
@@ -83,6 +92,35 @@ func (a *Application) executePassthroughRequest(
 	}
 
 	pr.stats.EndTime = time.Now()
+}
+
+// resolvePassthroughTargetPath returns the native Anthropic path only when every
+// candidate backend agrees on the same one. The proxy selector picks the real
+// endpoint after this runs, so a mixed fleet (e.g. DMR on /anthropic/v1/messages
+// alongside vLLM on /v1/messages) can't be given a single correct path; in that
+// case we keep the translator's neutral default rather than risk a 404 on whichever
+// backend is chosen.
+func (a *Application) resolvePassthroughTargetPath(endpoints []*domain.Endpoint, defaultPath string) string {
+	if a.profileLookup == nil || len(endpoints) == 0 {
+		return defaultPath
+	}
+
+	var resolvedPath string
+	for _, endpoint := range endpoints {
+		support := a.profileLookup.GetAnthropicSupport(endpoint.Type)
+		if support == nil || support.MessagesPath == "" {
+			return defaultPath
+		}
+		if resolvedPath == "" {
+			resolvedPath = support.MessagesPath
+			continue
+		}
+		if support.MessagesPath != resolvedPath {
+			return defaultPath
+		}
+	}
+
+	return resolvedPath
 }
 
 // executeTranslationRequest handles the translation path where requests are converted

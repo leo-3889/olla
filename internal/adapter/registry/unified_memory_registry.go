@@ -34,10 +34,14 @@ func NewUnifiedMemoryModelRegistry(logger logger.StyledLogger, unificationConfig
 	unifierFactory := unifier.NewFactory(logger)
 	var modelUnifier ports.ModelUnifier
 
-	if unificationConfig != nil && unificationConfig.StaleThreshold > 0 {
-		// Create unifier with custom config
+	if unificationConfig != nil && (unificationConfig.StaleThreshold > 0 || unificationConfig.CleanupInterval > 0) {
+		// Override only the fields the operator actually set, leaving the rest at
+		// the unifier defaults. Each override is guarded so an unset field can't
+		// zero out a default (e.g. a cleanup_interval-only config must not blank ModelTTL).
 		unifierConfig := unifier.DefaultConfig()
-		unifierConfig.ModelTTL = unificationConfig.StaleThreshold
+		if unificationConfig.StaleThreshold > 0 {
+			unifierConfig.ModelTTL = unificationConfig.StaleThreshold
+		}
 		if unificationConfig.CleanupInterval > 0 {
 			unifierConfig.CleanupInterval = unificationConfig.CleanupInterval
 		}

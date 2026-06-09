@@ -24,7 +24,7 @@ const (
 	DefaultAllHost           = "0.0.0.0" // local dev may use this
 	DefaultProxyProfile      = constants.ConfigurationProxyProfileAuto
 	DefaultProxyEngine       = "olla"
-	DefaultLoadBalancer      = "priority"
+	DefaultLoadBalancer      = "least-connections"
 	DefaultModelRegistryType = "memory"
 	DefaultDiscoveryType     = "static"
 )
@@ -80,9 +80,9 @@ func DefaultConfig() *Config {
 			LoadBalancer:      DefaultLoadBalancer,
 			Profile:           DefaultProxyProfile,
 			StreamBufferSize:  8 * 1024, // 8KB
-			ConnectionTimeout: 30 * time.Second,
-			ResponseTimeout:   10 * time.Minute,
-			ReadTimeout:       120 * time.Second,
+			ConnectionTimeout: 60 * time.Second,
+			ResponseTimeout:   15 * time.Minute,
+			ReadTimeout:       10 * time.Minute,
 			MaxRetries:        3,
 			RetryBackoff:      500 * time.Millisecond,
 			StickySessions: StickySessionConfig{
@@ -133,6 +133,11 @@ func DefaultConfig() *Config {
 			Unification: UnificationConfig{
 				Enabled:  true,
 				CacheTTL: 10 * time.Minute,
+				// Mirror config.yaml so a no-config-file run prunes on the same cadence
+				// as the shipped config. These are honoured by the unifier (via
+				// CreateWithConfig), so the values genuinely take effect.
+				StaleThreshold:  24 * time.Hour,
+				CleanupInterval: 10 * time.Minute,
 				CustomRules: []UnificationRuleConfig{
 					{
 						Platform: "ollama",
