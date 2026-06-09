@@ -78,8 +78,8 @@ Olla proxies the following self-hosted inference backends. The **Anthropic API**
 | [LiteLLM](https://github.com/BerriAI/litellm) | [Integration](https://thushan.github.io/olla/integrations/backend/litellm/) | 🔄 Translation |
 | OpenAI-compatible (generic) | [Integration](https://thushan.github.io/olla/integrations/overview/) | 🔄 Translation |
 
-> **⚡ Passthrough** — Olla forwards Anthropic-format requests directly; the backend handles them natively, with no translation overhead.
-> **🔄 Translation** — Olla converts Anthropic ↔ OpenAI format automatically; any OpenAI-compatible backend works transparently.
+> **⚡ Passthrough**: Olla forwards Anthropic-format requests directly; the backend handles them natively, with no translation overhead.
+> **🔄 Translation**: Olla converts Anthropic ↔ OpenAI format automatically; any OpenAI-compatible backend works transparently.
 
 LiteLLM is the recommended bridge when you need Olla to reach hosted cloud APIs (OpenAI, Anthropic, Bedrock, etc.).
 
