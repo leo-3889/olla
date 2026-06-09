@@ -157,6 +157,7 @@ Olla exposes multiple API paths depending on your use case:
 |------|--------|----------|
 | `/olla/proxy/` | OpenAI | Routes to any backend, universal endpoint |
 | `/olla/anthropic/` | Anthropic | Claude-compatible clients (passthrough or translated) |
+| `/olla/openai/` | OpenAI | OpenAI-compatible route (`type: "openai"` is an alias for `openai-compatible`) |
 | `/olla/{provider}/` | OpenAI | Target a specific backend type (e.g. `/olla/vllm/`, `/olla/ollama/`) |
 
 #### OpenAI-Compatible (Universal Proxy)
