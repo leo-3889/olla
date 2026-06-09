@@ -16,9 +16,14 @@ services:
       interval: 30s
       retries: 3
       start_period: 10s
-    # Note: LM Studio runs on the host machine, not in a container
+    # Note: LM Studio runs on the host machine, not in a container.
     # The olla.yaml configuration uses host.docker.internal (Mac/Windows)
-    # or 172.17.0.1 (Linux) to reach the host
+    # or 172.17.0.1 (Linux) to reach the host.
+    #
+    # Linux only: to use host.docker.internal on Linux, uncomment the mapping
+    # below and set the endpoint URL in olla.yaml accordingly.
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
 
 networks:
   default:
