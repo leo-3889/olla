@@ -1,13 +1,9 @@
 {
-  "$schema": "https://docs.claude.com/schema/config.json",
-  "api": {
-    "baseURL": "http://localhost:40114/olla/anthropic/v1",
-    "apiKey": "not-required"
-  },
-  "models": {
-    "default": "llama3.2:latest"
-  },
-  "system": {
-    "prompt": "You are a helpful coding assistant. Provide clear, concise, and correct code examples."
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://localhost:40114/olla/anthropic",
+    "ANTHROPIC_AUTH_TOKEN": "not-required",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "llama3.2:latest",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "llama3.2:latest"
   }
 }

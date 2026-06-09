@@ -5,11 +5,17 @@
 server:
   host: 0.0.0.0
   port: 40114
+  rate_limits:
+    global_requests_per_minute: 600
+    per_ip_requests_per_minute: 100
+    health_requests_per_minute: 1000
+    burst_size: 50
+    cleanup_interval: 5m
 
 # Proxy configuration
 proxy:
-  engine: sherpa           # or "olla" for high-performance
-  load_balancer: priority  # Prefer higher priority endpoints first
+  engine: olla             # High-performance engine (default)
+  load_balancer: priority  # Route to highest-priority endpoint first
   stream_buffer_size: 8192
   response_timeout: 300s   # 5 minutes for long generations
   read_timeout: 60s
@@ -18,6 +24,7 @@ proxy:
 translators:
   anthropic:
     enabled: true                   # Enable Anthropic API translator
+    passthrough_enabled: true       # Zero-overhead passthrough for Ollama (native Anthropic support)
     max_message_size: 10485760      # 10MB max request size
 
 # Backend discovery
@@ -36,18 +43,12 @@ discovery:
 
 # Model registry configuration
 model_registry:
+  type: memory
   enable_unifier: true
   routing_strategy:
     type: "optimistic"              # Allow fallback to compatible models
     options:
       fallback_behavior: "compatible_only"
-
-# Security settings
-security:
-  rate_limit:
-    enabled: true
-    requests_per_minute: 100
-    burst: 50
 
 # Logging configuration
 logging:
