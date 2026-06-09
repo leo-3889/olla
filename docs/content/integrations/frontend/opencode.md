@@ -104,7 +104,7 @@ By default, OpenCode connects to cloud APIs (Anthropic, OpenAI, etc.). With Olla
 
 ## Architecture
 
-```
+```text
 ┌──────────────┐    OpenAI-compatible   ┌──────────┐    OpenAI API    ┌─────────────────────┐
 │  OpenCode    │    API requests        │   Olla   │─────────────────▶│ Ollama :11434       │
 │  (Terminal)  │───────────────────────▶│  :40114  │  /v1/*           └─────────────────────┘
@@ -470,7 +470,7 @@ Use the exact IDs returned here as keys in your `models` map.
 
 ### Basic Usage
 
-```
+```text
 # In OpenCode terminal
 > Write a Python function that calculates the Fibonacci sequence recursively
 > Refactor the user authentication in auth.js to use async/await

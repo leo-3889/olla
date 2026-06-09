@@ -727,7 +727,7 @@ cat ~/.config/crush/crush.json | jq '.providers'
 
 **Check provider type**:
 
-Valid `type` values: `openai-compat` (for custom OpenAI-compatible endpoints like Olla), `openai` (for actual OpenAI API), `anthropic`, `gemini`, `azure`, `vertexai`.
+For Olla integrations, the relevant `type` values are: `openai-compat` (custom OpenAI-compatible endpoints like Olla), `openai` (actual OpenAI API), and `anthropic`. Crush supports additional provider types (e.g. `gemini`, `azure`, `vertexai`); see [Crush's provider docs](https://github.com/charmbracelet/crush) for the full list.
 
 ```json
 {
