@@ -177,9 +177,9 @@ When an endpoint fails, Olla widens the gap between successive health checks rat
 | 4 | 8 | 40s |
 | 5+ | 12 (max) | 60s _(capped)_ |
 
-> The first failure deliberately retries at the normal interval — most transient errors clear on the very next check, so adding backoff there would slow recovery for the common case. The cap means even a long-dead endpoint is probed at least once per minute.
+> The first failure deliberately retries at the normal interval. Most transient errors clear on the very next check, so adding backoff there would slow recovery for the common case. The cap means even a long-dead endpoint is probed at least once per minute.
 
-The HTTP client also has its own attempt-level retry loop (max 2 retries per probe, base delay 100 ms, capped at 2 s, with ±25 % jitter) — this fires before any per-endpoint backoff kicks in.
+The HTTP client also has its own attempt-level retry loop (max 2 retries per probe, base delay 100 ms, capped at 2 s, with ±25 % jitter); this fires before any per-endpoint backoff kicks in.
 
 ### Recovery
 
@@ -187,7 +187,7 @@ A single successful health check resets the backoff multiplier to `1` and return
 
 ### HTTP Circuit Breaker (separate from endpoint state)
 
-The HTTP transport carries its own circuit breaker that trips after `3` consecutive failures (per upstream URL) and stays open for `30 s` before allowing another attempt. This is independent of the per-endpoint adaptive interval above and only affects the in-process HTTP client — it is not configurable from YAML.
+The HTTP transport carries its own circuit breaker that trips after `3` consecutive failures (per upstream URL) and stays open for `30 s` before allowing another attempt. This is independent of the per-endpoint adaptive interval above and only affects the in-process HTTP client; it is not configurable from YAML.
 
 ### Automatic Model Discovery on Recovery
 
@@ -280,11 +280,11 @@ Health checks work with the circuit breaker to prevent cascade failures:
 
 There are two independent circuit breakers. The health-checker circuit breaker governs health probes; the Olla proxy engine has a separate per-endpoint circuit breaker that governs live request traffic (Sherpa has none).
 
-1. **Failure Threshold**: 3 consecutive transport failures (health checker) or 5 (Olla proxy engine)
+1. **Failure Threshold**: 3 consecutive failures (health checker) or 5 consecutive transport failures (Olla proxy engine)
 2. **Open Duration**: Circuit stays open for 30 seconds
 3. **Half-Open Test**: Allows one test request through
 4. **Recovery**: First successful request closes the circuit
-5. **HTTP 5xx responses do not trip either circuit breaker** — only transport-level errors (connection refused, reset, timeout) count as failures
+5. **What counts as a failure differs by breaker**: the Olla proxy circuit breaker counts only transport-level errors (connection refused, reset, timeout) and ignores backend HTTP 5xx responses; the health-checker circuit breaker counts an unhealthy health-probe response (including a 5xx health check) as a failure in addition to transport errors. Neither counts 401/403 (ConfigError) or 429 (RateLimited).
 
 ## Monitoring Health Status
 
