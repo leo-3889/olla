@@ -318,15 +318,17 @@ Standard OpenAI-compatible sampling parameters are supported.
 ## Configuration Example
 
 ```yaml
-endpoints:
-  - url: "http://192.168.0.100:8000"
-    name: "omlx-server"
-    type: "omlx"
-    priority: 75
-    model_url: "/v1/models"
-    health_check_url: "/health"
-    check_interval: 5s
-    check_timeout: 2s
+discovery:
+  static:
+    endpoints:
+      - url: "http://192.168.0.100:8000"
+        name: "omlx-server"
+        type: "omlx"
+        priority: 75
+        model_url: "/v1/models"
+        health_check_url: "/health"
+        check_interval: 5s
+        check_timeout: 2s
 ```
 
 ## Request Headers

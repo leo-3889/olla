@@ -11,13 +11,13 @@ Proxy endpoints for Ollama instances. All Ollama API endpoints are available thr
 | POST | `/olla/ollama/api/chat` | Chat completion |
 | POST | `/olla/ollama/api/embeddings` | Generate embeddings |
 | GET | `/olla/ollama/api/tags` | List local models |
-| POST | `/olla/ollama/api/show` | Show model information |
-| POST | `/olla/ollama/api/pull` | Pull a model |
-| POST | `/olla/ollama/api/push` | Push a model |
-| POST | `/olla/ollama/api/copy` | Copy a model |
-| DELETE | `/olla/ollama/api/delete` | Delete a model |
-| POST | `/olla/ollama/api/create` | Create a model |
-| GET | `/olla/ollama/api/ps` | List running models |
+| POST | `/olla/ollama/api/show` | _Not supported in multi-instance proxy_ (returns 501) |
+| POST | `/olla/ollama/api/pull` | _Not supported in multi-instance proxy_ (returns 501) |
+| POST | `/olla/ollama/api/push` | _Not supported in multi-instance proxy_ (returns 501) |
+| POST | `/olla/ollama/api/copy` | _Not supported in multi-instance proxy_ (returns 501) |
+| DELETE | `/olla/ollama/api/delete` | _Not supported in multi-instance proxy_ (returns 501) |
+| POST | `/olla/ollama/api/create` | _Not supported in multi-instance proxy_ (returns 501) |
+| GET | `/olla/ollama/api/list` | _Not supported in multi-instance proxy_ (returns 501; aggregating running models across instances requires per-instance polling and reconciliation that Olla deliberately does not perform) |
 
 ## OpenAI-Compatible Endpoints
 
@@ -282,52 +282,18 @@ curl -X GET http://localhost:40114/olla/ollama/api/tags
 
 ## POST /olla/ollama/api/show
 
-Get detailed information about a specific model.
-
-### Request
-
-```bash
-curl -X POST http://localhost:40114/olla/ollama/api/show \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "llama3.2:latest"
-  }'
-```
-
-### Response
-
-```json
-{
-  "modelfile": "FROM llama3.2.Q4_0.gguf\nPARAMETER temperature 0.7\nPARAMETER top_p 0.9",
-  "parameters": "temperature 0.7\ntop_p 0.9",
-  "template": "{{ .System }}\nUser: {{ .Prompt }}\nAssistant:",
-  "details": {
-    "parent_model": "",
-    "format": "gguf",
-    "family": "llama",
-    "families": ["llama"],
-    "parameter_size": "3.2B",
-    "quantization_level": "Q4_0"
-  },
-  "model_info": {
-    "general.architecture": "llama",
-    "general.file_type": "Q4_0",
-    "general.parameter_count": 3200000000,
-    "general.quantization_version": 2
-  }
-}
-```
+> :warning: **Not supported.** Olla returns HTTP 501. Aggregating model details across multiple Ollama instances is non-trivial because modelfiles, parameter values, and revisions can diverge between backends. To inspect a specific model, call the underlying Ollama instance directly.
 
 ## Model Management
 
-The following endpoints are proxied but typically used for model management:
+These endpoints are recognised but deliberately **not supported** in Olla's multi-instance proxy. Each returns HTTP 501; perform model management directly against the relevant Ollama backend.
 
-- **POST /olla/ollama/api/pull** - Download a model from Ollama registry
-- **POST /olla/ollama/api/push** - Upload a model to Ollama registry
+- **POST /olla/ollama/api/pull** - Download a model from the Ollama registry
+- **POST /olla/ollama/api/push** - Upload a model to the Ollama registry
 - **POST /olla/ollama/api/copy** - Create a copy of a model
 - **DELETE /olla/ollama/api/delete** - Remove a model
 - **POST /olla/ollama/api/create** - Create a model from a Modelfile
-- **GET /olla/ollama/api/ps** - List currently loaded models
+- **GET /olla/ollama/api/list** - List currently loaded models (Olla does not aggregate per-instance running state)
 
 ## Request Headers
 

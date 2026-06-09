@@ -279,15 +279,17 @@ All responses include:
 ## Configuration Example
 
 ```yaml
-endpoints:
-  - url: "http://localhost:12434"
-    name: "local-dmr"
-    type: "docker-model-runner"
-    priority: 95
-    model_url: "/engines/v1/models"
-    health_check_url: "/engines/v1/models"
-    check_interval: 10s
-    check_timeout: 5s
+discovery:
+  static:
+    endpoints:
+      - url: "http://localhost:12434"
+        name: "local-dmr"
+        type: "docker-model-runner"
+        priority: 95
+        model_url: "/engines/v1/models"
+        health_check_url: "/engines/v1/models"
+        check_interval: 10s
+        check_timeout: 5s
 ```
 
 See the [Docker Model Runner Integration Guide](../integrations/backend/docker-model-runner.md) for full configuration and setup instructions.

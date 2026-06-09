@@ -24,9 +24,13 @@ Returns all available models across all configured and healthy endpoints.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `format` | string | `unified` | Response format (unified/openai/ollama/lmstudio/vllm) |
-| `provider` | string | all | Filter by provider type |
-| `capability` | string | all | Filter by capability (chat/completion/embedding/vision) |
+| `format` | string | `unified` | Response format (`unified`, `openai`, `ollama`, `lmstudio`, `vllm`) |
+| `endpoint` | string | all | Filter to models served by a specific endpoint name (e.g. `local-ollama`) |
+| `family` | string | all | Filter by model family (e.g. `llama`, `qwen`, `mistral`) |
+| `type` | string | all | Filter by model type (`llm`, `vlm`, `embeddings`) |
+| `capability` | string | all | Legacy alias for `type` (`vision`/`multimodal` → `vlm`, `embedding`/`embeddings`/`vector_search` → `embeddings`, `chat`/`text_generation`/`completion` → `llm`) |
+| `available` | bool | unset | When `true`, return only models reported available right now; when `false`, return only currently unavailable models |
+| `include_unavailable` | bool | `false` | When `true`, include models from endpoints that aren't currently healthy. The response then carries availability metadata per model |
 
 ### Request Examples
 
@@ -40,14 +44,26 @@ curl -X GET http://localhost:40114/olla/models
 curl -X GET http://localhost:40114/olla/models?format=openai
 ```
 
-#### Filter by Provider
+#### Filter by Endpoint
 ```bash
-curl -X GET http://localhost:40114/olla/models?provider=ollama
+curl -X GET 'http://localhost:40114/olla/models?endpoint=local-ollama'
 ```
 
-#### Filter by Capability
+#### Filter by Family or Type
 ```bash
-curl -X GET http://localhost:40114/olla/models?capability=chat
+curl -X GET 'http://localhost:40114/olla/models?family=llama'
+curl -X GET 'http://localhost:40114/olla/models?type=vlm'
+```
+
+#### Filter by Capability (legacy)
+```bash
+curl -X GET 'http://localhost:40114/olla/models?capability=vision'   # → type=vlm
+curl -X GET 'http://localhost:40114/olla/models?capability=chat'     # → type=llm
+```
+
+#### Include Unhealthy Endpoints
+```bash
+curl -X GET 'http://localhost:40114/olla/models?include_unavailable=true'
 ```
 
 ### Response Formats

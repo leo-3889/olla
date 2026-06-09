@@ -556,17 +556,19 @@ sglang_spec_decode_num_accepted_tokens_total{model="meta-llama/Meta-Llama-3.1-8B
 ## Configuration Example
 
 ```yaml
-endpoints:
-  - url: "http://192.168.0.100:30000"
-    name: "sglang-server"
-    type: "sglang"
-    priority: 90
-    model_url: "/v1/models"
-    health_check_url: "/health"
-    check_interval: 5s
-    check_timeout: 2s
-    headers:
-      X-API-Key: "${SGLANG_API_KEY}"
+discovery:
+  static:
+    endpoints:
+      - url: "http://192.168.0.100:30000"
+        name: "sglang-server"
+        type: "sglang"
+        priority: 90
+        model_url: "/v1/models"
+        health_check_url: "/health"
+        check_interval: 5s
+        check_timeout: 2s
+        headers:
+          X-API-Key: "${SGLANG_API_KEY}"
 ```
 
 ## Request Headers
@@ -585,8 +587,6 @@ All responses include:
 - `X-Olla-Model` - Model used for the request
 - `X-Olla-Backend-Type` - Always "sglang" for these endpoints
 - `X-Olla-Response-Time` - Total processing time
-- `X-SGLang-Cache-Hit` - Whether RadixAttention cache was hit
-- `X-SGLang-Spec-Decode` - Whether speculative decoding was used
 
 ## Performance Features
 

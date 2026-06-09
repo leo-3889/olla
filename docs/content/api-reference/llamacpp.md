@@ -537,7 +537,7 @@ All responses from Olla include these headers:
 - `X-Olla-Backend-Type: llamacpp` - Identifies the backend type
 - `X-Olla-Endpoint: <name>` - Backend endpoint name (e.g., "llamacpp-server")
 - `X-Olla-Model: <model>` - GGUF model used for the request
-- `X-Olla-Request-Id: <id>` - Unique request identifier
+- `X-Olla-Request-ID: <id>` - Unique request identifier
 - `X-Olla-Response-Time: <ms>` - Total processing time in milliseconds
 - `Via: 1.1 olla/<version>` - Olla proxy version
 
@@ -546,14 +546,16 @@ All responses from Olla include these headers:
 ## Configuration Example
 
 ```yaml
-endpoints:
-  - url: "http://192.168.0.100:8080"
-    name: "llamacpp-llama-8b"
-    type: "llamacpp"
-    priority: 95
-    # Profile handles health checks and model discovery
-    headers:
-      X-API-Key: "${LLAMACPP_API_KEY}"
+discovery:
+  static:
+    endpoints:
+      - url: "http://192.168.0.100:8080"
+        name: "llamacpp-llama-8b"
+        type: "llamacpp"
+        priority: 95
+        # Profile handles health checks and model discovery
+        headers:
+          X-API-Key: "${LLAMACPP_API_KEY}"
 ```
 
 ### Multi-Instance Setup
@@ -561,24 +563,26 @@ endpoints:
 llama.cpp serves one model per instance. For multiple models, run multiple instances:
 
 ```yaml
-endpoints:
-  # Instance 1: Chat model
-  - url: "http://192.168.0.100:8080"
-    name: "llamacpp-chat"
-    type: "llamacpp"
-    priority: 90
+discovery:
+  static:
+    endpoints:
+      # Instance 1: Chat model
+      - url: "http://192.168.0.100:8080"
+        name: "llamacpp-chat"
+        type: "llamacpp"
+        priority: 90
 
-  # Instance 2: Code model
-  - url: "http://192.168.0.101:8080"
-    name: "llamacpp-code"
-    type: "llamacpp"
-    priority: 85
+      # Instance 2: Code model
+      - url: "http://192.168.0.101:8080"
+        name: "llamacpp-code"
+        type: "llamacpp"
+        priority: 85
 
-  # Instance 3: Embedding model
-  - url: "http://192.168.0.102:8080"
-    name: "llamacpp-embed"
-    type: "llamacpp"
-    priority: 80
+      # Instance 3: Embedding model
+      - url: "http://192.168.0.102:8080"
+        name: "llamacpp-embed"
+        type: "llamacpp"
+        priority: 80
 ```
 
 Olla will automatically route requests to the appropriate instance based on the model name.

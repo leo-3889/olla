@@ -15,7 +15,7 @@ The Anthropic translator accepts requests in Anthropic Messages API format at `/
 **Key Features**:
 
 - ✅ Full Anthropic Messages API compatibility
-- ✅ **Passthrough mode** for backends with native Anthropic support (vLLM, llama.cpp, LM Studio, Ollama)
+- ✅ **Passthrough mode** for backends with native Anthropic support (vLLM, vLLM-MLX, llama.cpp, LM Studio, Ollama, oMLX, Docker Model Runner)
 - ✅ **Translation mode** for OpenAI-compatible backends without native support
 - ✅ Automatic fallback from passthrough to translation when needed
 - ✅ Streaming via Server-Sent Events (SSE)
@@ -58,7 +58,7 @@ sequenceDiagram
     Olla->>Client: Response (Anthropic format - unchanged)
 ```
 
-**Compatible backends**: vLLM (v0.11.1+), llama.cpp (b4847+), LM Studio (v0.4.1+), Ollama (v0.14.0+)
+**Compatible backends**: vLLM (v0.11.1+), vLLM-MLX (recent), llama.cpp (b4847+), LM Studio (v0.4.1+), Ollama (v0.14.0+), oMLX (v0.4.2+), Docker Model Runner (recent)
 
 **Observability**: Responses include `X-Olla-Mode: passthrough` header.
 
@@ -669,11 +669,11 @@ Standard Olla rate limits apply:
 Configure in `config.yaml`:
 
 ```yaml
-security:
-  rate_limit:
-    enabled: true
-    requests_per_minute: 100
-    burst: 50
+server:
+  rate_limits:
+    global_requests_per_minute: 1000
+    per_ip_requests_per_minute: 100
+    burst_size: 50
 ```
 
 
@@ -792,9 +792,12 @@ When `passthrough_enabled` is `true` (the default), Olla forwards requests direc
 | Backend | Profile | Min Version | Notes |
 |---------|---------|-------------|-------|
 | vLLM | `config/profiles/vllm.yaml` | v0.11.1+ | No token counting |
+| vLLM-MLX | `config/profiles/vllm-mlx.yaml` | recent | Supports token counting |
 | llama.cpp | `config/profiles/llamacpp.yaml` | b4847+ | Supports token counting |
 | LM Studio | `config/profiles/lmstudio.yaml` | v0.4.1+ | No token counting |
 | Ollama | `config/profiles/ollama.yaml` | v0.14.0+ | No token counting |
+| oMLX | `config/profiles/omlx.yaml` | v0.4.2+ | No token counting (native endpoint exists but Olla uses local estimator) |
+| Docker Model Runner | `config/profiles/dmr.yaml` | recent | Supports token counting |
 
 To disable passthrough for a specific backend, set `anthropic_support.enabled: false` in the profile:
 
