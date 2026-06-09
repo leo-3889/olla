@@ -113,7 +113,11 @@ The circuit breaker tracks these failure conditions:
 - Other transport-layer errors
 
 !!! note "HTTP 5xx responses"
-    HTTP 5xx responses from the backend do **not** currently trip the circuit breaker. Only transport-layer failures (connection errors, timeouts) cause the counter to increment. Wiring 5xx responses into the circuit breaker is tracked in [issue #144](https://github.com/thushan/olla/issues/144).
+    The two circuit breakers handle HTTP 5xx responses differently.
+
+    The **proxy-layer CB** (`internal/adapter/proxy/olla/service.go`) records a failure only on transport errors (connection refused, timeout, DNS failure). When `RoundTrip` succeeds it calls `RecordSuccess` regardless of `resp.StatusCode`, so a backend returning HTTP 5xx does **not** trip the proxy CB. This is the gap tracked in [issue #144](https://github.com/thushan/olla/issues/144).
+
+    The **health-checker CB** (`internal/adapter/health/client.go`) does trip on a 5xx from the health endpoint. An unhealthy or unknown status from the health check calls `RecordFailure`; only `StatusHealthy` and `StatusBusy` call `RecordSuccess`. So a backend that returns 5xx on its health path **will** trip the health-checker CB after three consecutive failures.
 
 ### Recovery Process
 
