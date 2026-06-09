@@ -86,6 +86,7 @@ Check if path preservation is incorrectly enabled:
 
 ```bash
 # Enable debug logging to see the actual request
+# OLLA_LOGGING_LEVEL overrides logging.level from YAML (post-config)
 OLLA_LOGGING_LEVEL=debug olla
 
 # Look for log entries showing the proxied URL
@@ -115,27 +116,28 @@ discovery:
 
 **Diagnosis:**
 
-Docker Model Runner typically uses base paths like `/api/models/{model_name}`:
+The current Docker Model Runner profile expects pathless endpoint base URLs and forwards profile routes such as `/engines/v1/chat/completions` and `/anthropic/v1/messages` to the backend:
 
 ```bash
 # Docker Model Runner structure
-http://docker-runner:8080/api/models/llama/v1/chat/completions
+http://docker-runner:12434/engines/v1/chat/completions
+http://docker-runner:12434/anthropic/v1/messages
 ```
 
 **Solution:**
 
-Enable path preservation for Docker Model Runner:
+Use the `docker-model-runner` endpoint type with a pathless base URL. `preserve_path` is not required for the shipped DMR profile:
 
 ```yaml
 discovery:
   static:
     endpoints:
-      - url: "http://docker-runner:8080/api/models/llama"
-        name: "docker-llama"
-        type: "openai-compatible"  # or "openai" — accepted alias
-        preserve_path: true  # Required for Docker Model Runner
-        health_check_url: "/api/models/llama/health"
+      - url: "http://docker-runner:12434"
+        name: "docker-model-runner"
+        type: "docker-model-runner"
 ```
+
+If Anthropic passthrough is enabled, keep Docker Model Runner endpoints in a passthrough fleet with the same native Messages API path. In v0.0.28, Olla chooses one passthrough target path before proxy endpoint selection, so do not mix DMR's `/anthropic/v1/messages` with another capable backend's `/v1/messages` unless the fleets are partitioned or passthrough is disabled for one side.
 
 ### Issue 4: API Gateway Path Routing
 
@@ -181,6 +183,7 @@ logging:
 Or via environment variable:
 
 ```bash
+# OLLA_LOGGING_LEVEL overrides logging.level from the config file (post-startup)
 OLLA_LOGGING_LEVEL=debug olla
 ```
 
@@ -193,10 +196,10 @@ server:
 
 ### Step 3: Check Response Headers
 
-Olla adds diagnostic headers to responses:
+Olla adds diagnostic headers to responses. Use the provider prefix that matches your endpoint type (e.g. `/olla/openai/` for `openai-compatible` backends):
 
 ```bash
-curl -v http://localhost:40114/v1/chat/completions
+curl -v http://localhost:40114/olla/openai/v1/chat/completions
 
 # Look for headers:
 # X-Olla-Endpoint: endpoint-name
@@ -206,7 +209,7 @@ curl -v http://localhost:40114/v1/chat/completions
 
 ### Step 4: Test Direct vs Proxied
 
-Compare direct endpoint access with proxied access:
+Compare direct endpoint access with proxied access. All Olla proxy routes live under `/olla/<provider>/`:
 
 ```bash
 # Direct to endpoint
@@ -214,8 +217,8 @@ curl -X POST http://endpoint:8080/api/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"llama3","messages":[{"role":"user","content":"test"}]}'
 
-# Through Olla
-curl -X POST http://localhost:40114/v1/chat/completions \
+# Through Olla (openai-compatible backend)
+curl -X POST http://localhost:40114/olla/openai/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"llama3","messages":[{"role":"user","content":"test"}]}'
 ```
@@ -280,12 +283,12 @@ OLLA_PID=$!
 
 sleep 2
 
-# Test requests
+# Test requests (using openai-compatible provider prefix)
 echo "Testing WITH preservation (should see /base/path/v1/...):"
-curl -v http://localhost:40114/v1/chat/completions 2>&1 | grep "GET\|POST"
+curl -v http://localhost:40114/olla/openai/v1/chat/completions 2>&1 | grep "GET\|POST"
 
 echo "Testing WITHOUT preservation (should see /v1/...):"
-curl -v http://localhost:40114/v1/chat/completions 2>&1 | grep "GET\|POST"
+curl -v http://localhost:40114/olla/openai/v1/chat/completions 2>&1 | grep "GET\|POST"
 
 # Cleanup
 kill $SERVER1_PID $SERVER2_PID $OLLA_PID
@@ -308,20 +311,16 @@ Does your endpoint URL have a base path after the host/port?
       │
       └─ Yes (required for routing)
          │
-         └─ Is it Docker Model Runner or similar?
+         └─ Is it behind an API gateway?
             ├─ Yes
             │  └─ preserve_path: true
             │
-            └─ Is it behind an API gateway?
+            └─ Is it a microservice with path routing?
                ├─ Yes
                │  └─ preserve_path: true
                │
-               └─ Is it a microservice with path routing?
-                  ├─ Yes
-                  │  └─ preserve_path: true
-                  │
-                  └─ No
-                     └─ preserve_path: false
+               └─ No
+                  └─ preserve_path: false
 ```
 
 ## Best Practices
@@ -331,11 +330,13 @@ Does your endpoint URL have a base path after the host/port?
 Always document why path preservation is enabled:
 
 ```yaml
-endpoints:
-  - url: "http://service:8080/api/models/llama"
-    name: "docker-llama"
-    type: "openai-compatible"  # or "openai" — accepted alias
-    preserve_path: true  # Required: Docker Model Runner uses path-based model routing
+discovery:
+  static:
+    endpoints:
+      - url: "http://gateway.internal/llm/prod"
+        name: "gateway-prod"
+        type: "openai-compatible"  # or "openai" - accepted alias
+        preserve_path: true  # Required: gateway routes requests by this base path
 ```
 
 ### 2. Test Both Configurations
@@ -355,10 +356,12 @@ preserve_path: true
 Configure health checks to match the path structure:
 
 ```yaml
-endpoints:
-  - url: "http://service:8080/api/v1"
-    preserve_path: true
-    health_check_url: "/api/v1/health"  # Match the base path
+discovery:
+  static:
+    endpoints:
+      - url: "http://service:8080/api/v1"
+        preserve_path: true
+        health_check_url: "/api/v1/health"  # Match the base path
 ```
 
 ### 4. Group Similar Endpoints
@@ -366,18 +369,21 @@ endpoints:
 Group endpoints with similar path requirements:
 
 ```yaml
-endpoints:
-  # All Docker Model Runner endpoints
-  - url: "http://docker:8080/api/models/llama"
-    preserve_path: true
-  - url: "http://docker:8080/api/models/mistral"
-    preserve_path: true
+discovery:
+  static:
+    endpoints:
+      # Docker Model Runner uses pathless endpoint URLs with the shipped profile
+      - url: "http://docker:12434"
+        type: "docker-model-runner"
+        preserve_path: false
 
-  # All standard endpoints
-  - url: "http://ollama1:11434"
-    preserve_path: false
-  - url: "http://ollama2:11434"
-    preserve_path: false
+      # All standard endpoints
+      - url: "http://ollama1:11434"
+        type: "ollama"
+        preserve_path: false
+      - url: "http://ollama2:11434"
+        type: "ollama"
+        preserve_path: false
 ```
 
 ## Getting Help
@@ -395,9 +401,11 @@ When reporting path preservation issues:
 
 ```yaml
 # Your endpoint configuration
-endpoints:
-  - url: "YOUR_ENDPOINT_URL"
-    preserve_path: true/false
+discovery:
+  static:
+    endpoints:
+      - url: "YOUR_ENDPOINT_URL"
+        preserve_path: true/false
 
 # Example request that fails
 curl YOUR_REQUEST
