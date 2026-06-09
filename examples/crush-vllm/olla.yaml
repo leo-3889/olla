@@ -30,19 +30,20 @@ server:
 
 proxy:
   engine: "olla"  # High-performance engine for vLLM
-  connection_timeout: 60s
-  response_timeout: 1200s  # 20 minutes for long generations
-  read_timeout: 600s
-  max_retries: 2
-  retry_backoff: 1s
+  profile: "streaming"  # No buffering, tokens stream immediately
   load_balancer: "priority"  # Priority-based balancing
   stream_buffer_size: 16384  # Larger buffer for high-performance streaming
+  connection_timeout: 60s
+  response_timeout: 20m  # Long generations
+  read_timeout: 10m
+  # Retry is automatic on connection failure; no extra configuration needed.
 
 # Enable Anthropic API translation for Crush CLI dual-provider support
 translators:
   anthropic:
     enabled: true
-    max_message_size: 10485760      # 10MB max request size
+    passthrough_enabled: true        # native passthrough where the backend supports it
+    max_message_size: 10485760       # 10MB max request size
 
 discovery:
   type: "static"
@@ -92,28 +93,3 @@ logging:
 
 engineering:
   show_nerdstats: false
-
-# Profile-based configuration for vLLM optimisation
-# This uses the vLLM profile from config/profiles/vllm.yaml
-profiles:
-  # Override vLLM profile defaults if needed
-  vllm:
-    # High-performance streaming settings
-    streaming:
-      enabled: true
-      buffer_size: 16384
-      flush_interval: 10ms
-
-    # Connection pooling for high throughput
-    connection_pool:
-      max_idle_conns: 100
-      max_conns_per_host: 100
-      idle_conn_timeout: 90s
-
-    # Timeouts optimised for GPU inference
-    timeouts:
-      dial: 10s
-      tls_handshake: 10s
-      response_header: 30s
-      expect_continue: 1s
-      idle_conn: 90s
