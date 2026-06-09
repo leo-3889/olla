@@ -57,7 +57,7 @@ func (a *Application) versionHandler(w http.ResponseWriter, r *http.Request) {
 				"health":  "/internal/health",
 				"status":  "/internal/status",
 				"process": "/internal/process",
-				"version": "/internal/version",
+				"version": "/version",
 			},
 		},
 		Links: map[string]string{

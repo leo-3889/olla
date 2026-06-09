@@ -1841,3 +1841,162 @@ func TestTranslatorMode_SetOnTranslationPath(t *testing.T) {
 	assert.Empty(t, rec.Header().Get(constants.HeaderXOllaMode),
 		"X-Olla-Mode header must not be set on the translation path")
 }
+
+// TestPassthrough_ProfileMessagesPathOverride verifies that the handler uses the
+// backend profile's configured messages_path rather than the translator's default.
+// Docker Model Runner exposes /anthropic/v1/messages, not /v1/messages, so without
+// the override the proxy would hit a 404 on DMR.
+func TestPassthrough_ProfileMessagesPathOverride(t *testing.T) {
+	t.Parallel()
+
+	var capturedPath string
+
+	endpoints := []*domain.Endpoint{
+		{
+			Name:      "dmr-backend",
+			Type:      "docker-model-runner",
+			Status:    domain.StatusHealthy,
+			URLString: "http://localhost:12434",
+		},
+	}
+
+	// DMR has a non-standard Anthropic path.
+	profileLookup := &mockPassthroughProfileLookup{
+		configs: map[string]*domain.AnthropicSupportConfig{
+			"docker-model-runner": {Enabled: true, MessagesPath: "/anthropic/v1/messages"},
+		},
+	}
+
+	trans := &mockPassthroughTranslator{
+		name:               "anthropic",
+		passthroughEnabled: true,
+		profileLookup:      profileLookup,
+	}
+
+	proxyService := &mockProxyService{
+		proxyFunc: func(ctx context.Context, w http.ResponseWriter, r *http.Request, eps []*domain.Endpoint, stats *ports.RequestStats, rlog logger.StyledLogger) error {
+			capturedPath = r.URL.Path
+			w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
+			w.WriteHeader(http.StatusOK)
+			return json.NewEncoder(w).Encode(map[string]interface{}{"type": "message", "id": "msg_dmr"})
+		},
+	}
+
+	app := &Application{
+		logger:           &mockStyledLogger{},
+		proxyService:     proxyService,
+		statsCollector:   &mockStatsCollector{},
+		repository:       &mockEndpointRepository{getEndpointsFunc: func() []*domain.Endpoint { return endpoints }},
+		inspectorChain:   inspector.NewChain(&mockStyledLogger{}),
+		profileFactory:   &mockProfileFactory{},
+		profileLookup:    profileLookup,
+		discoveryService: &mockDiscoveryServiceWithEndpoints{endpoints: endpoints},
+		Config:           &config.Config{},
+	}
+
+	handler := app.translationHandler(trans)
+
+	reqBody, _ := json.Marshal(map[string]interface{}{
+		"model":      "ai/llama3.2",
+		"max_tokens": 512,
+		"messages":   []map[string]interface{}{{"role": "user", "content": "hello"}},
+	})
+
+	req := httptest.NewRequest("POST", "/olla/anthropic/v1/messages", bytes.NewReader(reqBody))
+	req.Header.Set(constants.HeaderContentType, constants.ContentTypeJSON)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, string(constants.TranslatorModePassthrough), rec.Header().Get(constants.HeaderXOllaMode))
+	// The path forwarded to the proxy must use DMR's native path, not the default /v1/messages.
+	assert.Equal(t, "/anthropic/v1/messages", capturedPath,
+		"proxy must use the backend's configured messages_path, not the translator default")
+}
+
+// TestPassthrough_MixedMessagesPathsKeepsNeutralTargetPath verifies that the
+// handler does not apply the first endpoint's backend-specific messages_path to
+// every passthrough candidate. The proxy selector runs later, so mixed native
+// Anthropic backends must keep the translator's neutral target path unless all
+// candidates agree.
+func TestPassthrough_MixedMessagesPathsKeepsNeutralTargetPath(t *testing.T) {
+	t.Parallel()
+
+	var capturedEndpoint string
+	var capturedPath string
+
+	endpoints := []*domain.Endpoint{
+		{
+			Name:      "dmr-backend",
+			Type:      "docker-model-runner",
+			Status:    domain.StatusHealthy,
+			URLString: "http://localhost:12434",
+		},
+		{
+			Name:      "vllm-backend",
+			Type:      "vllm",
+			Status:    domain.StatusHealthy,
+			URLString: "http://localhost:8000",
+		},
+	}
+
+	profileLookup := &mockPassthroughProfileLookup{
+		configs: map[string]*domain.AnthropicSupportConfig{
+			"docker-model-runner": {Enabled: true, MessagesPath: "/anthropic/v1/messages"},
+			"vllm":                {Enabled: true, MessagesPath: "/v1/messages"},
+		},
+	}
+
+	trans := &mockPassthroughTranslator{
+		name:               "anthropic",
+		passthroughEnabled: true,
+		profileLookup:      profileLookup,
+	}
+
+	proxyService := &mockProxyService{
+		proxyFunc: func(ctx context.Context, w http.ResponseWriter, r *http.Request, eps []*domain.Endpoint, stats *ports.RequestStats, rlog logger.StyledLogger) error {
+			require.Len(t, eps, 2)
+			selected := eps[1]
+			capturedEndpoint = selected.Name
+			capturedPath = r.URL.Path
+
+			w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
+			w.Header().Set(constants.HeaderXOllaEndpoint, selected.Name)
+			w.WriteHeader(http.StatusOK)
+			return json.NewEncoder(w).Encode(map[string]interface{}{"type": "message", "id": "msg_vllm"})
+		},
+	}
+
+	app := &Application{
+		logger:           &mockStyledLogger{},
+		proxyService:     proxyService,
+		statsCollector:   &mockStatsCollector{},
+		repository:       &mockEndpointRepository{getEndpointsFunc: func() []*domain.Endpoint { return endpoints }},
+		inspectorChain:   inspector.NewChain(&mockStyledLogger{}),
+		profileFactory:   &mockProfileFactory{},
+		profileLookup:    profileLookup,
+		discoveryService: &mockDiscoveryServiceWithEndpoints{endpoints: endpoints},
+		Config:           &config.Config{},
+	}
+
+	handler := app.translationHandler(trans)
+
+	reqBody, _ := json.Marshal(map[string]interface{}{
+		"model":      "claude-3-5-sonnet-20241022",
+		"max_tokens": 512,
+		"messages":   []map[string]interface{}{{"role": "user", "content": "hello"}},
+	})
+
+	req := httptest.NewRequest("POST", "/olla/anthropic/v1/messages", bytes.NewReader(reqBody))
+	req.Header.Set(constants.HeaderContentType, constants.ContentTypeJSON)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, string(constants.TranslatorModePassthrough), rec.Header().Get(constants.HeaderXOllaMode))
+	assert.Equal(t, "vllm-backend", capturedEndpoint)
+	assert.Equal(t, "/v1/messages", capturedPath,
+		"proxy must not use DMR's first-endpoint path when the selected backend uses /v1/messages")
+}

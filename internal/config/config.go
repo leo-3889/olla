@@ -24,7 +24,7 @@ const (
 	DefaultAllHost           = "0.0.0.0" // local dev may use this
 	DefaultProxyProfile      = constants.ConfigurationProxyProfileAuto
 	DefaultProxyEngine       = "olla"
-	DefaultLoadBalancer      = "priority"
+	DefaultLoadBalancer      = "least-connections"
 	DefaultModelRegistryType = "memory"
 	DefaultDiscoveryType     = "static"
 )
@@ -80,9 +80,9 @@ func DefaultConfig() *Config {
 			LoadBalancer:      DefaultLoadBalancer,
 			Profile:           DefaultProxyProfile,
 			StreamBufferSize:  8 * 1024, // 8KB
-			ConnectionTimeout: 30 * time.Second,
-			ResponseTimeout:   10 * time.Minute,
-			ReadTimeout:       120 * time.Second,
+			ConnectionTimeout: 60 * time.Second,
+			ResponseTimeout:   15 * time.Minute,
+			ReadTimeout:       10 * time.Minute,
 			MaxRetries:        3,
 			RetryBackoff:      500 * time.Millisecond,
 			StickySessions: StickySessionConfig{

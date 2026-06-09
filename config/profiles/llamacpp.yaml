@@ -18,7 +18,7 @@ api:
   openai_compatible: true
 
   # Anthropic Messages API support (b4847+)
-  # llama.cpp is the ONLY backend that supports full token counting via /v1/messages/count_tokens
+  # llama.cpp supports token counting via /v1/messages/count_tokens (dmr and vllm-mlx also support this).
   # This enables accurate prompt token estimation without making actual inference requests
   anthropic_support:
     enabled: true
