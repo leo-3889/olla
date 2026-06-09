@@ -1,10 +1,11 @@
-# Olla Configuration for OpenWebUI Integration
-# This config connects to external Ollama instances and provides a unified interface for OpenWebUI
+# Olla Configuration for Open WebUI Integration
+# This config connects to external Ollama instances and provides a unified interface for Open WebUI.
 
 server:
   host: "0.0.0.0"
   port: 40114
   read_timeout: 30s
+  read_header_timeout: 10s
   write_timeout: 0s # for LLMs streaming, leave this as 0s
   shutdown_timeout: 10s
   request_logging: true
@@ -28,12 +29,10 @@ server:
     ]
 
 proxy:
-  engine: "sherpa" # Available: sherpa, olla
+  engine: "olla" # Available: olla (default), sherpa (maintenance-mode)
   connection_timeout: 40s
   response_timeout: 900s
   read_timeout: 300s
-  max_retries: 3
-  retry_backoff: 500ms
   load_balancer: "priority" # Available: round-robin, least-connections, priority
   stream_buffer_size: 8192
 
@@ -42,8 +41,8 @@ discovery:
   refresh_interval: 30s
   static:
     endpoints:
-      # Add your Ollama instances here
-      # Example: Local Ollama instance (if running on host)
+      # Add your Ollama instances here.
+      # Example: Local Ollama instance (running on the Docker host)
       - url: "http://host.docker.internal:11434"
         name: "local-ollama"
         type: "ollama"
@@ -52,7 +51,7 @@ discovery:
         health_check_url: "/"
         check_interval: 2s
         check_timeout: 1s
-      
+
       # Example: Remote Ollama instance
       # - url: "http://192.168.1.100:11434"
       #   name: "remote-ollama"
@@ -62,7 +61,7 @@ discovery:
       #   health_check_url: "/"
       #   check_interval: 2s
       #   check_timeout: 1s
-      
+
       # Example: Another remote Ollama instance
       # - url: "http://gpu-server:11434"
       #   name: "gpu-ollama"
@@ -86,8 +85,8 @@ model_registry:
   enable_unifier: true
   unification:
     enabled: true
-    stale_threshold: 24h  # How long to keep models in memory after last seen
-    cleanup_interval: 10m  # How often to check for stale models
+    stale_threshold: 24h
+    cleanup_interval: 10m
 
 logging:
   level: "info"  # debug, info, warn, error

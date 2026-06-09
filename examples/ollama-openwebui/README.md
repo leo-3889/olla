@@ -1,43 +1,40 @@
-# OpenWebUI + Olla Integration Example
+# Open WebUI + Olla Integration Example
 
-This example demonstrates how to set up OpenWebUI with Olla as a proxy/load balancer for multiple Ollama instances.
+This example runs [Open WebUI](https://github.com/open-webui/open-webui) with Olla as a proxy and load balancer across one or more Ollama instances.
 
-However, you can also opt to use any OpenAI Compatible API as well (so you can use vLLM, SgLang backends for instance).
+You can also expose an OpenAI-compatible endpoint alongside the Ollama one, which lets you use vLLM, SGLang, or any other OpenAI-compatible backend through the same stack.
 
 ## Architecture
 
 ```
-┌─────────────┐    ┌──────────┐    ┌─────────────────┐
-│  OpenWebUI  │───▶│   Olla   │───▶│ Ollama Instance │
-│ (Port 3000) │    │(Port     │    │  (External)     │
-│             │    │ 40114)   │    │                 │
-└─────────────┘    └──────────┘    └─────────────────┘
-                           │
-                           ├──────▶┌─────────────────┐
-                           │       │ Ollama Instance │
-                           │       │  (External)     │
-                           │       └─────────────────┘
-                           │
-                           └──────▶┌─────────────────┐
-                                   │ Ollama Instance │
-                                   │  (External)     │
-                                   └─────────────────┘
+┌─────────────┐    ┌──────────────┐    ┌─────────────────┐
+│  Open WebUI │───▶│     Olla     │───▶│ Ollama Instance │
+│ (Port 3000) │    │ (Port 40114) │    │   (External)    │
+└─────────────┘    └──────────────┘    └─────────────────┘
+                          │
+                          ├──────▶┌─────────────────┐
+                          │       │ Ollama Instance │
+                          │       │   (External)    │
+                          │       └─────────────────┘
+                          │
+                          └──────▶┌─────────────────┐
+                                  │ Ollama Instance │
+                                  │   (External)    │
+                                  └─────────────────┘
 ```
 
 ## Quick Start
 
-> [!NOTE]  
-> Olla runs in the container under `/app` so you will have to override within that folder.
->
-> Eg. the `config.yaml` is in `/app/config.yaml`. Logs are available in `/app/logs/`.
+> [!NOTE]
+> Olla runs inside the container under `/app`. The config file is mounted to
+> `/app/config.yaml` and logs are written to `/app/logs/`.
 
-1. **Edit `olla.yaml`** - Add your Ollama server URLs:
+1. **Edit `olla.yaml`** - add your Ollama server URLs under `discovery.static.endpoints`:
    ```yaml
    discovery:
-     type: "static"
      static:
        endpoints:
-         - url: "http://192.168.1.100:11434"  # Your Ollama server
+         - url: "http://192.168.1.100:11434"
            name: "my-ollama"
            type: "ollama"
            priority: 100
@@ -52,30 +49,38 @@ However, you can also opt to use any OpenAI Compatible API as well (so you can u
    docker compose up -d
    ```
 
-3. **Access OpenWebUI** at http://localhost:3000
-
-**Files needed:**
-- `compose.yaml` (provided)
-- `olla.yaml` (edit with your Ollama servers)
+3. **Access Open WebUI** at http://localhost:3000
 
 ## How It Works
 
-This Docker Compose stack runs:
-- **Olla** - Proxy that load balances across your Ollama servers
-- **OpenWebUI** - Web interface that connects to Olla instead of directly to Ollama
+The Docker Compose stack runs two services:
 
-The `olla.yaml` file gets mounted to `/app/config.yaml` inside the Olla container.
+- **Olla** - receives requests from Open WebUI and load balances them across your Ollama servers.
+- **Open WebUI** - the chat interface, configured to talk to Olla instead of Ollama directly.
+
+Open WebUI connects to Olla over the internal Docker network (`olla-network`) using the service name `olla`.
+
+### Connection endpoints
+
+| Protocol | Open WebUI env var | Olla URL |
+|---|---|---|
+| Ollama API | `OLLAMA_BASE_URL` | `http://olla:40114/olla/ollama` |
+| OpenAI-compatible | `OPENAI_API_BASE_URL` | `http://olla:40114/olla/proxy/v1` |
+
+`OLLAMA_BASE_URL` does not include a path suffix - Open WebUI appends `/api/*` paths itself.
+`OPENAI_API_BASE_URL` must include `/v1` - Open WebUI forwards it verbatim.
+
+The default `compose.yaml` uses the Ollama endpoint. Uncomment the `OPENAI_API_BASE_URL` lines to also enable the OpenAI-compatible connection.
 
 ## Adding Ollama Instances
 
-To add more Ollama instances, edit the `olla.yaml` file:
+Edit `olla.yaml` and add entries under `discovery.static.endpoints`:
 
 ```yaml
 discovery:
-  type: "static"
   static:
     endpoints:
-      # High-priority local instance
+      # High-priority local instance (running on Docker host)
       - url: "http://host.docker.internal:11434"
         name: "local-ollama"
         type: "ollama"
@@ -84,8 +89,8 @@ discovery:
         health_check_url: "/"
         check_interval: 2s
         check_timeout: 1s
-      
-      # Medium-priority remote instance
+
+      # Medium-priority remote GPU server
       - url: "http://gpu-server.local:11434"
         name: "gpu-server"
         type: "ollama"
@@ -94,7 +99,7 @@ discovery:
         health_check_url: "/"
         check_interval: 2s
         check_timeout: 1s
-      
+
       # Low-priority backup instance
       - url: "http://backup.local:11434"
         name: "backup-ollama"
@@ -105,6 +110,7 @@ discovery:
         check_interval: 2s
         check_timeout: 1s
 ```
+
 ## Monitoring
 
 ### Check Olla Health
@@ -117,19 +123,19 @@ curl http://localhost:40114/internal/health
 curl http://localhost:40114/internal/status/endpoints
 ```
 
-### Check Available All Available Models
+### List All Available Models
 ```bash
 curl http://localhost:40114/olla/models
 ```
 
-### View Unified Models (What OpenWebUI Sees)
+### View Models via Ollama API (what Open WebUI sees)
 ```bash
 curl http://localhost:40114/olla/ollama/api/tags
 ```
 
 ## Troubleshooting
 
-### OpenWebUI Can't Connect to Models
+### Open WebUI Can't Connect to Models
 
 1. **Check Olla health**:
    ```bash
@@ -151,14 +157,13 @@ curl http://localhost:40114/olla/ollama/api/tags
 
 1. **Verify Ollama instances are accessible**:
    ```bash
-   # Test direct connection to your Ollama instance
    curl http://your-ollama-host:11434/
    ```
 
 2. **Check Docker networking**:
-   - Use `host.docker.internal` for Ollama running on Docker host
-   - Use actual IP addresses for remote instances
-   - Ensure firewall allows connections
+   - Use `host.docker.internal` for Ollama running on the Docker host.
+   - Use actual IP addresses for remote instances.
+   - Ensure firewall rules allow connections on port 11434.
 
 3. **Review Olla logs**:
    ```bash
@@ -167,22 +172,16 @@ curl http://localhost:40114/olla/ollama/api/tags
 
 ### Performance Issues
 
-1. **Switch to high-performance engine**:
-   ```yaml
-   proxy:
-     engine: "olla"  # Instead of "sherpa"
-   ```
-
-2. **Adjust timeouts**:
+1. **Adjust timeouts for very long responses**:
    ```yaml
    proxy:
      connection_timeout: 60s
-     response_timeout: 1200s  # 20 minutes for very long responses
+     response_timeout: 1200s  # 20 minutes for long generations
    ```
 
 ## Environment Variables
 
-You can override configuration using environment variables:
+You can override Olla config using environment variables in `compose.yaml`:
 
 ```yaml
 services:
@@ -190,29 +189,28 @@ services:
     environment:
       - OLLA_SERVER_HOST=0.0.0.0
       - OLLA_SERVER_PORT=40114
-      - OLLA_PROXY_ENGINE=sherpa
+      - OLLA_PROXY_ENGINE=olla
       - OLLA_LOGGING_LEVEL=info
 ```
 
 ## Advanced Configuration
 
-### Custom OpenWebUI Settings
+### Open WebUI with Both Ollama and OpenAI-Compatible Endpoints
 
 ```yaml
 services:
   openwebui:
     environment:
+      # Ollama API (no /v1 suffix - Open WebUI appends its own paths)
       - OLLAMA_BASE_URL=http://olla:40114/olla/ollama
-      - WEBUI_NAME=My Olla Setup
-      - WEBUI_URL=http://localhost:3000
-      - WEBUI_SECRET_KEY=your-secret-key-here
-      - DEFAULT_MODELS=llama3.2:latest,mistral:latest
-      - DEFAULT_USER_ROLE=user
+      # OpenAI-compatible API (must include /v1)
+      - OPENAI_API_BASE_URL=http://olla:40114/olla/proxy/v1
+      - OPENAI_API_KEY=olla
 ```
 
-### GPU Support for Local Ollama
+### GPU Support for a Local Ollama Instance
 
-If you want to also run a local Ollama instance with GPU support:
+If you want to run a local Ollama instance alongside the stack:
 
 ```yaml
 services:
@@ -238,11 +236,10 @@ services:
       - ollama
 ```
 
-Then update `olla.yaml` to use `http://ollama:11434` instead of `host.docker.internal`.
+Then set the Ollama endpoint URL in `olla.yaml` to `http://ollama:11434`.
 
 ## Support
 
-For issues with:
-- **Olla**: Check the [Olla GitHub repository](https://github.com/thushan/olla)
-- **OpenWebUI**: Check the [OpenWebUI GitHub repository](https://github.com/open-webui/open-webui)
-- **Ollama**: Check the [Ollama GitHub repository](https://github.com/ollama/ollama)
+- **Olla**: [github.com/thushan/olla](https://github.com/thushan/olla)
+- **Open WebUI**: [github.com/open-webui/open-webui](https://github.com/open-webui/open-webui)
+- **Ollama**: [github.com/ollama/ollama](https://github.com/ollama/ollama)
