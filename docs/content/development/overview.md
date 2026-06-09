@@ -21,7 +21,7 @@ cd olla
 make deps
 
 # Development workflow
-make dev      # Build debug binary (./bin/olla-dev) — see setup.md for `air` hot-reload
+make dev      # Build debug binary (./bin/olla-dev), see setup.md for `air` hot-reload
 make test     # Run tests
 make ready    # Pre-commit checks
 ```
@@ -155,7 +155,7 @@ make ready
 # Unit tests
 make test
 
-# With race detection (short tests only — matches what make test-race runs)
+# With race detection (short tests only, matches what make test-race runs)
 go test -race -short ./...
 
 # Benchmarks

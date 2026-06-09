@@ -61,7 +61,7 @@ stateDiagram-v2
 
 ## Implementation Details
 
-There are two separate circuit breaker implementations — one in the health checker and one embedded in the Olla proxy engine:
+There are two separate circuit breaker implementations: one in the health checker and one embedded in the Olla proxy engine:
 
 **Health-checker circuit breaker** (`internal/adapter/health/circuit_breaker.go`):
 

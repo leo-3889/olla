@@ -75,7 +75,7 @@ make dev
 |---------|-------------|
 | `make test` | Run all tests |
 | `make test-race` | Run tests with race detection |
-| `make test-cover` | Generate coverage report |
+| `make test-cover` | Run tests with coverage (`make test-cover-html` writes coverage.html) |
 | `make bench` | Run benchmarks |
 
 ### Code Quality

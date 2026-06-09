@@ -113,10 +113,10 @@ Contains the business logic and domain models.
 
 #### Domain Entities
 
-The actual structs — do not invent fields not present in the source:
+The actual structs (do not invent fields not present in the source):
 
 ```go
-// internal/core/domain/endpoint.go (key fields only — see source for full definition)
+// internal/core/domain/endpoint.go (key fields only, see source for full definition)
 type Endpoint struct {
     URL              *url.URL
     Name             string
@@ -194,11 +194,11 @@ Infrastructure implementations of the core ports.
 
 Two implementations with different trade-offs:
 
-**Sherpa Engine** - Simple and maintainable (illustrative — see `internal/adapter/proxy/sherpa/service.go` for exact signatures):
+**Sherpa Engine** - Simple and maintainable (illustrative, see `internal/adapter/proxy/sherpa/service.go` for exact signatures):
 
 ```go
 // internal/adapter/proxy/sherpa/service.go
-// Service (not SherpaProxy) — uses a single shared http.Transport plus a buffer pool.
+// Service (not SherpaProxy) uses a single shared http.Transport plus a buffer pool.
 type Service struct {
     *core.BaseProxyComponents
     transport     *http.Transport
@@ -208,9 +208,9 @@ type Service struct {
 }
 ```
 
-Sherpa does not implement circuit breaking — it is maintenance-mode. See `internal/adapter/proxy/sherpa/service.go:28` for the explicit disclaimer.
+Sherpa does not implement circuit breaking; it is maintenance-mode. See `internal/adapter/proxy/sherpa/service.go:28` for the explicit disclaimer.
 
-**Olla Engine** - High-performance (illustrative — see `internal/adapter/proxy/olla/service.go` for exact signatures):
+**Olla Engine** - High-performance (illustrative, see `internal/adapter/proxy/olla/service.go` for exact signatures):
 
 ```go
 // internal/adapter/proxy/olla/service.go
@@ -292,7 +292,7 @@ func (p *PriorityBalancer) Select(ctx context.Context,
 
 #### Statistics (`/internal/adapter/stats/`)
 
-Lock-free using `xsync.Counter` and `xsync.Map` (illustrative — see `internal/adapter/stats/collector.go` for full fields):
+Lock-free using `xsync.Counter` and `xsync.Map` (illustrative, see `internal/adapter/stats/collector.go` for full fields):
 
 ```go
 // internal/adapter/stats/collector.go
@@ -372,19 +372,20 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 Services follow a managed lifecycle with dependency injection:
 
 ```go
-// internal/app/app.go
+// internal/app/services/manager.go
 type ManagedService interface {
     Name() string
-    Dependencies() []string
     Start(ctx context.Context) error
     Stop(ctx context.Context) error
+    Dependencies() []string
 }
 
-// Service Manager uses Kahn's algorithm for topological sorting
+// ServiceManager uses topological sorting for dependency-ordered startup.
+// Illustrative field names; see manager.go for the exact struct.
 type ServiceManager struct {
-    services  map[string]ManagedService
-    order     []string  // Startup order
-    mu        sync.RWMutex
+    services   map[string]ManagedService
+    startOrder []string // dependency-resolved start order
+    mu         sync.RWMutex
 }
 ```
 
@@ -425,7 +426,7 @@ type Pool[T any] struct {
     new  func() T
 }
 
-// NewLitePool is the only constructor — there is no separate reset parameter.
+// NewLitePool is the only constructor; there is no separate reset parameter.
 pool, err := pool.NewLitePool(func() *[]byte {
     buf := make([]byte, streamBufferSize)
     return &buf

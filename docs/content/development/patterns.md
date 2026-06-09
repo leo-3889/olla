@@ -68,7 +68,7 @@ func (s *ModelStats) GetAverageLatency() time.Duration {
 
 ### Circuit Breaker State Machine
 
-There are two circuit breaker implementations. Neither uses `atomic.Int64` wrapper types — both use raw `int64` fields with `sync/atomic` package calls.
+There are two circuit breaker implementations. Neither uses `atomic.Int64` wrapper types; both use raw `int64` fields with `sync/atomic` package calls.
 
 **Health-checker CB** (`internal/adapter/health/circuit_breaker.go`): keyed by endpoint URL in an `xsync.Map`; threshold = 3; state encoded as `int32` (`isOpen`).
 
@@ -100,7 +100,7 @@ type circuitBreaker struct {
 }
 ```
 
-One success closes the circuit in both implementations. HTTP 5xx responses do NOT trip either circuit breaker — only transport errors do (issue #144).
+One success closes the circuit in both implementations. HTTP 5xx responses do NOT trip either circuit breaker; only transport errors do (issue #144).
 
 ### Worker Pool Pattern
 
@@ -166,14 +166,14 @@ Type-safe object pooling with generics. The real implementation is in `pkg/pool/
 type Pool[T any] struct {
     pool sync.Pool
     new  func() T
-    // No separate reset field — types implement Resettable instead
+    // No separate reset field; types implement Resettable instead
 }
 
 // NewLitePool is the sole constructor; it takes only a constructor function.
 // If T implements Reset(), Put() calls it automatically.
 func NewLitePool[T any](newFn func() T) (*Pool[T], error)
 
-// Usage — types that need zeroing implement Resettable:
+// Usage: types that need zeroing implement Resettable:
 type requestContext struct { ... }
 func (r *requestContext) Reset() { r.requestID = ""; r.startTime = time.Time{} }
 
