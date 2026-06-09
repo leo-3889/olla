@@ -27,10 +27,10 @@ More companies are moving workloads to local or on-premises (or own-cloud hosted
 Perfect for enthusiasts running multiple LLM instances:
 
 - **Multi-GPU Setups**: Route between different models on various GPUs
-- **Model Experimentation**: Easy switching between Ollama, LM Studio and OpenAI backends  
+- **Model Experimentation**: Easy switching between Ollama, LM Studio and OpenAI-compatible backends
 - **Resource Management**: Automatic failover when local resources are busy
 - **Cost Optimisation**: Priority routing (local first, cloud fallback via native [LiteLLM](integrations/backend/litellm.md) support)
-- **Hybrid Cloud**: Access GPT-4, Claude, and 100+ cloud models when needed
+- **Hybrid Cloud**: Access cloud models when needed via a LiteLLM backend (GPT-4, Claude, and 100+ providers)
 
 ```yaml
 # Home lab config - local first, cloud fallback
@@ -39,7 +39,7 @@ discovery:
   static:
     endpoints:
       - name: "rtx-4090-mobile"
-        url: "http://localhost:11434" 
+        url: "http://localhost:11434"
         type: "ollama"
         priority: 100  # Highest priority - use local when available
         
@@ -81,7 +81,7 @@ Seamlessly combine local and cloud models with native LiteLLM support:
 
 - **Smart Routing**: Use local models for sensitive data, cloud for complex tasks
 - **Cost Control**: Prioritise free local models, failover to paid APIs
-- **Best-of-Both**: GPT-4 for coding, local Llama for chat, Claude for analysis
+- **Best-of-Both**: Cloud models via LiteLLM for complex tasks, local Llama for everyday chat
 - **Unified Interface**: One API endpoint for all models (local and cloud)
 
 ```yaml
@@ -164,15 +164,15 @@ discovery:
         priority: 50
       - url: "http://localhost:1234"
         name: "local-lm-studio"
-        type: "lmstudio"
+        type: "lm-studio"
         priority: 50
       - url: "http://corp-ollama.acmecorp.com:11434"
         name: "work-ollama"
         type: "ollama"
         priority: 100
       - url: "http://corp-lmstudio.acmecorp.com:1234"
-        name: "local-lm-studio"
-        type: "work-lmstudio"
+        name: "work-lm-studio"
+        type: "lm-studio"
         priority: 100
 ```
 
