@@ -11,10 +11,10 @@ This guide covers performance optimisation techniques for Olla deployments.
 > :memo: **Default Configuration**
 > ```yaml
 > proxy:
->   engine: "sherpa"              # Simple, maintainable engine
->   load_balancer: "priority"     # Fastest routing decisions
->   stream_buffer_size: 8192      # 8KB buffer (balanced)
->   connection_timeout: 30s       # Connection reuse duration
+>   engine: "olla"                     # High-performance engine (default)
+>   load_balancer: "least-connections" # Routes to least busy endpoint
+>   stream_buffer_size: 8192           # 8KB buffer (balanced)
+>   connection_timeout: 60s            # Backend connection timeout
 > 
 > server:
 >   write_timeout: 0s             # Required for streaming
@@ -22,8 +22,8 @@ This guide covers performance optimisation techniques for Olla deployments.
 > ```
 > **Performance Defaults**:
 > 
-> - Sherpa engine for simplicity (use "olla" for production)
-> - Priority load balancer for lowest CPU usage
+> - Olla engine for production-grade throughput and streaming (default)
+> - Least-connections load balancer for optimal response times
 > - 8KB buffer size for balanced performance
 > 
 > **Environment Variables**: `OLLA_PROXY_ENGINE`, `OLLA_PROXY_LOAD_BALANCER`

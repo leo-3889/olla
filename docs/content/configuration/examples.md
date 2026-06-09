@@ -18,7 +18,7 @@ server:
   port: 40114
 
 proxy:
-  engine: "sherpa"
+  engine: "olla"
   load_balancer: "priority"
 
 discovery:
@@ -48,7 +48,7 @@ server:
   request_logging: true
 
 proxy:
-  engine: "sherpa"
+  engine: "olla"
   profile: "auto"
   load_balancer: "priority"
   connection_timeout: 30s
@@ -642,7 +642,7 @@ server:
   port: 40114
 
 proxy:
-  engine: "sherpa"
+  engine: "olla"
   load_balancer: "priority"
 
 discovery:
@@ -756,9 +756,6 @@ proxy:
 
 discovery:
   type: "static"
-  health_check:
-    initial_delay: 1s  # Quick startup checks
-  
   model_discovery:
     enabled: true  # Auto-discover models
     interval: 5m
@@ -824,7 +821,7 @@ server:
   port: 40114
 
 proxy:
-  engine: "sherpa"
+  engine: "olla"
   load_balancer: "priority"
   # Only load profiles that support embeddings
   profile_filter:
@@ -1054,7 +1051,8 @@ Example showing environment variable overrides:
 # Set via environment variables
 export OLLA_SERVER_PORT=8080
 export OLLA_PROXY_ENGINE=olla
-export OLLA_LOG_LEVEL=debug
+export OLLA_LOGGING_LEVEL=debug   # runtime log level (overrides logging.level in YAML)
+# OLLA_LOG_LEVEL sets the bootstrap-only logger active before the config file loads
 
 # Minimal config.yaml
 ```
