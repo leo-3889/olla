@@ -38,9 +38,10 @@ cd olla
 # Install Go dependencies
 make deps
 
-# Install development tools
-go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-go install github.com/dkorunic/betteralign@latest
+# Install development tools at pinned versions
+make install-deps
+
+# Or install air for hot reload (not managed by make install-deps)
 go install github.com/cosmtrek/air@latest
 ```
 
@@ -83,14 +84,14 @@ make dev
 |---------|-------------|
 | `make fmt` | Format code with gofmt |
 | `make lint` | Run golangci-lint |
-| `make ready` | Run all checks (test-short, test-race, fmt, lint, align) |
+| `make ready` | Run all pre-commit checks (test-short + test-race + fmt + vet + lint + align) |
 
 ### Docker Commands
 
 | Command | Description |
 |---------|-------------|
 | `make docker-build-local` | Build Docker image locally for amd64 (no goreleaser required) |
-| `make docker-build-local-arm64` | Build Docker image locally for ARM64 (no goreleaser required) |
+| `make docker-build-local-arm64` | Build Docker image locally for ARM64 (convenience wrapper for `docker-build-local`) |
 | `make docker-build` | Build Docker image with goreleaser (requires goreleaser installed) |
 | `make docker-run` | Run Docker image with local config (amd64) |
 
