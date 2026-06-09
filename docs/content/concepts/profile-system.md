@@ -61,7 +61,7 @@ Profiles are loaded during Olla startup in a specific order:
 
 Basic meta data about an LLM Backend is provided in these fields.
 
-For example, the `vllm.yaml` file contains:
+For example, the `ollama.yaml` file contains:
 
 ```yaml
 name: ollama
@@ -304,10 +304,12 @@ api:
 | Backend | Min Version | Token Counting | Notes |
 |---------|-------------|----------------|-------|
 | vLLM | v0.11.1+ | No | High-performance inference |
-| llama.cpp | b4847+ | Yes | Only backend with full token counting |
+| vLLM-MLX | recent | Yes | Apple Silicon optimised |
+| llama.cpp | b4847+ | Yes | Wide format coverage |
 | LM Studio | v0.4.1+ | No | Desktop inference |
 | Ollama | v0.14.0+ | No | Popular local inference |
-| oMLX | -- | No | Apple Silicon (MLX) multi-model server; passthrough supported, token counting not yet forwarded |
+| oMLX | v0.4.2+ | No | Apple Silicon (MLX) multi-model server; passthrough supported, token counting not yet forwarded |
+| Docker Model Runner | recent | Yes | Containerised local inference |
 
 When a client sends a request to `/olla/anthropic/v1/messages` and a backend has `anthropic_support.enabled: true`, Olla will bypass format translation and forward the request directly. This is referred to as **passthrough mode** and has near-zero overhead. See [API Translation](api-translation.md#passthrough-mode) for details.
 
@@ -663,11 +665,14 @@ Don't update versions in natively supported profiles however.
 | ollama | `ollama` | `ollama` | `/api/tags`, `/v1/models` |
 | lmstudio | `lm-studio` | `lmstudio`, `lm-studio`, `lm_studio` | `/v1/models` |
 | lemonade | `lemonade` | `lemonade` | `/v1/models` |
-| llamacpp | `llamacpp` | `llamacpp`, `llama-cpp`, `llama_cpp` | None |
+| llamacpp | `llamacpp` | `llamacpp` (aliases `llama-cpp`, `llama_cpp` available but commented out by default) | None |
 | vllm | `vllm` | `vllm` | None |
 | vllm-mlx | `vllm-mlx` | `vllm-mlx` | None |
 | sglang | `sglang` | `sglang` | None |
 | omlx | `omlx` | `omlx` | None |
+| litellm | `litellm` | `litellm` | None |
+| lmdeploy | `lmdeploy` | `lmdeploy` | None |
+| dmr | `docker-model-runner` | `dmr` | None |
 | openai-compatible | `openai-compatible` (or `openai` — alias) | `openai`, `openai-compatible` | None |
 
 ### Required Fields

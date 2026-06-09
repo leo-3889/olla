@@ -59,11 +59,13 @@ Endpoints can be in one of these states:
 | State | Description | Routable | Behaviour |
 |-------|-------------|----------|-----------|
 | **Healthy** | Passing health checks | ✅ Yes | Normal routing |
-| **Busy** | Busy but responding | ✅ Yes | Reduced traffic weight |
+| **Busy** | Responding slowly (above latency threshold) | ✅ Yes | Reduced traffic weight |
 | **Warming** | Coming back online | ✅ Yes | Limited test traffic |
 | **Offline** | Network/connection errors | ❌ No | Awaiting recovery |
 | **Unhealthy** | Failing health checks | ❌ No | No traffic routed |
 | **Unknown** | Not yet checked | ❌ No | Awaiting first check |
+| **ConfigError** | Reachable but credentials rejected (401/403) | ❌ No | Operator must fix auth config; circuit breaker not tripped |
+| **RateLimited** | Endpoint returned 429 | ❌ No | Scheduler honours Retry-After before next probe; circuit breaker not tripped |
 
 ## Configuration
 
@@ -127,23 +129,26 @@ When using relative paths, base path prefixes in the endpoint URL are **automati
 
 ### Check Intervals
 
-Configure how frequently health checks run:
+Configure how frequently health checks are eligible to run:
 
 ```yaml
 endpoints:
   - url: "http://localhost:11434"
-    check_interval: 5s    # Fast checks for local
+    check_interval: 5s    # Due for check every 5s
     
   - url: "http://remote:11434"
-    check_interval: 30s   # Slower for remote
+    check_interval: 30s   # Due for check every 30s
 ```
+
+!!! note "Effective check frequency"
+    The health checker runs a background poller every 30 seconds. An endpoint becomes eligible for a check once its `check_interval` has elapsed since the last check, but the poller will only pick it up on its next 30-second tick. This means the effective minimum check granularity is approximately 30 seconds. The `check_interval` value still controls backoff calculation during failures and determines when the endpoint is next scheduled.
 
 **Recommendations**:
 
-- **Local endpoints**: 2-5 seconds
-- **LAN endpoints**: 5-10 seconds  
-- **Remote/Cloud**: 15-30 seconds
-- **Critical endpoints**: 2-3 seconds
+- **Local endpoints**: 5-30 seconds (higher values match the poller granularity)
+- **LAN endpoints**: 15-30 seconds
+- **Remote/Cloud**: 30-60 seconds
+- **Critical endpoints**: 5-10 seconds
 
 ### Check Timeouts
 
@@ -162,23 +167,27 @@ endpoints:
 
 ### Backoff Strategy
 
-When an endpoint fails, Olla implements exponential backoff:
+When an endpoint fails, Olla widens the gap between successive health checks rather than hammering a broken backend. The multiplier doubles on each consecutive failure (`2 → 4 → 8 → ...`), capped at `12`. The resulting wait is also clamped to 60 seconds, whichever bound is hit first.
 
-1. **First failure**: Check again after `check_interval` (no backoff)
-2. **Second failure**: Wait `check_interval * 2`
-3. **Third failure**: Wait `check_interval * 4`
-4. **Fourth failure**: Wait `check_interval * 8`
-5. **Max backoff**: Capped at `check_interval * 12` or 60 seconds (whichever is lower)
+| Consecutive failures | Multiplier applied to `check_interval` | Wait (for `check_interval: 5s`) |
+|---|---|---|
+| 1 (first failure) | 1 (normal interval) | 5s |
+| 2 | 2 | 10s |
+| 3 | 4 | 20s |
+| 4 | 8 | 40s |
+| 5+ | 12 (max) | 60s _(capped)_ |
 
-This reduces load on failing endpoints while still detecting recovery quickly on the first failure.
+> The first failure deliberately retries at the normal interval — most transient errors clear on the very next check, so adding backoff there would slow recovery for the common case. The cap means even a long-dead endpoint is probed at least once per minute.
 
-### Fast Recovery Detection
+The HTTP client also has its own attempt-level retry loop (max 2 retries per probe, base delay 100 ms, capped at 2 s, with ±25 % jitter) — this fires before any per-endpoint backoff kicks in.
 
-When an unhealthy endpoint might be recovering:
+### Recovery
 
-1. **Half-Open State**: Send limited test traffic
-2. **Success Threshold**: On first successful check, mark healthy
-3. **Full Traffic**: Resume normal routing
+A single successful health check resets the backoff multiplier to `1` and returns the endpoint to its normal `check_interval`. There is no half-open phase: as soon as one probe succeeds, the endpoint is eligible to receive full traffic again. On the same transition, Olla triggers a model-discovery refresh so the unified catalogue reflects what the recovered backend now serves.
+
+### HTTP Circuit Breaker (separate from endpoint state)
+
+The HTTP transport carries its own circuit breaker that trips after `3` consecutive failures (per upstream URL) and stays open for `30 s` before allowing another attempt. This is independent of the per-endpoint adaptive interval above and only affects the in-process HTTP client — it is not configurable from YAML.
 
 ### Automatic Model Discovery on Recovery
 
@@ -256,7 +265,7 @@ Health checks work with the circuit breaker to prevent cascade failures:
 ```
      Closed (Normal)
           │
-          ├─── 3 failures ──▶ Open (No Traffic)
+          ├─── N failures ──▶ Open (No Traffic)
           │                        │
           │                        │ 30s timeout
           │                        ▼
@@ -269,12 +278,13 @@ Health checks work with the circuit breaker to prevent cascade failures:
 
 ### Circuit Breaker Behaviour
 
-The circuit breaker activates after consecutive failures:
+There are two independent circuit breakers. The health-checker circuit breaker governs health probes; the Olla proxy engine has a separate per-endpoint circuit breaker that governs live request traffic (Sherpa has none).
 
-1. **Failure Threshold**: 3 failures (health checker) or 5 failures (Olla proxy engine)
+1. **Failure Threshold**: 3 consecutive transport failures (health checker) or 5 (Olla proxy engine)
 2. **Open Duration**: Circuit stays open for 30 seconds
 3. **Half-Open Test**: Allows one test request through
 4. **Recovery**: First successful request closes the circuit
+5. **HTTP 5xx responses do not trip either circuit breaker** — only transport-level errors (connection refused, reset, timeout) count as failures
 
 ## Monitoring Health Status
 

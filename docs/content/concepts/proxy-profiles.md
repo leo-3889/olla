@@ -19,7 +19,7 @@ Proxy profiles control how Olla handles HTTP streaming and response buffering.
 > - `streaming`
 > - `standard`
 > 
-> **Environment Variable**: Unsupported
+> **Environment Variable**: `OLLA_PROXY_PROFILE`
 
 ## Available Profiles
 
@@ -172,7 +172,7 @@ For interactive chat with streaming responses:
 
 ```yaml
 proxy:
-  engine: "sherpa"
+  engine: "olla"
   profile: "streaming"
   stream_buffer_size: 4096  # Smaller chunks for faster updates
   

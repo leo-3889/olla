@@ -58,9 +58,9 @@ The `key_sources` list is evaluated in order; the first source that produces a n
 
 | Source | How the key is derived | When to prefer it | Caveats |
 |---|---|---|---|
-| `session_header` | FNV-64a hash of the `X-Olla-Session-ID` request header | Explicit client opt-in; most reliable | Client must send the header consistently |
-| `prefix_hash` | FNV-64a hash of the first `prefix_hash_bytes` bytes of the `messages` JSON field | No client changes needed; best cache locality | Two conversations with identical opening messages share a session |
-| `auth_header` | FNV-64a hash of the `Authorization` header value | Per-user affinity without client changes | Breaks if the token rotates mid-conversation; unreliable with shared tokens |
+| `session_header` | 64-bit FNV-1a hash of the `X-Olla-Session-ID` request header | Explicit client opt-in; most reliable | Client must send the header consistently |
+| `prefix_hash` | 64-bit FNV-1a hash of the first `prefix_hash_bytes` bytes of the `messages` JSON field | No client changes needed; best cache locality | Two conversations with identical opening messages share a session |
+| `auth_header` | 64-bit FNV-1a hash of the `Authorization` header value | Per-user affinity without client changes | Breaks if the token rotates mid-conversation; unreliable with shared tokens |
 | `ip` | Client IP address (extracted via `net.SplitHostPort`) | Simple deployments with no NAT | Unreliable behind NAT, load balancers, or Docker networking |
 
 All header and token values are hashed before storage; plaintext secrets are never written to the session store.
@@ -78,7 +78,7 @@ Sessions do not live forever. Three mechanisms remove them:
 **Health-based purge**: when the health checker transitions a backend to an unhealthy state, Olla immediately calls `PurgeDeadEndpoints` with the current routable set. Any session entry pointing to the now-dead backend is deleted without waiting for TTL. The next request for that session falls through to the underlying balancer and receives a `repin`.
 
 !!! note "Busy endpoints are not purged"
-    A backend in the **Busy** state is still considered routable (`IsRoutable() == true`). Sticky sessions are preserved through Busy transitions; the backend is overloaded but still serving. Only transitions to Unhealthy, Offline, or Unknown trigger a purge.
+    A backend in the **Busy** state is still considered routable (`IsRoutable() == true`). Sticky sessions are preserved through Busy transitions; the backend is overloaded but still serving. A purge fires only when an endpoint transitions **from** a routable state (Healthy, Busy, Warming) **to** any non-routable state (Unhealthy, Offline, Unknown, ConfigError, RateLimited). Unknown→Unhealthy does not trigger a purge because Unknown is already non-routable and nothing could have been pinned to it.
 
 ```mermaid
 stateDiagram-v2
@@ -202,7 +202,7 @@ Sticky sessions trade load distribution for cache locality. They are not always 
 
 **Decorator pattern**: `StickySessionWrapper` in `internal/adapter/balancer/sticky.go` wraps any `domain.EndpointSelector` implementation. No factory or registry changes are needed to add a new inner balancer; the wrapper is applied in `ProxyServiceWrapper.applyStickySessions()` inside `internal/app/services/proxy.go`.
 
-**Hashing**: FNV-64a (`hash/fnv`) is used for all key derivation. It is non-cryptographic and intended only as a compact routing hint; collisions are acceptable (two different sessions occasionally land on the same backend). Do not use these keys as security tokens.
+**Hashing**: 64-bit FNV-1a (`hash/fnv`) is used for all key derivation. It is non-cryptographic and intended only as a compact routing hint; collisions are acceptable (two different sessions occasionally land on the same backend). Do not use these keys as security tokens.
 
 **Import cycle avoidance**: `StickyOutcome` is defined in `internal/core/domain/routing.go` rather than in `internal/adapter/balancer/sticky.go`. This allows `internal/adapter/proxy/core` (the proxy engine shared layer) to read the outcome and write response headers without importing the balancer package, which would create a cycle.
 

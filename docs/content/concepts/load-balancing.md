@@ -3,13 +3,13 @@
 > :memo: **Default Configuration**
 > ```yaml
 > proxy:
->   load_balancer: "priority"  # priority, round-robin, or least-connections
+>   load_balancer: "least-connections"  # least-connections, priority, or round-robin
 > ```
 > **Supported**:
 > 
-> - `priority` _(default)_ - Routes to highest priority endpoint
+> - `least-connections` _(default)_ - Routes to least busy endpoint
+> - `priority` - Routes to highest priority endpoint
 > - `round-robin` - Cycles through endpoints evenly
-> - `least-connections` - Routes to least busy endpoint
 > 
 > **Environment Variable**: `OLLA_PROXY_LOAD_BALANCER`
 
@@ -111,7 +111,7 @@ discovery:
 
 ### Least Connections
 
-Routes to the endpoint with fewest active connections.
+Routes to the endpoint with the fewest active connections.
 
 **How it works:**
 
@@ -161,10 +161,13 @@ All strategies respect endpoint health status:
 | Status | Routable | Weight | Description |
 |--------|----------|--------|-------------|
 | Healthy | ✅ Yes | 1.0 | Fully operational |
-| Busy | ✅ Yes | 0.3 | Busy but working |
+| Busy | ✅ Yes | 0.3 | Responding but slow |
 | Warming | ✅ Yes | 0.1 | Coming back online |
 | Unhealthy | ❌ No | 0.0 | Failed health checks |
 | Unknown | ❌ No | 0.0 | Not yet checked |
+| Offline | ❌ No | 0.0 | Network/connection error |
+| ConfigError | ❌ No | 0.0 | Credentials rejected (401/403) |
+| RateLimited | ❌ No | 0.0 | Endpoint returned 429 |
 
 ### Circuit Breaker Integration
 
@@ -177,7 +180,7 @@ Olla includes built-in circuit breaker functionality to prevent cascading failur
 - **Half-Open** - Testing recovery with limited requests
 
 !!! note "Circuit Breaker Behaviour"
-    The circuit breaker thresholds are currently hardcoded in the implementation. Configuration support may be added in future versions.
+    There are two independent circuit breakers. The health-checker circuit breaker (threshold: 3 consecutive transport failures, timeout: 30s) operates on health-check probes. The Olla proxy engine has its own per-endpoint circuit breaker (threshold: 5 consecutive transport failures, timeout: 30s) that gates live request traffic. Sherpa has no proxy-level circuit breaker. Both are hardcoded and not configurable via YAML. HTTP 5xx responses do **not** trip either circuit breaker — only transport-level errors (connection refused, reset, timeout) do.
 
 ## Advanced Configurations
 
@@ -286,15 +289,7 @@ logging:
 
 ### Connection Pooling
 
-Optimise connection reuse:
-
-```yaml
-proxy:
-  connection_pool:
-    max_idle_conns: 100
-    max_idle_conns_per_host: 10
-    idle_conn_timeout: 90s
-```
+The Olla proxy engine maintains per-endpoint connection pools with hardcoded defaults (max 200 idle conns, 50 per host, 90s idle timeout). These are not currently configurable via YAML.
 
 ### Timeout Configuration
 
@@ -308,11 +303,8 @@ proxy:
   # Request/response timeout
   response_timeout: 300s
   
-  # Idle connection timeout
-  idle_timeout: 90s
-  
-  # Health check specific
-  health_check_timeout: 5s
+  # Read timeout (response body)
+  read_timeout: 10m
 ```
 
 ### Buffering Strategies
@@ -354,13 +346,17 @@ curl http://localhost:40114/internal/status/endpoints | jq '.endpoints[] | {name
 
 **Solutions:**
 ```yaml
-health:
-  check_interval: 5s      # Reduce for faster detection
-  check_timeout: 2s       # Fail fast on timeouts
-  
-  circuit_breaker:
-    failure_threshold: 3  # Lower for quicker opening
+# Reduce per-endpoint check interval for faster detection
+discovery:
+  static:
+    endpoints:
+      - url: "http://backend:11434"
+        check_interval: 5s   # Reduce for faster detection
+        check_timeout: 2s    # Fail fast on timeouts
 ```
+
+!!! note "Circuit breaker thresholds"
+    The health-checker circuit breaker trips after 3 consecutive transport failures; the Olla proxy engine's per-endpoint circuit breaker trips after 5. Both use a 30s open duration. Neither is configurable via YAML. HTTP 5xx responses do not count as failures for either circuit breaker.
 
 ### Connection Exhaustion
 
@@ -368,15 +364,12 @@ health:
 
 **Solutions:**
 ```yaml
-# Increase connection limits
-proxy:
-  connection_pool:
-    max_idle_conns_per_host: 20  # Increase per-host limit
-    
 # Use least-connections to spread load
 proxy:
   load_balancer: "least-connections"
 ```
+
+The Olla proxy engine manages connection pool limits internally. Per-host limits are not currently configurable via YAML.
 
 ## Best Practices
 
@@ -388,12 +381,18 @@ proxy:
 
 ### 2. Configure Health Checks
 
+Health check settings are per-endpoint, not global:
+
 ```yaml
-health:
-  check_interval: 10s    # Balance between speed and load
-  check_timeout: 5s      # Allow for model loading
-  unhealthy_threshold: 3 # Avoid flapping
+discovery:
+  static:
+    endpoints:
+      - url: "http://backend:11434"
+        check_interval: 10s   # Balance between speed and load
+        check_timeout: 5s     # Allow for model loading
 ```
+
+There is no `unhealthy_threshold` config field. The circuit breaker (3 transport failures for the health checker, 5 for the proxy engine) provides equivalent flap protection automatically.
 
 ### 3. Set Appropriate Priorities
 
@@ -420,8 +419,9 @@ Always have:
 
 - At least one backup endpoint
 - Clear priority tiers
-- Appropriate circuit breaker settings
 - Monitoring and alerting
+
+Circuit breaker settings are hardcoded and do not require operator configuration.
 
 ## Integration Examples
 
@@ -461,7 +461,7 @@ services:
   olla:
     image: thushan/olla
     environment:
-      OLLA_LOAD_BALANCER: "round-robin"
+      OLLA_PROXY_LOAD_BALANCER: "round-robin"
 ```
 
 ### Consul Discovery
