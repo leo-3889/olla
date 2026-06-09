@@ -568,17 +568,23 @@ Use these for:
 
 Configure how Olla selects Lemonade backends:
 
-### Priority-Based (Default)
+### Priority-Based
 
 ```yaml
-balancer:
-  strategy: priority
+proxy:
+  load_balancer: priority
 
-endpoints:
-  - url: "http://npu-server:8000"
-    priority: 100  # Always prefer NPU
-  - url: "http://cpu-server:8000"
-    priority: 75   # Fallback to CPU
+discovery:
+  static:
+    endpoints:
+      - url: "http://npu-server:8000"
+        name: "lemonade-npu"
+        type: "lemonade"
+        priority: 100  # Always prefer NPU
+      - url: "http://cpu-server:8000"
+        name: "lemonade-cpu"
+        type: "lemonade"
+        priority: 75   # Fallback to CPU
 ```
 
 Always uses highest-priority healthy backend.
@@ -586,14 +592,20 @@ Always uses highest-priority healthy backend.
 ### Round-Robin
 
 ```yaml
-balancer:
-  strategy: round_robin
+proxy:
+  load_balancer: round-robin
 
-endpoints:
-  - url: "http://server1:8000"
-    priority: 100
-  - url: "http://server2:8000"
-    priority: 100  # Equal priority
+discovery:
+  static:
+    endpoints:
+      - url: "http://server1:8000"
+        name: "lemonade-1"
+        type: "lemonade"
+        priority: 100
+      - url: "http://server2:8000"
+        name: "lemonade-2"
+        type: "lemonade"
+        priority: 100  # Equal priority
 ```
 
 Distributes requests evenly across backends.
@@ -601,12 +613,18 @@ Distributes requests evenly across backends.
 ### Least Connections
 
 ```yaml
-balancer:
-  strategy: least_connections
+proxy:
+  load_balancer: least-connections
 
-endpoints:
-  - url: "http://server1:8000"
-  - url: "http://server2:8000"
+discovery:
+  static:
+    endpoints:
+      - url: "http://server1:8000"
+        name: "lemonade-1"
+        type: "lemonade"
+      - url: "http://server2:8000"
+        name: "lemonade-2"
+        type: "lemonade"
 ```
 
 Routes to backend with fewest active connections.
@@ -728,17 +746,21 @@ discovery:
 Use tags for hardware-specific routing:
 
 ```yaml
-endpoints:
-  - url: "http://npu-server:8000"
-    name: "lemonade-npu"
-    tags:
-      hardware: npu
-      recipe: oga-npu
-  - url: "http://cpu-server:8000"
-    name: "lemonade-cpu"
-    tags:
-      hardware: cpu
-      recipe: oga-cpu
+discovery:
+  static:
+    endpoints:
+      - url: "http://npu-server:8000"
+        name: "lemonade-npu"
+        type: "lemonade"
+        tags:
+          hardware: npu
+          recipe: oga-npu
+      - url: "http://cpu-server:8000"
+        name: "lemonade-cpu"
+        type: "lemonade"
+        tags:
+          hardware: cpu
+          recipe: oga-cpu
 ```
 
 ### 4. Monitor Health Actively

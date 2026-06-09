@@ -71,9 +71,8 @@ keywords: [llamacpp, llama.cpp, Olla proxy, GGUF models, CPU inference, slot man
         <td>
             <ul>
                 <li><code>/llamacpp</code> (see <a href="/olla/concepts/profile-system/#routing-prefixes">Routing Prefixes</a>)</li>
-                <li><code>/llama-cpp</code></li>
-                <li><code>/llama_cpp</code></li>
             </ul>
+            <small><code>/llama-cpp</code> and <code>/llama_cpp</code> are defined as constants but commented out in <code>config/profiles/llamacpp.yaml</code> by default. Enable them in a custom profile if needed.</small>
         </td>
     </tr>
     <tr>
@@ -161,7 +160,7 @@ discovery:
 
 ## Anthropic Messages API Support
 
-llama.cpp b4847+ natively supports the Anthropic Messages API, enabling Olla to forward Anthropic-format requests directly without translation overhead (passthrough mode). Notably, llama.cpp is the **only backend that supports full token counting** via `/v1/messages/count_tokens`, enabling accurate prompt token estimation without making actual inference requests.
+llama.cpp b4847+ natively supports the Anthropic Messages API, enabling Olla to forward Anthropic-format requests directly without translation overhead (passthrough mode). llama.cpp also advertises native token counting via `/v1/messages/count_tokens`; Olla's public `/olla/anthropic/v1/messages/count_tokens` endpoint currently uses local translator estimation rather than proxying that backend endpoint.
 
 When Olla detects that a llama.cpp endpoint supports native Anthropic format (via the `anthropic_support` section in `config/profiles/llamacpp.yaml`), it will bypass the Anthropic-to-OpenAI translation pipeline and forward requests directly to `/v1/messages` on the backend.
 
@@ -179,7 +178,7 @@ api:
 **Key details**:
 
 - Minimum llama.cpp version: **b4847**
-- Token counting (`/v1/messages/count_tokens`): **Supported** (unique among backends)
+- Native token counting metadata (`/v1/messages/count_tokens`): **Supported**. Olla's public token-count endpoint uses local translator estimation.
 - Passthrough mode is automatic -- no client-side configuration needed
 - Responses include `X-Olla-Mode: passthrough` header when passthrough is active
 - Falls back to translation mode if passthrough conditions are not met
@@ -647,7 +646,7 @@ models:
       - "*nomic*"
       - "*bge*"
 
-# Custom context patterns
+  # Custom context patterns
   context_patterns:
     - pattern: "*-128k*"
       context: 131072
@@ -852,31 +851,43 @@ Deploy multiple llama.cpp instances strategically:
 
 ```yaml
 # Pattern 1: Same model, different servers (load balancing)
-endpoints:
-  - url: "http://server1:8080"
-    name: "llamacpp-1"
-    priority: 100
-  - url: "http://server2:8080"
-    name: "llamacpp-2"
-    priority: 100
+discovery:
+  static:
+    endpoints:
+      - url: "http://server1:8080"
+        name: "llamacpp-1"
+        type: "llamacpp"
+        priority: 100
+      - url: "http://server2:8080"
+        name: "llamacpp-2"
+        type: "llamacpp"
+        priority: 100
 
 # Pattern 2: Different models, different instances
-endpoints:
-  - url: "http://server1:8080"  # llama-3.2-3b-q4
-    name: "llamacpp-small"
-    priority: 90
-  - url: "http://server2:8081"  # mistral-7b-q4
-    name: "llamacpp-medium"
-    priority: 95
+# discovery:
+#   static:
+#     endpoints:
+#       - url: "http://server1:8080"  # llama-3.2-3b-q4
+#         name: "llamacpp-small"
+#         type: "llamacpp"
+#         priority: 90
+#       - url: "http://server2:8081"  # mistral-7b-q4
+#         name: "llamacpp-medium"
+#         type: "llamacpp"
+#         priority: 95
 
 # Pattern 3: Different quantisations, quality tiers
-endpoints:
-  - url: "http://server1:8080"  # Q8 high quality
-    name: "llamacpp-quality"
-    priority: 100
-  - url: "http://server2:8080"  # Q4 balanced
-    name: "llamacpp-balanced"
-    priority: 80
+# discovery:
+#   static:
+#     endpoints:
+#       - url: "http://server1:8080"  # Q8 high quality
+#         name: "llamacpp-quality"
+#         type: "llamacpp"
+#         priority: 100
+#       - url: "http://server2:8080"  # Q4 balanced
+#         name: "llamacpp-balanced"
+#         type: "llamacpp"
+#         priority: 80
 ```
 
 ### 5. Memory Management

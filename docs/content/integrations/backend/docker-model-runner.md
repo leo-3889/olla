@@ -167,7 +167,7 @@ api:
 
 **Key details**:
 
-- Token counting (`/anthropic/v1/messages/count_tokens`): Supported
+- Native token counting metadata (`/anthropic/v1/messages/count_tokens`): Supported by the DMR profile. Olla's public `/olla/anthropic/v1/messages/count_tokens` endpoint currently uses local translator estimation rather than proxying DMR's native endpoint.
 - Passthrough mode is automatic — no client-side configuration needed
 - Responses include `X-Olla-Mode: passthrough` header when passthrough is active
 - Falls back to translation mode if passthrough conditions are not met
@@ -541,16 +541,18 @@ resources:
 If you have both DMR and other backends (e.g., Ollama), set priority to route requests appropriately:
 
 ```yaml
-endpoints:
-  - url: "http://localhost:12434"
-    name: "dmr-local"
-    type: "docker-model-runner"
-    priority: 95   # High priority — local, built-in
+discovery:
+  static:
+    endpoints:
+      - url: "http://localhost:12434"
+        name: "dmr-local"
+        type: "docker-model-runner"
+        priority: 95   # High priority — local, built-in
 
-  - url: "http://localhost:11434"
-    name: "ollama-local"
-    type: "ollama"
-    priority: 80   # Lower priority — fallback
+      - url: "http://localhost:11434"
+        name: "ollama-local"
+        type: "ollama"
+        priority: 80   # Lower priority — fallback
 ```
 
 ## Integration with Tools

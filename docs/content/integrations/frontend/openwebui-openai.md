@@ -130,7 +130,7 @@ server:
   port: 40114
 
 proxy:
-  engine: sherpa           # or: olla (lower overhead), test both
+  engine: olla             # default; or: sherpa (simpler codebase, maintenance mode)
   load_balancer: priority  # or: least-connections
 
 # Service discovery of OpenAI-compatible backends

@@ -479,7 +479,7 @@ models:
       - "deepseek-coder*"
       - "qwen*coder*"
       
-# Context window detection
+  # Context window detection
   context_patterns:
     - pattern: "*-32k*"
       context: 32768
@@ -640,8 +640,8 @@ Account for model loading times:
 
 ```yaml
 proxy:
-  response_timeout: 600s  # 10 minutes for large models (default)
-  connection_timeout: 30s  # Default connection timeout
+  response_timeout: 600s  # 10 minutes for large models
+  connection_timeout: 60s  # Default connection timeout
   
 discovery:
   static:
@@ -655,29 +655,25 @@ discovery:
 #### For GPU Servers
 
 ```yaml
-endpoints:
-  - url: "http://gpu-server:11434"
-    name: "ollama-gpu"
-    priority: 100  # Prefer GPU
-    
-resources:
-  concurrency_limits:
-    - min_memory_gb: 0
-      max_concurrent: 4  # GPU can handle multiple
+discovery:
+  static:
+    endpoints:
+      - url: "http://gpu-server:11434"
+        name: "ollama-gpu"
+        type: "ollama"
+        priority: 100  # Prefer GPU
 ```
 
 #### For CPU Servers
 
 ```yaml
-endpoints:
-  - url: "http://cpu-server:11434"
-    name: "ollama-cpu"
-    priority: 50  # Lower priority
-    
-resources:
-  concurrency_limits:
-    - min_memory_gb: 0
-      max_concurrent: 1  # CPU limited to one
+discovery:
+  static:
+    endpoints:
+      - url: "http://cpu-server:11434"
+        name: "ollama-cpu"
+        type: "ollama"
+        priority: 50  # Lower priority
 ```
 
 ### 4. Monitor Performance

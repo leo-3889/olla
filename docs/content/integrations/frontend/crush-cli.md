@@ -8,7 +8,7 @@ keywords: Crush CLI, Olla, Charmbracelet, OpenAI API, Anthropic API, dual API, l
 
 Crush CLI is a modern terminal AI assistant by Charmbracelet that natively supports both OpenAI and Anthropic APIs. Connect it to Olla to use local LLM infrastructure with seamless provider switching—no cloud API costs.
 
-**Set in Crush CLI (`~/.crush/config.json`):**
+**Set in Crush CLI (`~/.config/crush/crush.json`):**
 
 ```json
 {
@@ -19,10 +19,14 @@ Crush CLI is a modern terminal AI assistant by Charmbracelet that natively suppo
       "api_key": "not-required"
     },
     "olla-openai": {
-      "type": "openai",
+      "type": "openai-compat",
       "base_url": "http://localhost:40114/olla/openai/v1",
       "api_key": "not-required"
     }
+  },
+  "models": {
+    "large": { "model": "llama3.2:latest", "provider": "olla-openai" },
+    "small": { "model": "llama3.2:latest", "provider": "olla-openai" }
   }
 }
 ```
@@ -30,7 +34,7 @@ Crush CLI is a modern terminal AI assistant by Charmbracelet that natively suppo
 **What you get via Olla**
 
 * Dual API support in one proxy (both OpenAI and Anthropic endpoints)
-* Switch between providers with `crush model switch`
+* Switch between providers by updating the `models` key in `crush.json`
 * Priority/least-connections load-balancing and health checks
 * Streaming passthrough for both formats
 * Unified `/v1/models` across all backends
@@ -69,7 +73,7 @@ Crush CLI is a modern terminal AI assistant by Charmbracelet that natively suppo
     <tr>
         <th>Configuration</th>
         <td>
-            Configure providers in <code>~/.crush/config.json</code> with both API endpoints
+            Configure providers in <code>~/.config/crush/crush.json</code> with both API endpoints
         </td>
     </tr>
     <tr>
@@ -82,12 +86,11 @@ Crush CLI is a modern terminal AI assistant by Charmbracelet that natively suppo
 
 ## What is Crush CLI?
 
-Crush CLI is the successor to OpenCode, created by the original author and actively maintained by Charmbracelet. Key features:
+Crush CLI is a terminal AI assistant by Charmbracelet. Key features:
 
 - **Go-based**: Fast, lightweight, single binary
 - **TUI Interface**: Beautiful terminal user interface using Bubble Tea
-- **Dual API Support**: Natively supports both OpenAI and Anthropic formats
-- **Provider Switching**: Change providers on the fly with `crush model switch`
+- **Dual API Support**: Natively supports both OpenAI-compatible and Anthropic formats
 - **Modern Design**: Charmbracelet's signature polished experience
 
 **Official Repository**: [https://github.com/charmbracelet/crush](https://github.com/charmbracelet/crush)
@@ -189,15 +192,15 @@ Create **`olla.yaml`**:
 server:
   host: 0.0.0.0
   port: 40114
-  log_level: info
 
 proxy:
-  engine: sherpa           # or: olla (lower overhead)
+  engine: olla             # default; or: sherpa (simpler codebase, maintenance mode)
   load_balancer: priority  # or: least-connections
   response_timeout: 1800s  # 30 min for long generations
   read_timeout: 600s
 
-# Both API translators enabled by default
+# Anthropic translator enables /olla/anthropic/v1/*
+# OpenAI is the native format — no translator needed
 translators:
   anthropic:
     enabled: true
@@ -211,15 +214,11 @@ discovery:
         name: local-ollama
         type: ollama
         priority: 100
-        health_check:
-          enabled: true
-          interval: 30s
-          timeout: 5s
+        check_interval: 30s
+        check_timeout: 5s
 
-# Optional: Rate limiting
-security:
-  rate_limit:
-    enabled: false  # Enable in production
+logging:
+  level: info
 
 # Optional: Streaming optimisation
 # proxy:
@@ -280,19 +279,20 @@ curl -X POST http://localhost:40114/olla/anthropic/v1/messages \
 
 ### 6. Configure Crush CLI
 
-Create or edit **`~/.crush/config.json`**:
+Create or edit **`~/.config/crush/crush.json`**:
 
-**macOS/Linux**: `~/.crush/config.json`
-**Windows**: `%USERPROFILE%\.crush\config.json`
+**macOS/Linux**: `~/.config/crush/crush.json`
+**Windows**: `%LOCALAPPDATA%\crush\crush.json`
+
+Crush also checks `.crush.json` or `crush.json` in the current project directory, which takes precedence.
 
 ```json
 {
   "providers": {
     "olla-openai": {
-      "type": "openai",
+      "type": "openai-compat",
       "base_url": "http://localhost:40114/olla/openai/v1",
-      "api_key": "not-required",
-      "default_model": "llama3.2:latest"
+      "api_key": "not-required"
     },
     "olla-anthropic": {
       "type": "anthropic",
@@ -300,7 +300,10 @@ Create or edit **`~/.crush/config.json`**:
       "api_key": "not-required"
     }
   },
-  "default_provider": "olla-openai"
+  "models": {
+    "large": { "model": "llama3.2:latest", "provider": "olla-openai" },
+    "small": { "model": "llama3.2:latest", "provider": "olla-openai" }
+  }
 }
 ```
 
@@ -312,7 +315,6 @@ crush
 
 You can now:
 - Start chatting with your local models
-- Switch providers: `crush model switch` (or within TUI)
 - Try prompts like:
   - "Write a Python function to calculate factorial"
   - "Explain this code: [paste code]"
@@ -322,17 +324,16 @@ You can now:
 
 ### Crush CLI Configuration
 
-Edit `~/.crush/config.json` to customise provider settings:
+Edit `~/.config/crush/crush.json` to customise provider settings.
 
 **Basic Configuration**:
 ```json
 {
   "providers": {
     "olla-openai": {
-      "type": "openai",
+      "type": "openai-compat",
       "base_url": "http://localhost:40114/olla/openai/v1",
-      "api_key": "not-required",
-      "default_model": "llama3.2:latest"
+      "api_key": "not-required"
     },
     "olla-anthropic": {
       "type": "anthropic",
@@ -340,7 +341,10 @@ Edit `~/.crush/config.json` to customise provider settings:
       "api_key": "not-required"
     }
   },
-  "default_provider": "olla-openai"
+  "models": {
+    "large": { "model": "llama3.2:latest", "provider": "olla-openai" },
+    "small": { "model": "llama3.2:latest", "provider": "olla-openai" }
+  }
 }
 ```
 
@@ -349,10 +353,9 @@ Edit `~/.crush/config.json` to customise provider settings:
 {
   "providers": {
     "local-openai": {
-      "type": "openai",
+      "type": "openai-compat",
       "base_url": "http://localhost:40114/olla/openai/v1",
-      "api_key": "not-required",
-      "default_model": "qwen2.5-coder:32b"
+      "api_key": "not-required"
     },
     "local-anthropic": {
       "type": "anthropic",
@@ -368,28 +371,30 @@ Edit `~/.crush/config.json` to customise provider settings:
       "api_key": "sk-ant-..."
     }
   },
-  "default_provider": "local-openai"
+  "models": {
+    "large": { "model": "qwen2.5-coder:32b", "provider": "local-openai" },
+    "small": { "model": "qwen2.5-coder:32b", "provider": "local-openai" }
+  }
 }
 ```
 
-**Provider-Specific Models**:
+**Provider-Specific Routing**:
+
+Use Crush's `models.large` / `models.small` keys to direct different task types to different providers:
+
 ```json
 {
   "providers": {
     "coding": {
-      "type": "openai",
+      "type": "openai-compat",
       "base_url": "http://localhost:40114/olla/openai/v1",
-      "api_key": "not-required",
-      "default_model": "qwen2.5-coder:32b"
-    },
-    "chat": {
-      "type": "openai",
-      "base_url": "http://localhost:40114/olla/openai/v1",
-      "api_key": "not-required",
-      "default_model": "llama3.3:latest"
+      "api_key": "not-required"
     }
   },
-  "default_provider": "coding"
+  "models": {
+    "large": { "model": "qwen2.5-coder:32b", "provider": "coding" },
+    "small": { "model": "llama3.3:latest",   "provider": "coding" }
+  }
 }
 ```
 
@@ -412,7 +417,6 @@ proxy:
 proxy:
   response_timeout: 1800s  # Max time for response (30 minutes)
   read_timeout: 600s       # Max time for reading response body
-  write_timeout: 30s       # Max time for writing request
 ```
 
 **Streaming Optimisation**:
@@ -452,13 +456,6 @@ crush
 
 # Start chatting with local model
 > Hello, can you help me with Python?
-
-# Switch provider
-> /switch
-# Select from configured providers
-
-# Change model within session
-> /model qwen2.5-coder:32b
 ```
 
 ### Code Generation
@@ -494,16 +491,7 @@ crush
 
 ### Provider Switching
 
-```bash
-# Switch between OpenAI and Anthropic endpoints
-> /switch
-
-# Or use command-line flag
-crush --provider olla-anthropic
-
-# List available providers
-crush providers list
-```
+The active provider and model are set via the `models` key in `crush.json`. To switch which provider handles large/small tasks, update the `models.large` and `models.small` entries. You can also maintain separate project-level `crush.json` files in different project directories.
 
 ## Switching Between APIs
 
@@ -523,31 +511,20 @@ Crush CLI's key advantage is native dual API support:
 
 ### Switching Providers
 
-**Within Crush CLI**:
-```bash
-# Interactive provider selection
-> /switch
+Configure which provider handles each role via the top-level `models` key:
 
-# Or directly specify
-> /provider olla-anthropic
-```
-
-**Command Line**:
-```bash
-# Start with specific provider
-crush --provider olla-anthropic
-
-# Start with specific model
-crush --model qwen2.5-coder:32b --provider olla-openai
-```
-
-**Configuration Default**:
 ```json
 {
-  "default_provider": "olla-openai",
-  "providers": { ... }
+  "models": {
+    "large": { "model": "llama3.3:latest",       "provider": "olla-anthropic" },
+    "small": { "model": "qwen2.5-coder:7b",      "provider": "olla-openai" }
+  }
 }
 ```
+
+For project-specific overrides, place a `crush.json` or `.crush.json` in the project root — it takes precedence over the global config.
+
+See the [Crush CLI repository](https://github.com/charmbracelet/crush) for the full list of supported configuration options and CLI flags.
 
 ## Docker Deployment (Production)
 
@@ -613,7 +590,10 @@ networks:
 server:
   host: 0.0.0.0
   port: 40114
-  log_level: info
+  rate_limits:
+    global_requests_per_minute: 100
+    per_ip_requests_per_minute: 60
+    burst_size: 20
 
 proxy:
   engine: olla  # Use high-performance engine
@@ -622,7 +602,7 @@ proxy:
   read_timeout: 600s
   profile: streaming
 
-# Both translators enabled
+# Anthropic translator enables /olla/anthropic/v1/*
 translators:
   anthropic:
     enabled: true
@@ -635,18 +615,8 @@ discovery:
         name: local-ollama
         type: ollama
         priority: 100
-        health_check:
-          enabled: true
-          interval: 30s
-          timeout: 5s
-          unhealthy_threshold: 3
-          healthy_threshold: 2
-
-security:
-  rate_limit:
-    enabled: true
-    requests_per_minute: 100
-    burst: 50
+        check_interval: 30s
+        check_timeout: 5s
 
 logging:
   level: info
@@ -695,7 +665,7 @@ docker exec ollama ollama rm <model-name>
 
 **Check configuration file**:
 ```bash
-cat ~/.crush/config.json
+cat ~/.config/crush/crush.json
 # Verify base_url points to correct endpoint
 ```
 
@@ -709,8 +679,8 @@ docker compose ps
 
 **Check Crush CLI logs**:
 ```bash
-# macOS/Linux
-tail -f ~/.crush/logs/crush.log
+# View recent logs
+crush logs
 
 # Or run Crush in debug mode
 crush --debug
@@ -748,20 +718,23 @@ curl http://localhost:11434/api/tags
 docker exec ollama ollama pull llama3.2:latest
 ```
 
-### Provider Switch Not Working
+### Provider Not Working
 
-**Verify multiple providers configured**:
+**Verify providers configured**:
 ```bash
-cat ~/.crush/config.json | jq '.providers'
+cat ~/.config/crush/crush.json | jq '.providers'
 ```
 
-**Check provider format**:
+**Check provider type**:
+
+Valid `type` values: `openai-compat` (for custom OpenAI-compatible endpoints like Olla), `openai` (for actual OpenAI API), `anthropic`, `gemini`, `azure`, `vertexai`.
+
 ```json
 {
   "providers": {
     "provider-name": {
-      "type": "openai",  // Must be "openai" or "anthropic"
-      "base_url": "...",
+      "type": "openai-compat",
+      "base_url": "http://localhost:40114/olla/openai/v1",
       "api_key": "..."
     }
   }
@@ -870,7 +843,7 @@ Olla doesn't enforce API keys by default. If Crush CLI requires one:
 {
   "providers": {
     "olla-openai": {
-      "type": "openai",
+      "type": "openai-compat",
       "base_url": "http://localhost:40114/olla/openai/v1",
       "api_key": "not-required-but-can-be-anything"
     }
@@ -932,68 +905,35 @@ proxy:
 
 ### Multiple Crush Profiles
 
-Create different configuration profiles for different use cases:
+Crush checks `.crush.json` or `crush.json` in your current directory before falling back to the global config. You can maintain per-project configs that override models and providers:
 
-**~/.crush/coding.json**:
+**`my-project/crush.json`** (coding-focused):
 ```json
 {
   "providers": {
     "coding": {
-      "type": "openai",
+      "type": "openai-compat",
       "base_url": "http://localhost:40114/olla/openai/v1",
-      "default_model": "qwen2.5-coder:32b"
+      "api_key": "not-required"
     }
   },
-  "default_provider": "coding"
+  "models": {
+    "large": { "model": "qwen2.5-coder:32b", "provider": "coding" },
+    "small": { "model": "qwen2.5-coder:7b",  "provider": "coding" }
+  }
 }
-```
-
-**~/.crush/chat.json**:
-```json
-{
-  "providers": {
-    "chat": {
-      "type": "anthropic",
-      "base_url": "http://localhost:40114/olla/anthropic/v1",
-      "default_model": "llama3.3:latest"
-    }
-  },
-  "default_provider": "chat"
-}
-```
-
-**Use with**:
-```bash
-crush --config ~/.crush/coding.json
-crush --config ~/.crush/chat.json
 ```
 
 ### Integration with Development Tools
-
-**Using Crush CLI in scripts**:
-
-```bash
-#!/bin/bash
-# commit-msg-generator.sh
-
-# Get diff
-DIFF=$(git diff --cached)
-
-# Generate commit message via Crush
-COMMIT_MSG=$(echo "$DIFF" | crush --provider olla-openai --prompt "Generate a concise commit message for this diff:")
-
-# Use the message
-git commit -m "$COMMIT_MSG"
-```
 
 **Shell alias for quick access**:
 
 ```bash
 # Add to ~/.bashrc or ~/.zshrc
-alias code-review='crush --provider coding --prompt "Review this code for issues:"'
-alias explain-error='crush --provider coding --prompt "Explain this error:"'
-alias write-docs='crush --provider chat --prompt "Write documentation for:"'
+alias crush-code='crush --cwd .'   # launch with project-root config
 ```
+
+See the [Crush CLI repository](https://github.com/charmbracelet/crush) for the full list of supported CLI flags.
 
 ### Monitoring and Observability
 
