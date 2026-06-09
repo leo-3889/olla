@@ -1,6 +1,6 @@
 # OpenAI-Compatible API
 
-Proxy endpoints for OpenAI-compatible local inference backends (LocalAI, vLLM, llama.cpp, LM Studio, etc.). Available through the `/olla/openai/` and `/olla/openai-compatible/` prefixes — both route through the same `openai-compatible` profile.
+Proxy endpoints for OpenAI-compatible local inference backends (LocalAI, vLLM, llama.cpp, LM Studio, etc.). Available through the `/olla/openai/` and `/olla/openai-compatible/` prefixes; both route through the same `openai-compatible` profile.
 
 ## Endpoints Overview
 

@@ -29,6 +29,7 @@ Internal endpoints for health monitoring, system status, and statistics.
 - `/internal/stats/translators` - Translator usage and performance statistics
 - `/internal/stats/sticky` - Sticky session statistics
 - `/internal/process` - Process information
+- `/version` - Olla version information
 
 ### Universal Proxy
 The universal entry point that routes to any backend.
@@ -105,7 +106,7 @@ Proxy endpoints for Lemonade SDK servers with AMD Ryzen AI support.
 - Includes ONNX and GGUF model support with hardware acceleration
 
 ### [oMLX API](omlx.md)
-Proxy endpoints for oMLX -- the multi-model Apple Silicon (MLX) inference server.
+Proxy endpoints for oMLX, the multi-model Apple Silicon (MLX) inference server.
 
 - `/olla/omlx/*` - oMLX API endpoints
 - OpenAI-compatible endpoints with native Anthropic Messages API passthrough

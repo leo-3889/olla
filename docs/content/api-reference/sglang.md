@@ -7,6 +7,7 @@ Proxy endpoints for SGLang inference servers. Available through the `/olla/sglan
 | Method | URI | Description |
 |--------|-----|-------------|
 | GET | `/olla/sglang/health` | Health check |
+| GET | `/olla/sglang/version` | SGLang version information |
 | GET | `/olla/sglang/v1/models` | List available models |
 | POST | `/olla/sglang/v1/chat/completions` | Chat completion |
 | POST | `/olla/sglang/v1/completions` | Text completion |

@@ -23,7 +23,7 @@ The `/engines/v1/...` paths use automatic engine selection. The explicit `/engin
 
 List models available on the Docker Model Runner instance.
 
-Returns an empty `data` array when no models have been loaded yet — this is normal behaviour due to lazy model loading and does not indicate an unhealthy endpoint.
+Returns an empty `data` array when no models have been loaded yet. This is normal behaviour due to lazy model loading and does not indicate an unhealthy endpoint.
 
 ### Request
 

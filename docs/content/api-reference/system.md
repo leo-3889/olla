@@ -361,9 +361,9 @@ curl -X GET http://localhost:40114/internal/stats/translators
 
 **Fallback Reasons**: The three `fallback_*` fields help diagnose why passthrough is not being used:
 
-- `fallback_no_compatible_endpoints` -- No healthy endpoints available (operational issue, check health endpoint)
-- `fallback_cannot_passthrough` -- No compatible backend declares native support for the translator's format
-- `fallback_translator_does_not_support_passthrough` -- Expected for translators without passthrough capability
+- `fallback_no_compatible_endpoints`: No healthy endpoints available (operational issue, check health endpoint)
+- `fallback_cannot_passthrough`: No compatible backend declares native support for the translator's format
+- `fallback_translator_does_not_support_passthrough`: Expected for translators without passthrough capability
 
 **Success Rate**: A declining `success_rate` may indicate backend issues or incompatible request formats.
 
