@@ -15,7 +15,7 @@ Olla provides a powerful filtering system that allows you to control which model
 Filters are configured using `include` and `exclude` lists. The actual YAML key is context-dependent: `model_filter:` for endpoint-level model filtering, and `profile_filter:` under `proxy:` for profile filtering. The pattern below shows the shared structure:
 
 ```yaml
-# Illustrative — use model_filter: or profile_filter: in practice (see below)
+# Illustrative - use model_filter: or profile_filter: in practice (see below)
 include:   # Only items matching these patterns are allowed
   - "llama*"
   - "mistral*"

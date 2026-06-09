@@ -182,7 +182,7 @@ Use these for:
 
 Olla has two logging layers with separate environment variables.
 
-**Bootstrap logger** (`OLLA_LOG_*`) — active before the YAML config is parsed, used for startup output and file rotation:
+**Bootstrap logger** (`OLLA_LOG_*`) - active before the YAML config is parsed, used for startup output and file rotation:
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -192,7 +192,7 @@ Olla has two logging layers with separate environment variables.
 | `OLLA_LOG_MAX_BACKUPS` | `7` | Number of rotated files to retain |
 | `OLLA_LOG_MAX_AGE_DAYS` | `14` | Max age (days) before a rotated file is pruned |
 
-**Config-layer logger** (`OLLA_LOGGING_*`) — overrides the `logging:` YAML section after config is loaded:
+**Config-layer logger** (`OLLA_LOGGING_*`) - overrides the `logging:` YAML section after config is loaded:
 
 | Variable | Maps to | Notes |
 |---|---|---|
