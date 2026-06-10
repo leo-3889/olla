@@ -40,7 +40,7 @@ func BenchmarkBuildTargetURL(b *testing.B) {
 		b.ReportAllocs()
 
 		for range b.N {
-			targetURL := common.BuildTargetURL(req, endpoint, service.configuration.GetProxyPrefix())
+			targetURL := common.BuildTargetURL(req, endpoint, service.configuration.Load().GetProxyPrefix())
 			if targetURL.Path != "/v1/chat/completions" {
 				b.Fatalf("unexpected path: %s", targetURL.Path)
 			}
@@ -64,7 +64,7 @@ func BenchmarkBuildTargetURL(b *testing.B) {
 		b.ReportAllocs()
 
 		for range b.N {
-			targetURL := common.BuildTargetURL(req, endpoint, service.configuration.GetProxyPrefix())
+			targetURL := common.BuildTargetURL(req, endpoint, service.configuration.Load().GetProxyPrefix())
 			if targetURL.Path != "/v1/completions" {
 				b.Fatalf("unexpected path: %s", targetURL.Path)
 			}
@@ -85,7 +85,7 @@ func BenchmarkBuildTargetURL(b *testing.B) {
 		b.ReportAllocs()
 
 		for range b.N {
-			targetURL := common.BuildTargetURL(req, endpoint, service.configuration.GetProxyPrefix())
+			targetURL := common.BuildTargetURL(req, endpoint, service.configuration.Load().GetProxyPrefix())
 			if targetURL.Path != "/api/tags" {
 				b.Fatalf("unexpected path: %s", targetURL.Path)
 			}
@@ -109,7 +109,7 @@ func BenchmarkBuildTargetURL(b *testing.B) {
 		b.ReportAllocs()
 
 		for range b.N {
-			targetURL := common.BuildTargetURL(req, endpoint, service.configuration.GetProxyPrefix())
+			targetURL := common.BuildTargetURL(req, endpoint, service.configuration.Load().GetProxyPrefix())
 			// ResolveReference should join paths correctly
 			if targetURL.Host != "localhost:8000" {
 				b.Fatalf("unexpected host: %s", targetURL.Host)

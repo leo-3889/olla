@@ -64,8 +64,10 @@ func shouldStopAfterDisconnect(bytesAfterDisconnect int, disconnectTime time.Tim
 		time.Since(disconnectTime) > ClientDisconnectionTimeThreshold
 }
 
-// checkContexts checks for context cancellation and timeout
-func (s *Service) checkContexts(clientCtx, upstreamCtx context.Context, readDeadline *time.Timer, state *streamState, rlog logger.StyledLogger) error {
+// checkContexts checks for context cancellation and timeout.
+// readTimeout is passed in (snapshotted from config at stream start) so this
+// method has no dependency on s.configuration and stays off the atomic path.
+func (s *Service) checkContexts(clientCtx, upstreamCtx context.Context, readDeadline *time.Timer, readTimeout time.Duration, state *streamState, rlog logger.StyledLogger) error {
 	select {
 	case <-clientCtx.Done():
 		s.handleClientDisconnect(state, rlog)
@@ -74,7 +76,7 @@ func (s *Service) checkContexts(clientCtx, upstreamCtx context.Context, readDead
 	case <-upstreamCtx.Done():
 		return upstreamCtx.Err()
 	case <-readDeadline.C:
-		return fmt.Errorf("read timeout after %v", s.configuration.GetReadTimeout())
+		return fmt.Errorf("read timeout after %v", readTimeout)
 	default:
 		return nil
 	}

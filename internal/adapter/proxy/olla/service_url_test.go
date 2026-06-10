@@ -127,7 +127,7 @@ func TestBuildTargetURL(t *testing.T) {
 				t.Fatalf("failed to create request: %v", err)
 			}
 
-			targetURL := common.BuildTargetURL(req, endpoint, service.configuration.GetProxyPrefix())
+			targetURL := common.BuildTargetURL(req, endpoint, service.configuration.Load().GetProxyPrefix())
 
 			// Verify path
 			if targetURL.Path != tt.expectedPath {
@@ -194,7 +194,7 @@ func TestBuildTargetURL_PathHandling(t *testing.T) {
 
 	for _, path := range testPaths {
 		req, _ := http.NewRequest("GET", path+"?test=true", nil)
-		targetURL := common.BuildTargetURL(req, endpoint, service.configuration.GetProxyPrefix())
+		targetURL := common.BuildTargetURL(req, endpoint, service.configuration.Load().GetProxyPrefix())
 
 		// Verify URL is valid
 		if targetURL.Host == "" {

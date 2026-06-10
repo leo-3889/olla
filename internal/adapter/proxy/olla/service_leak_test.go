@@ -23,18 +23,16 @@ func TestEndpointPoolCleanup_NoMemoryLeak(t *testing.T) {
 		BaseProxyComponents: &core.BaseProxyComponents{
 			Logger: createTestLogger(),
 		},
-		configuration: func() *Configuration {
-			c := &Configuration{}
-			c.MaxIdleConns = 10
-			c.MaxConnsPerHost = 5
-			c.IdleConnTimeout = 30 * time.Second
-			return c
-		}(),
 		endpointPools:   *xsync.NewMap[string, *connectionPool](),
 		circuitBreakers: *xsync.NewMap[string, *circuitBreaker](),
 		cleanupTicker:   time.NewTicker(100 * time.Millisecond), // Fast cleanup for testing
 		cleanupStop:     make(chan struct{}),
 	}
+	cfg := &Configuration{}
+	cfg.MaxIdleConns = 10
+	cfg.MaxConnsPerHost = 5
+	cfg.IdleConnTimeout = 30 * time.Second
+	s.configuration.Store(cfg)
 
 	// Start cleanup loop
 	go s.cleanupLoop()
@@ -89,12 +87,12 @@ func TestCircuitBreakerCleanup_NoMemoryLeak(t *testing.T) {
 		BaseProxyComponents: &core.BaseProxyComponents{
 			Logger: createTestLogger(),
 		},
-		configuration:   &Configuration{},
 		endpointPools:   *xsync.NewMap[string, *connectionPool](),
 		circuitBreakers: *xsync.NewMap[string, *circuitBreaker](),
 		cleanupTicker:   time.NewTicker(100 * time.Millisecond),
 		cleanupStop:     make(chan struct{}),
 	}
+	s.configuration.Store(&Configuration{})
 
 	// Start cleanup loop
 	go s.cleanupLoop()
@@ -149,12 +147,12 @@ func TestCleanupLoop_ExitsCleanly(t *testing.T) {
 			BaseProxyComponents: &core.BaseProxyComponents{
 				Logger: createTestLogger(),
 			},
-			configuration:   &Configuration{},
 			endpointPools:   *xsync.NewMap[string, *connectionPool](),
 			circuitBreakers: *xsync.NewMap[string, *circuitBreaker](),
 			cleanupTicker:   time.NewTicker(50 * time.Millisecond),
 			cleanupStop:     make(chan struct{}),
 		}
+		s.configuration.Store(&Configuration{})
 
 		// Start cleanup loop
 		go s.cleanupLoop()
@@ -301,12 +299,12 @@ func TestCleanup_DoubleInvoke(t *testing.T) {
 		BaseProxyComponents: &core.BaseProxyComponents{
 			Logger: createTestLogger(),
 		},
-		configuration:   &Configuration{},
 		endpointPools:   *xsync.NewMap[string, *connectionPool](),
 		circuitBreakers: *xsync.NewMap[string, *circuitBreaker](),
 		cleanupTicker:   time.NewTicker(time.Hour),
 		cleanupStop:     make(chan struct{}),
 	}
+	s.configuration.Store(&Configuration{})
 
 	go s.cleanupLoop()
 

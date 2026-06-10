@@ -66,7 +66,7 @@ type Service struct {
 	bufferPool *pool.Pool[*[]byte]
 
 	transport     *http.Transport
-	configuration *Configuration
+	configuration atomic.Pointer[Configuration]
 	retryHandler  *core.RetryHandler
 
 	cleanupTicker *time.Ticker
@@ -140,13 +140,13 @@ func NewService(
 		BaseProxyComponents: base,
 		bufferPool:          bufferPool,
 		transport:           transport,
-		configuration:       configuration,
 		retryHandler:        core.NewRetryHandler(discoveryService, logger),
 		circuitBreakers:     *xsync.NewMap[string, *circuitBreaker](),
 		endpointPools:       *xsync.NewMap[string, *connectionPool](),
 		cleanupTicker:       time.NewTicker(5 * time.Minute),
 		cleanupStop:         make(chan struct{}),
 	}
+	service.configuration.Store(configuration)
 
 	// Start cleanup goroutine
 	go service.cleanupLoop()
@@ -192,36 +192,33 @@ func createOptimisedTransport(config *Configuration) *http.Transport {
 	}
 }
 
-// getOrCreateEndpointPool returns a connection pool for the endpoint
+// getOrCreateEndpointPool returns a connection pool for the endpoint.
+// LoadOrCompute guarantees the transport is constructed at most once per endpoint key,
+// preventing wasted allocations when multiple goroutines race on first use.
 func (s *Service) getOrCreateEndpointPool(endpoint string) *connectionPool {
-	if pool, ok := s.endpointPools.Load(endpoint); ok {
-		atomic.StoreInt64(&pool.lastUsed, time.Now().UnixNano())
-		return pool
-	}
-
-	newPool := &connectionPool{
-		transport: createOptimisedTransport(s.configuration),
-		lastUsed:  time.Now().UnixNano(),
-		healthy:   1,
-	}
-
-	actual, _ := s.endpointPools.LoadOrStore(endpoint, newPool)
-	return actual
+	cfg := s.configuration.Load()
+	pool, _ := s.endpointPools.LoadOrCompute(endpoint, func() (*connectionPool, bool) {
+		return &connectionPool{
+			transport: createOptimisedTransport(cfg),
+			lastUsed:  time.Now().UnixNano(),
+			healthy:   1,
+		}, false
+	})
+	atomic.StoreInt64(&pool.lastUsed, time.Now().UnixNano())
+	return pool
 }
 
-// GetCircuitBreaker returns the circuit breaker for an endpoint (exported for testing)
+// GetCircuitBreaker returns the circuit breaker for an endpoint (exported for testing).
+// LoadOrCompute guarantees exactly one circuitBreaker is created per endpoint even
+// under concurrent first-use, avoiding a redundant allocation race.
 func (s *Service) GetCircuitBreaker(endpoint string) *circuitBreaker {
-	if cb, ok := s.circuitBreakers.Load(endpoint); ok {
-		return cb
-	}
-
-	newCB := &circuitBreaker{
-		threshold: circuitBreakerThreshold,
-		state:     0, // closed
-	}
-
-	actual, _ := s.circuitBreakers.LoadOrStore(endpoint, newCB)
-	return actual
+	cb, _ := s.circuitBreakers.LoadOrCompute(endpoint, func() (*circuitBreaker, bool) {
+		return &circuitBreaker{
+			threshold: circuitBreakerThreshold,
+			state:     0, // closed
+		}, false
+	})
+	return cb
 }
 
 // Circuit breaker methods
@@ -301,18 +298,23 @@ func (s *Service) prepareProxyRequest(ctx context.Context, r *http.Request, targ
 // streamResponse performs buffered streaming with backpressure handling
 func (s *Service) streamResponse(clientCtx, upstreamCtx context.Context, w http.ResponseWriter, resp *http.Response, buffer []byte, rlog logger.StyledLogger) (int, []byte, error) {
 	state := &streamState{}
+	// Snapshot configuration once for the lifetime of this stream so all reads
+	// within the loop see a coherent config even if UpdateConfig runs concurrently.
+	cfg := s.configuration.Load()
+	readTimeout := cfg.GetReadTimeout()
+
 	// Use http.ResponseController for modern flush handling (Go 1.20+)
 	// Provides better error handling and cleaner API than type assertion
 	rc := http.NewResponseController(w)
-	isStreaming := core.AutoDetectStreamingMode(clientCtx, resp, s.configuration.GetProxyProfile())
+	isStreaming := core.AutoDetectStreamingMode(clientCtx, resp, cfg.GetProxyProfile())
 
 	// Pre-allocate timer to avoid allocations in hot path
-	readDeadline := time.NewTimer(s.configuration.GetReadTimeout())
+	readDeadline := time.NewTimer(readTimeout)
 	defer readDeadline.Stop()
 
 	for {
 		// Check for context cancellation
-		if err := s.checkContexts(clientCtx, upstreamCtx, readDeadline, state, rlog); err != nil {
+		if err := s.checkContexts(clientCtx, upstreamCtx, readDeadline, readTimeout, state, rlog); err != nil {
 			return state.totalBytes, state.lastChunk, err
 		}
 
@@ -326,7 +328,7 @@ func (s *Service) streamResponse(clientCtx, upstreamCtx context.Context, w http.
 			default:
 			}
 		}
-		readDeadline.Reset(s.configuration.GetReadTimeout())
+		readDeadline.Reset(readTimeout)
 
 		// Read and process data
 		if err := s.processStreamData(resp, buffer, state, w, isStreaming, rc, rlog); err != nil {
@@ -344,7 +346,9 @@ func (s *Service) GetStats(ctx context.Context) (ports.ProxyStats, error) {
 	return s.GetProxyStats(), nil
 }
 
-// UpdateConfig updates the proxy configuration
+// UpdateConfig updates the proxy configuration.
+// The swap is atomic so in-flight requests always read a complete, consistent
+// snapshot — never a partially-written config.
 func (s *Service) UpdateConfig(config ports.ProxyConfiguration) {
 	newConfig := &Configuration{}
 	newConfig.ProxyPrefix = config.GetProxyPrefix()
@@ -354,6 +358,11 @@ func (s *Service) UpdateConfig(config ports.ProxyConfiguration) {
 	newConfig.ReadTimeout = config.GetReadTimeout()
 	newConfig.StreamBufferSize = config.GetStreamBufferSize()
 	newConfig.Profile = config.GetProxyProfile()
+
+	// Snapshot the current config once before deciding what to preserve.
+	// This single Load ensures the fallback branch reads a coherent value
+	// even if another UpdateConfig is racing concurrently.
+	current := s.configuration.Load()
 
 	// we try to get Olla-specific fields from incoming config if it's an *olla.Configuration
 	if ollaConfig, ok := config.(*Configuration); ok && ollaConfig != nil {
@@ -365,16 +374,15 @@ func (s *Service) UpdateConfig(config ports.ProxyConfiguration) {
 		newConfig.TLSHandshakeTimeout = ollaConfig.TLSHandshakeTimeout
 	} else {
 		// fallback: preserve current Olla-specific settings for non-Olla configs
-		newConfig.MaxIdleConns = s.configuration.MaxIdleConns
-		newConfig.IdleConnTimeout = s.configuration.IdleConnTimeout
-		newConfig.MaxConnsPerHost = s.configuration.MaxConnsPerHost
-		newConfig.MaxIdleConnsPerHost = s.configuration.MaxIdleConnsPerHost
-		newConfig.ResponseHeaderTimeout = s.configuration.ResponseHeaderTimeout
-		newConfig.TLSHandshakeTimeout = s.configuration.TLSHandshakeTimeout
+		newConfig.MaxIdleConns = current.MaxIdleConns
+		newConfig.IdleConnTimeout = current.IdleConnTimeout
+		newConfig.MaxConnsPerHost = current.MaxConnsPerHost
+		newConfig.MaxIdleConnsPerHost = current.MaxIdleConnsPerHost
+		newConfig.ResponseHeaderTimeout = current.ResponseHeaderTimeout
+		newConfig.TLSHandshakeTimeout = current.TLSHandshakeTimeout
 	}
 
-	// Update configuration atomically
-	s.configuration = newConfig
+	s.configuration.Store(newConfig)
 }
 
 // cleanupLoop periodically cleans up unused endpoint pools and circuit breakers

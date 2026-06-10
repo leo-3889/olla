@@ -215,7 +215,8 @@ func TestUpdateConfig_PreservesTimeouts(t *testing.T) {
 	original.MaxConnsPerHost = proxyconfig.OllaDefaultMaxConnsPerHost
 	original.MaxIdleConnsPerHost = proxyconfig.OllaDefaultMaxIdleConnsPerHost
 
-	svc := &Service{configuration: original}
+	svc := &Service{}
+	svc.configuration.Store(original)
 
 	// Use the same *Configuration type so we exercise the Olla type-assertion path.
 	updated := &Configuration{}
@@ -224,10 +225,11 @@ func TestUpdateConfig_PreservesTimeouts(t *testing.T) {
 
 	svc.UpdateConfig(updated)
 
-	if svc.configuration.ResponseHeaderTimeout != 120*time.Second {
-		t.Errorf("ResponseHeaderTimeout after UpdateConfig: want 120s, got %v", svc.configuration.ResponseHeaderTimeout)
+	got := svc.configuration.Load()
+	if got.ResponseHeaderTimeout != 120*time.Second {
+		t.Errorf("ResponseHeaderTimeout after UpdateConfig: want 120s, got %v", got.ResponseHeaderTimeout)
 	}
-	if svc.configuration.TLSHandshakeTimeout != 15*time.Second {
-		t.Errorf("TLSHandshakeTimeout after UpdateConfig: want 15s, got %v", svc.configuration.TLSHandshakeTimeout)
+	if got.TLSHandshakeTimeout != 15*time.Second {
+		t.Errorf("TLSHandshakeTimeout after UpdateConfig: want 15s, got %v", got.TLSHandshakeTimeout)
 	}
 }
