@@ -10,8 +10,10 @@ package security
 */
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -114,28 +116,7 @@ func (sv *SizeValidator) CreateMiddleware() func(http.Handler) http.Handler {
 			}
 
 			if !result.Allowed {
-				if sv.metrics != nil {
-					violationType := constants.ViolationSizeLimit
-					size := req.BodySize
-					if strings.Contains(result.Reason, "headers too large") {
-						size = req.HeaderSize
-					}
-
-					violation := ports.SecurityViolation{
-						ClientID:      util.GetClientIP(r, false, nil),
-						ViolationType: violationType,
-						Endpoint:      r.URL.Path,
-						Size:          size,
-						Timestamp:     time.Now(),
-					}
-					_ = sv.metrics.RecordViolation(r.Context(), violation)
-				}
-
-				sv.logger.Warn("Request rejected",
-					"reason", result.Reason,
-					"method", r.Method,
-					"path", r.URL.Path,
-					"remote_addr", r.RemoteAddr)
+				sv.recordViolation(r, req, result)
 
 				if r.ContentLength > sv.maxBodySize {
 					http.Error(w, "Request body too large", http.StatusRequestEntityTooLarge)
@@ -152,6 +133,108 @@ func (sv *SizeValidator) CreateMiddleware() func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// CreateNonProxyMiddleware is like CreateMiddleware but also rejects chunked
+// (Content-Length == -1) requests whose bodies exceed the configured limit.
+// It is intended for non-proxy routes (status, health, stats) that never read
+// the body themselves, so MaxBytesReader alone would never fire for them.
+//
+// The approach: drain up to maxBodySize+1 bytes through MaxBytesReader before
+// calling next. If the read hits the limit the reader returns an error and we
+// return 413. Otherwise we restore the buffered bytes as the request body so
+// a handler that does read the body still receives the full content.
+//
+// Proxy routes must NOT use this middleware — they stream large bodies
+// legitimately and must not be buffered. Use CreateMiddleware for those paths.
+func (sv *SizeValidator) CreateNonProxyMiddleware() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			req := ports.SecurityRequest{
+				Endpoint:   r.URL.Path,
+				Method:     r.Method,
+				BodySize:   r.ContentLength,
+				HeaderSize: estimateHeaderSize(r.Header, r.Method, r.URL.RequestURI(), r.Proto),
+				Headers:    r.Header,
+			}
+
+			result, err := sv.Validate(r.Context(), req)
+			if err != nil {
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+				return
+			}
+
+			if !result.Allowed {
+				sv.recordViolation(r, req, result)
+
+				if r.ContentLength > sv.maxBodySize {
+					http.Error(w, "Request body too large", http.StatusRequestEntityTooLarge)
+				} else {
+					http.Error(w, "Request headers too large", http.StatusRequestHeaderFieldsTooLarge)
+				}
+				return
+			}
+
+			// For chunked requests (ContentLength == -1), drain the body up to the
+			// cap now. Handlers on non-proxy routes never read the body themselves, so
+			// MaxBytesReader installed on r.Body would silently never trigger; we must
+			// enforce the limit here before passing control to the handler.
+			if sv.maxBodySize > 0 && r.ContentLength < 0 && r.Body != nil {
+				limited := http.MaxBytesReader(w, r.Body, sv.maxBodySize)
+				buf, readErr := io.ReadAll(limited)
+				if readErr != nil {
+					// MaxBytesReader returns an error (and writes a 413 header via the
+					// ResponseWriter) when the body exceeds the limit.
+					sv.logger.Warn("Chunked request body too large",
+						"method", r.Method,
+						"path", r.URL.Path,
+						"remote_addr", r.RemoteAddr)
+					http.Error(w, "Request body too large", http.StatusRequestEntityTooLarge)
+					return
+				}
+				// Restore the buffered body so downstream handlers that do read it
+				// still get the content.
+				r.Body = io.NopCloser(bytes.NewReader(buf))
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// recordViolation emits a security violation metric. Factored out so both
+// CreateMiddleware and CreateNonProxyMiddleware share the same reporting path
+// without duplicating the metric-construction logic.
+func (sv *SizeValidator) recordViolation(r *http.Request, req ports.SecurityRequest, result ports.SecurityResult) {
+	if sv.metrics == nil {
+		sv.logger.Warn("Request rejected",
+			"reason", result.Reason,
+			"method", r.Method,
+			"path", r.URL.Path,
+			"remote_addr", r.RemoteAddr)
+		return
+	}
+
+	violationType := constants.ViolationSizeLimit
+	size := req.BodySize
+	if strings.Contains(result.Reason, "headers too large") {
+		size = req.HeaderSize
+	}
+
+	violation := ports.SecurityViolation{
+		ClientID:      util.GetClientIP(r, false, nil),
+		ViolationType: violationType,
+		Endpoint:      r.URL.Path,
+		Size:          size,
+		Timestamp:     time.Now(),
+	}
+	_ = sv.metrics.RecordViolation(r.Context(), violation)
+
+	sv.logger.Warn("Request rejected",
+		"reason", result.Reason,
+		"method", r.Method,
+		"path", r.URL.Path,
+		"remote_addr", r.RemoteAddr)
 }
 
 func estimateHeaderSize(headers http.Header, method, uri, proto string) int64 {
