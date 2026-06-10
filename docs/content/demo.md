@@ -15,7 +15,7 @@ The following is a demo of Olla recorded with [VHS](https://vhs.charm.sh/).
 The demonstration shows:
 
 - Loading a custom configuration at startup
-  - The configuration has several instances of Ollama and LMStudio
+  - The configuration has several instances of Ollama and LM Studio
   - Only 1 is available at startup - `mac-ollama`
 - Ollama request for Tinyllama is received & streamed.
 - Endpoint `beehive-ollama` comes online

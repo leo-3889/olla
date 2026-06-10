@@ -7,10 +7,19 @@ Proxy endpoints for vLLM inference servers. Available through the `/olla/vllm/` 
 | Method | URI | Description |
 |--------|-----|-------------|
 | GET | `/olla/vllm/health` | Health check |
+| GET | `/olla/vllm/version` | vLLM version information |
 | GET | `/olla/vllm/v1/models` | List available models |
 | POST | `/olla/vllm/v1/chat/completions` | Chat completion |
 | POST | `/olla/vllm/v1/completions` | Text completion |
 | POST | `/olla/vllm/v1/embeddings` | Generate embeddings |
+| POST | `/olla/vllm/tokenize` | Encode text to tokens |
+| POST | `/olla/vllm/detokenize` | Decode tokens to text |
+| POST | `/olla/vllm/v1/tokenize` | Encode text to tokens (versioned) |
+| POST | `/olla/vllm/v1/detokenize` | Decode tokens to text (versioned) |
+| POST | `/olla/vllm/rerank` | Rerank documents |
+| POST | `/olla/vllm/v1/rerank` | Rerank documents (versioned) |
+| POST | `/olla/vllm/v2/rerank` | Rerank documents (v2) |
+| GET | `/olla/vllm/get_tokenizer_info` | Tokenizer configuration |
 | GET | `/olla/vllm/metrics` | Prometheus metrics |
 
 ---
@@ -338,17 +347,19 @@ vLLM provides several performance optimizations:
 ## Configuration Example
 
 ```yaml
-endpoints:
-  - url: "http://192.168.0.100:8000"
-    name: "vllm-server"
-    type: "vllm"
-    priority: 90
-    model_url: "/v1/models"
-    health_check_url: "/health"
-    check_interval: 5s
-    check_timeout: 2s
-    headers:
-      X-API-Key: "${VLLM_API_KEY}"
+discovery:
+  static:
+    endpoints:
+      - url: "http://192.168.0.100:8000"
+        name: "vllm-server"
+        type: "vllm"
+        priority: 90
+        model_url: "/v1/models"
+        health_check_url: "/health"
+        check_interval: 5s
+        check_timeout: 2s
+        headers:
+          X-API-Key: "${VLLM_API_KEY}"
 ```
 
 ## Request Headers

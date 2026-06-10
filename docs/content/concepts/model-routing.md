@@ -155,9 +155,13 @@ The `X-Olla-Routing-Reason` header provides detailed information about routing d
 | `model_not_found` | 404 | Model doesn't exist in the system |
 | `model_not_found_fallback` | 200 | Model not found but falling back to all endpoints |
 | `model_unavailable_no_fallback` | 503 | Model exists but unavailable, no fallback |
-| `model_unavailable_compatible_only` | 503 | Model exists but unavailable, compatible_only prevents fallback |
+| `model_unavailable_compatible_only` | 503 | Model exists but unavailable, `compatible_only` prevents fallback |
 | `all_healthy_fallback` | 200 | Using all healthy endpoints as fallback |
-| `discovery_failed` | Varies | Discovery refresh failed, using cached data |
+| `discovery_failed_no_fallback` | 503 | Discovery refresh failed, no fallback configured |
+| `discovery_failed_compatible_only` | 503 | Discovery refresh failed, `compatible_only` prevents fallback |
+| `discovery_failed_all_fallback` | 200 | Discovery refresh failed, falling back to all healthy endpoints |
+| `discovery_error` | 503 | Discovery encountered an error, no fallback |
+| `discovery_error_fallback` | 200 | Discovery encountered an error, falling back to all healthy endpoints |
 
 ## Configuration Example
 

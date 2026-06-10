@@ -23,7 +23,7 @@ The `/engines/v1/...` paths use automatic engine selection. The explicit `/engin
 
 List models available on the Docker Model Runner instance.
 
-Returns an empty `data` array when no models have been loaded yet — this is normal behaviour due to lazy model loading and does not indicate an unhealthy endpoint.
+Returns an empty `data` array when no models have been loaded yet. This is normal behaviour due to lazy model loading and does not indicate an unhealthy endpoint.
 
 ### Request
 
@@ -279,15 +279,17 @@ All responses include:
 ## Configuration Example
 
 ```yaml
-endpoints:
-  - url: "http://localhost:12434"
-    name: "local-dmr"
-    type: "docker-model-runner"
-    priority: 95
-    model_url: "/engines/v1/models"
-    health_check_url: "/engines/v1/models"
-    check_interval: 10s
-    check_timeout: 5s
+discovery:
+  static:
+    endpoints:
+      - url: "http://localhost:12434"
+        name: "local-dmr"
+        type: "docker-model-runner"
+        priority: 95
+        model_url: "/engines/v1/models"
+        health_check_url: "/engines/v1/models"
+        check_interval: 10s
+        check_timeout: 5s
 ```
 
 See the [Docker Model Runner Integration Guide](../integrations/backend/docker-model-runner.md) for full configuration and setup instructions.

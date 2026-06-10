@@ -9,17 +9,16 @@ keywords: olla proxy engine, sherpa engine, high performance proxy, llm proxy pe
 > :memo: **Default Configuration**
 > ```yaml
 > proxy:
->   engine: "sherpa"  # sherpa or olla
+>   engine: "olla"  # sherpa or olla
 >   stream_buffer_size: 8192  # Buffer size in bytes
 > ```
 > **Supported**:
 > 
-> - `sherpa` _(default)_ - Simple, maintainable proxy
-> - `olla` - High-performance proxy
+> - `olla` _(default)_ - High-performance proxy
+> - `sherpa` - Simple, maintainable proxy (maintenance mode)
 > 
 > **Environment Variables**: 
 > - `OLLA_PROXY_ENGINE`
-> - `OLLA_PROXY_STREAM_BUFFER_SIZE`
 
 Olla offers two proxy engines: **Sherpa** for simplicity and **Olla** for high performance. This guide helps you choose the right engine for your needs.
 
@@ -39,18 +38,18 @@ Olla offers two proxy engines: **Sherpa** for simplicity and **Olla** for high p
 - Require optimal streaming performance
 - Want advanced features like connection pooling
 
-Olla ships with the default setting of using the `Sherpa` engine for a wide variety of use-cases.
+Olla ships with the `Olla` engine as the default, which is the recommended choice for production and high-traffic workloads. The `Sherpa` engine remains available for simpler deployments but is in maintenance mode.
 
 ## Engine Comparison
 
-| Aspect | Sherpa (default) | Olla |
+| Aspect | Sherpa | Olla (default) |
 |--------|--------|------|
 | **Performance** | Good for moderate loads | Excellent for high loads |
 | **Memory Usage** | Lower memory footprint | Higher due to pooling |
 | **Connection Handling** | Shared transport with keep-alive | Per-endpoint connection pools |
-| **Circuit Breaker** | Basic failure detection | Advanced circuit breaker per endpoint |
+| **Circuit Breaker** | None | Advanced circuit breaker per endpoint |
 | **Retry Logic** | Shared retry handler | Shared retry handler with circuit breaker integration |
-| **Streaming** | Standard HTTP streaming (8KB buffer) | Optimised for LLM streaming (64KB buffer) |
+| **Streaming** | Standard HTTP streaming (8KB buffer) | Optimised for LLM streaming (8KB default; internal pool transport uses 64KB read/write buffers regardless of `stream_buffer_size`) |
 | **Best For** | Development, small deployments | Production, enterprise use |
 
 ## Configuration
@@ -59,7 +58,7 @@ Set your chosen engine in the configuration file:
 
 ```yaml
 proxy:
-  engine: "sherpa"  # or "olla" for production
+  engine: "olla"    # or "sherpa" for simpler deployments
   profile: "auto"   # Works with both engines
   stream_buffer_size: 8192  # Optional: tune for your workload
 ```
@@ -151,9 +150,9 @@ The buffer size determines how much data is read from the backend before forward
 |-------------|-------------------|------------|-------------------|----------|
 | **2KB** | Fastest (~5ms) | Lower | Minimal | Interactive chat with immediate feedback |
 | **4KB** | Fast (~10ms) | Moderate | Low | Balanced chat applications |
-| **8KB** (Sherpa default) | Moderate (~20ms) | Good | Moderate | General-purpose workloads |
+| **8KB** (default for both engines) | Moderate (~20ms) | Good | Moderate | General-purpose workloads |
 | **16KB** | Slower (~40ms) | Better | Higher | Bulk operations, embeddings |
-| **64KB** (Olla default) | Slowest (~150ms) | Best | Highest | High-throughput batch processing |
+| **64KB** | Slowest (~150ms) | Best | Highest | High-throughput batch processing |
 
 ### How Engines Use Buffers
 
@@ -163,18 +162,19 @@ The buffer size determines how much data is read from the backend before forward
 - Optimised for moderate concurrency
 - Lower memory footprint
 
-**Olla Engine (64KB default):**
+**Olla Engine (8KB default):**
 - Per-endpoint buffer pools
 - Multiple buffers pre-allocated
 - Optimised for high concurrency
 - Better throughput at cost of memory
+- TCP transport internally uses 64KB read/write socket buffers independent of `stream_buffer_size`
 
 ### Tuning Buffer Size
 
 ```yaml
 # Interactive chat - prioritise low latency
 proxy:
-  engine: "sherpa"
+  engine: "olla"
   stream_buffer_size: 4096  # 4KB for faster first token
   profile: "streaming"
 
@@ -186,7 +186,7 @@ proxy:
 
 # Balanced workload - default settings
 proxy:
-  engine: "sherpa"
+  engine: "olla"
   stream_buffer_size: 8192  # 8KB balanced approach
   profile: "auto"
 ```
@@ -273,10 +273,9 @@ Yes, but you'll need to restart Olla with the new configuration. Consider runnin
 
 ### Which engine do most users choose?
 
-- Development: Most use Sherpa for simplicity
-- Production: Most use Olla for performance
+Most users stay with the **Olla engine** (the default) for both development and production. Sherpa is available as a maintenance-mode alternative when a simpler code path helps with debugging specific issues.
 
-The `auto` proxy profile works great with both but learn more about [proxy profiles](proxy-profiles.md).
+The `auto` proxy profile works great with both; learn more about [proxy profiles](proxy-profiles.md).
 
 ### Does engine choice affect my LLM backends?
 

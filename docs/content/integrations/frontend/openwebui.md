@@ -140,7 +140,7 @@ server:
   port: 40114
 
 proxy:
-  engine: "sherpa"
+  engine: "olla"
   load_balancer: "priority"
 
 discovery:
@@ -201,7 +201,7 @@ environment:
   - RAG_WEB_SEARCH_ENGINE=duckduckgo
 ```
 
-See Ollama documentation for more details.
+See [OpenWebUI environment configuration](https://docs.openwebui.com/getting-started/env-configuration) for the full list of supported variables.
 
 ## Using Multiple Backends
 
@@ -410,17 +410,27 @@ curl -I http://localhost:40114/olla/ollama/api/tags
 
 **Solution**:
 
-For Ollama on Docker host:
+For Ollama on Docker host, update your endpoint URL in `olla.yaml`:
 ```yaml
-endpoints:
-  - url: "http://host.docker.internal:11434"  # macOS/Windows
-  - url: "http://172.17.0.1:11434"            # Linux
+discovery:
+  static:
+    endpoints:
+      - url: "http://host.docker.internal:11434"  # macOS/Windows
+      # - url: "http://172.17.0.1:11434"          # Linux (Docker bridge IP)
+        name: "ollama-host"
+        type: "ollama"
+        priority: 100
 ```
 
 For remote instances:
 ```yaml
-endpoints:
-  - url: "http://192.168.1.100:11434"  # Use actual IP
+discovery:
+  static:
+    endpoints:
+      - url: "http://192.168.1.100:11434"  # Use actual LAN IP
+        name: "ollama-remote"
+        type: "ollama"
+        priority: 100
 ```
 
 ## Advanced Features
@@ -455,11 +465,13 @@ services:
 
 Update `olla.yaml`:
 ```yaml
-endpoints:
-  - url: "http://ollama-gpu:11434"
-    name: "local-gpu"
-    type: "ollama"
-    priority: 100
+discovery:
+  static:
+    endpoints:
+      - url: "http://ollama-gpu:11434"
+        name: "local-gpu"
+        type: "ollama"
+        priority: 100
 ```
 
 ### Authentication
@@ -497,14 +509,18 @@ services:
 Configure priorities based on cost and performance:
 
 ```yaml
-endpoints:
-  # Primary local endpoint
-  - url: "http://localhost:11434"
-    priority: 100
-  
-  # Fallback (e.g. LiteLLM gateway for cloud overflow)
-  - url: "http://litellm:4000"
-    priority: 10
+discovery:
+  static:
+    endpoints:
+      # Primary local endpoint
+      - url: "http://localhost:11434"
+        type: "ollama"
+        priority: 100
+
+      # Fallback (e.g. LiteLLM gateway for cloud overflow)
+      - url: "http://litellm:4000"
+        type: "openai-compatible"
+        priority: 10
 ```
 
 ### 2. Monitor Health

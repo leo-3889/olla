@@ -40,8 +40,7 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
-    environment:
-      - LOG_LEVEL=info
+    # Logging level is set in olla.yaml (logging.level)
 
 volumes:
   ollama_data:

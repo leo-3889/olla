@@ -88,6 +88,18 @@ olla --config config.yaml
 curl http://localhost:40114/internal/health
 ```
 
+## Command-line Flags
+
+Olla exposes a deliberately small set of CLI flags. Configuration belongs in the YAML file or environment variables (see [Configuration Reference](../configuration/reference.md)).
+
+| Flag | Description |
+|---|---|
+| `--version` | Print version, build commit, and Go runtime, then exit. Equivalent to `OLLA_SHOW_VERSION=true`. |
+| `--profile` | Start a pprof profiling server on `localhost:19841` (visit `/debug/pprof/`). Equivalent to `OLLA_ENABLE_PROFILER=true`. Note: this is the profiling flag, not a port flag. There is no `-p`/`--port` flag; set the port in your config or via `OLLA_SERVER_PORT`. |
+| `-c`, `--config <path>` | Path to a YAML config file. Falls back to `OLLA_CONFIG_FILE`, then the built-in defaults. |
+
+`-h` / `--help` is provided automatically by Go's flag package and prints the list above. Running `olla` without arguments uses the YAML config from `-c`/`--config` if set, then `OLLA_CONFIG_FILE`, otherwise the built-in defaults.
+
 ## Next Steps
 
 - [Quick Start Guide](quickstart.md) - Get your first proxy running
@@ -105,7 +117,7 @@ curl http://localhost:40114/internal/health
 : On Linux/macOS, ensure the binary has execute permissions: `chmod +x olla`
 
 **Port already in use**
-: Change the port in your configuration file or use `OLLA_SERVER_PORT` environment variable.
+: Change the port in your YAML config file (`server.port`) or via the `OLLA_SERVER_PORT` environment variable. There is no `--port` CLI flag.
 
 **Config file not found**
 : Specify the config file path with `--config /path/to/config.yaml`

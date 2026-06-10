@@ -6,7 +6,7 @@ keywords: Claude Code, Olla, Anthropic API, Messages API, local LLM, Ollama, vLL
 
 # Claude Code Integration with Anthropic API
 
-Claude Code can connect to Olla's Anthropic Messages API translation endpoint, enabling you to use Anthropic's official CLI coding assistant with local LLM infrastructure—no cloud API costs.
+Claude Code can connect to Olla's Anthropic Messages API translation endpoint, enabling you to use Anthropic's official CLI coding assistant with local LLM infrastructure and no cloud API costs.
 
 **Set in Claude Code:**
 
@@ -15,7 +15,7 @@ export ANTHROPIC_BASE_URL="http://localhost:40114/olla/anthropic"
 
 export DEFAULT_MODEL="openai/gpt-oss-120b" # the model you want to target
 export ANTHROPIC_MODEL="${DEFAULT_MODEL}"
-export ANTHROPIC_SMALL_FAST_MODEL="${DEFAULT_MODEL}"
+export ANTHROPIC_SMALL_FAST_MODEL="${DEFAULT_MODEL}"  # deprecated; prefer the three below
 export ANTHROPIC_DEFAULT_HAIKU_MODEL="${DEFAULT_MODEL}"
 export ANTHROPIC_DEFAULT_SONNET_MODEL="${DEFAULT_MODEL}"
 export ANTHROPIC_DEFAULT_OPUS_MODEL="${DEFAULT_MODEL}"
@@ -192,10 +192,9 @@ Create **`olla.yaml`**:
 server:
   host: 0.0.0.0
   port: 40114
-  log_level: info
 
 proxy:
-  engine: sherpa           # or: olla (lower overhead)
+  engine: olla             # default; or: sherpa (simpler codebase, maintenance mode)
   load_balancer: priority  # or: least-connections
   response_timeout: 1800s  # 30 min for long generations
   read_timeout: 600s
@@ -214,15 +213,11 @@ discovery:
         name: local-ollama
         type: ollama
         priority: 100
-        health_check:
-          enabled: true
-          interval: 30s
-          timeout: 5s
+        check_interval: 30s
+        check_timeout: 5s
 
-# Optional: Rate limiting
-security:
-  rate_limit:
-    enabled: false  # Enable in production
+logging:
+  level: info
 
 # Optional: Streaming optimisation
 # proxy:
@@ -287,23 +282,20 @@ echo 'export ANTHROPIC_BASE_URL="http://localhost:40114/olla/anthropic"' >> ~/.b
 source ~/.bashrc
 ```
 
-**Option B: Configuration File**
+**Option B: `.claude/settings.json`**
 
-If Claude Code supports configuration files, create/edit the config:
-
-**macOS/Linux**: `~/.config/claude-code/config.json`
-**Windows**: `%APPDATA%\claude-code\config.json`
+Claude Code can also be configured via a `settings.json` file. Create `.claude/settings.json` in your project root (or `~/.claude/settings.json` for global config):
 
 ```json
 {
-  "api": {
-    "baseURL": "http://localhost:40114/olla/anthropic",
-    "apiKey": "not-required"
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://localhost:40114/olla/anthropic",
+    "ANTHROPIC_API_KEY": "not-required"
   }
 }
 ```
 
-> **Note**: Configuration file format may vary by Claude Code version. Check [official documentation](https://docs.claude.com/en/docs/claude-code) for your version.
+> **Note**: Check the [official Claude Code documentation](https://docs.anthropic.com/en/docs/claude-code) for the full list of supported settings.
 
 ### 7. Start Claude Code
 
@@ -324,8 +316,12 @@ Try prompts like:
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `ANTHROPIC_BASE_URL` | Yes | - | Olla's Anthropic endpoint URL |
-| `ANTHROPIC_API_KEY` | No | - | API key (not enforced by Olla) |
-| `ANTHROPIC_VERSION` | No | `2023-06-01` | API version header |
+| `ANTHROPIC_API_KEY` | No | - | API key sent as `X-Api-Key` header (not enforced by Olla) |
+| `ANTHROPIC_AUTH_TOKEN` | No | - | Value sent as `Authorization: Bearer` header |
+| `ANTHROPIC_MODEL` | No | - | Default model for all requests |
+| `ANTHROPIC_DEFAULT_HAIKU_MODEL` | No | - | Model used for fast background tasks |
+| `ANTHROPIC_DEFAULT_SONNET_MODEL` | No | - | Model used for standard tasks |
+| `ANTHROPIC_DEFAULT_OPUS_MODEL` | No | - | Model used for complex tasks |
 
 ### Olla Configuration
 
@@ -346,7 +342,6 @@ proxy:
 proxy:
   response_timeout: 1800s  # Max time for response (30 minutes)
   read_timeout: 600s       # Max time for reading response body
-  write_timeout: 30s       # Max time for writing request
 ```
 
 **Streaming Optimisation**:
@@ -482,7 +477,10 @@ networks:
 server:
   host: 0.0.0.0
   port: 40114
-  log_level: info
+  rate_limits:
+    global_requests_per_minute: 100
+    per_ip_requests_per_minute: 60
+    burst_size: 20
 
 proxy:
   engine: olla  # Use high-performance engine
@@ -503,18 +501,8 @@ discovery:
         name: local-ollama
         type: ollama
         priority: 100
-        health_check:
-          enabled: true
-          interval: 30s
-          timeout: 5s
-          unhealthy_threshold: 3
-          healthy_threshold: 2
-
-security:
-  rate_limit:
-    enabled: true
-    requests_per_minute: 100
-    burst: 50
+        check_interval: 30s
+        check_timeout: 5s
 
 logging:
   level: info
@@ -577,13 +565,13 @@ curl http://localhost:40114/internal/health
 docker compose ps
 ```
 
-**Check Claude Code logs** (location varies by OS):
+**Check Claude Code logs** (location varies by OS and version, check the [official docs](https://docs.anthropic.com/en/docs/claude-code) for your version):
 ```bash
-# macOS/Linux
-tail -f ~/.config/claude-code/logs/client.log
+# macOS/Linux, typical location
+tail -f ~/.claude/logs/claude.log
 
-# Windows
-type %APPDATA%\claude-code\logs\client.log
+# Windows, typical location
+type %USERPROFILE%\.claude\logs\claude.log
 ```
 
 ### No Models Available

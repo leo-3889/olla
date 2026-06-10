@@ -27,7 +27,7 @@ Olla focuses on a specific problem: **making your existing LLM infrastructure re
 We don't try to:
 
 - Deploy models (that's GPUStack's job)
-- Translate APIs (that's LiteLLM's strength)  
+- Translate across 100+ cloud provider APIs (that's LiteLLM's strength -- Olla handles Anthropic<->OpenAI translation for local backends)
 - Serve models (that's Ollama/vLLM's purpose)
 
 Instead, we excel at:
@@ -90,7 +90,7 @@ Applications
 Let's be honest about when Olla isn't the right choice:
 
 - **Single endpoint only**: If you'll only ever have one LLM endpoint, Olla adds unnecessary complexity
-- **Need API translation**: If your main need is converting between API formats, [LiteLLM](./litellm.md) is purpose-built for this
+- **Need broad API translation**: Olla translates between Anthropic Messages API and OpenAI format for local backends. If your main need is converting across 100+ cloud provider formats, [LiteLLM](./litellm.md) is purpose-built for that
 - **GPU orchestration**: If you need to deploy/manage models across GPUs, [GPUStack](./gpustack.md) or Kubernetes is what you want
 - **Serverless/Lambda**: Olla is designed for persistent infrastructure, not serverless
 

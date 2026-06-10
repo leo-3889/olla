@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 ## Overview
-Olla is a high-performance proxy and load balancer for LLM infrastructure, written in Go. It intelligently routes requests across local and remote inference nodes (Ollama, LM Studio, LiteLLM, vLLM, SGLang, Llamacpp, Lemonade, Anthropic, and OpenAI-compatible endpoints).
+Olla is a high-performance proxy and load balancer for LLM infrastructure, written in Go. It intelligently routes requests across local inference nodes (Ollama, LM Studio, LiteLLM, vLLM, vLLM-MLX, SGLang, llama.cpp, Lemonade, LMDeploy, Docker Model Runner, and OpenAI-compatible endpoints). The Anthropic Messages API is also supported via passthrough or translation.
 
 The project provides two proxy engines: Sherpa (simple, maintainable) and Olla (high-performance with advanced features).
 
@@ -40,8 +40,11 @@ olla/
 │   │   ├── lmstudio.yaml   # LM Studio configuration
 │   │   ├── lemonade.yaml   # Lemonade SDK configuration
 │   │   ├── litellm.yaml    # LiteLLM gateway configuration
+│   │   ├── lmdeploy.yaml   # LMDeploy configuration
 │   │   ├── vllm.yaml       # vLLM configuration
+│   │   ├── vllm-mlx.yaml   # vLLM-MLX (Apple Silicon) configuration
 │   │   ├── sglang.yaml     # SGLang configuration
+│   │   ├── dmr.yaml        # Docker Model Runner configuration
 │   │   └── openai-compatible.yaml  # OpenAI-compatible generic profile (type: "openai" is an alias)
 │   ├── models.yaml         # Model configurations
 │   └── config.local.yaml   # Local configuration overrides (user, not committed to git)
@@ -147,6 +150,20 @@ olla/
 - `/olla/proxy/` - Olla API proxy endpoint (POST)
 - `/olla/proxy/v1/models` - OpenAI-compatible models listing (GET)
 
+### Provider Proxy Prefixes
+Profile-driven per-backend namespaces (see `internal/app/handlers/server_routes.go`):
+- `/olla/ollama/`
+- `/olla/lmstudio/` (also `/olla/lm-studio/`, `/olla/lm_studio/`)
+- `/olla/vllm/`
+- `/olla/vllm-mlx/`
+- `/olla/sglang/`
+- `/olla/lmdeploy/`
+- `/olla/llamacpp/`
+- `/olla/lemonade/`
+- `/olla/litellm/`
+- `/olla/dmr/`
+- `/olla/openai/` and `/olla/openai-compatible/` (both served by `openai-compatible.yaml`)
+
 ### Translator Endpoints
 Dynamically registered based on configured translators (e.g., Anthropic Messages API)
 
@@ -157,7 +174,7 @@ Dynamically registered based on configured translators (e.g., Anthropic Messages
 ## Response Headers
 - `X-Olla-Endpoint`: Backend name
 - `X-Olla-Model`: Model used
-- `X-Olla-Backend-Type`: ollama/openai/openai-compatible/lm-studio/vllm/sglang/llamacpp/lemonade
+- `X-Olla-Backend-Type`: ollama, lm-studio, litellm, vllm, vllm-mlx, sglang, llamacpp, lmdeploy, lemonade, openai, openai-compatible, docker-model-runner, omlx
 - `X-Olla-Request-ID`: Request ID
 - `X-Olla-Response-Time`: Total processing time
 - `X-Olla-Mode`: Translator mode used (`passthrough` or absent for translation) - set on Anthropic translator requests
@@ -210,7 +227,7 @@ Always run `make ready` before committing changes.
 - **Translator Layer**: Enables API format translation (e.g., OpenAI ↔ Anthropic) with passthrough optimisation for backends with native support
 - **Passthrough Mode**: When a backend natively supports the Anthropic Messages API (vLLM, llama.cpp, LM Studio, Ollama), requests bypass translation entirely
 - **Translator Metrics**: Thread-safe per-translator statistics tracking passthrough/translation rates, fallback reasons, latency, and streaming breakdown (`internal/adapter/stats/translator_collector.go`)
-- **Sticky Sessions**: Optional decorator on the endpoint selector that pins multi-turn LLM conversations to the backend that handled the first turn, maximising KV-cache reuse. FNV-64a hashed keys, TTL + LRU bounded, purged on routable→non-routable health transitions (`internal/adapter/balancer/sticky.go`)
+- **Sticky Sessions**: Optional decorator on the endpoint selector that pins multi-turn LLM conversations to the backend that handled the first turn, maximising KV-cache reuse. 64-bit FNV-1a hashed keys, TTL + LRU bounded, purged on routable→non-routable health transitions (`internal/adapter/balancer/sticky.go`)
 - **Proxy Engines**: Choose Sherpa (simple) or Olla (high-performance)
 - **Load Balancing**: Priority-based recommended for production
 - **Version Management**: Build-time version injection via `internal/version`

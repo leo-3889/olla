@@ -93,28 +93,30 @@ Olla and GPUStack work excellently together:
 
 ```yaml
 # Olla configuration
-endpoints:
-  # GPUStack-managed endpoints (OpenAI-compatible API)
-  - name: gpustack-pool-1
-    url: http://gpustack-1.internal:8080
-    priority: 1
-    type: openai-compatible  # or "openai" — accepted alias
-  
-  - name: gpustack-pool-2
-    url: http://gpustack-2.internal:8080
-    priority: 1
-    type: openai-compatible
-  
-  # Other endpoints
-  - name: ollama-backup
-    url: http://backup-server:11434
-    priority: 2
-    type: ollama
-  
-  - name: litellm-overflow
-    url: http://litellm:8000
-    priority: 10
-    type: litellm
+discovery:
+  static:
+    endpoints:
+      # GPUStack-managed endpoints (OpenAI-compatible API)
+      - name: gpustack-pool-1
+        url: http://gpustack-1.internal:8080
+        priority: 1
+        type: openai-compatible  # or "openai" - accepted alias
+
+      - name: gpustack-pool-2
+        url: http://gpustack-2.internal:8080
+        priority: 1
+        type: openai-compatible
+
+      # Other endpoints
+      - name: ollama-backup
+        url: http://backup-server:11434
+        priority: 2
+        type: ollama
+
+      - name: litellm-overflow
+        url: http://litellm:8000
+        priority: 10
+        type: litellm
 ```
 
 ### Benefits of Combined Deployment:
@@ -175,25 +177,33 @@ Production:   Apps → Olla → GPUStack Cluster
 ### Pattern 1: GPUStack Primary, Others Secondary
 ```yaml
 # Olla prioritises GPUStack but maintains alternatives
-endpoints:
-  - name: gpustack-primary
-    url: http://gpustack:8080
-    priority: 1
-  - name: manual-backup
-    url: http://ollama:11434
-    priority: 5
+discovery:
+  static:
+    endpoints:
+      - name: gpustack-primary
+        url: http://gpustack:8080
+        type: openai-compatible
+        priority: 1
+      - name: manual-backup
+        url: http://ollama:11434
+        type: ollama
+        priority: 5
 ```
 
 ### Pattern 2: Geographic Distribution
 ```yaml
 # Olla routes to nearest GPUStack region
-endpoints:
-  - name: gpustack-syd
-    url: http://syd.gpustack:8080
-    priority: 1  # For Sydney users
-  - name: gpustack-mel
-    url: http://mel.gpustack:8080
-    priority: 1  # For Melbourne users
+discovery:
+  static:
+    endpoints:
+      - name: gpustack-syd
+        url: http://syd.gpustack:8080
+        type: openai-compatible
+        priority: 1  # For Sydney users
+      - name: gpustack-mel
+        url: http://mel.gpustack:8080
+        type: openai-compatible
+        priority: 1  # For Melbourne users
 ```
 
 ## Performance Considerations

@@ -23,10 +23,15 @@ This guide covers testing patterns and strategies used in Olla.
 │   └── */                  # Unit tests alongside code
 │       └── *_test.go
 ├── test/
-│   ├── integration/        # Integration tests
-│   ├── scripts/           # Test scripts
-│   └── fixtures/          # Test data
-└── benchmarks/            # Performance benchmarks
+│   ├── integration/        # Go integration tests
+│   ├── scripts/            # Shell/Python end-to-end test scripts
+│   │   ├── auth/           # Authentication tests
+│   │   ├── load/           # Load tests
+│   │   ├── logic/          # Routing logic tests
+│   │   ├── security/       # Security tests
+│   │   └── streaming/      # Streaming tests
+│   └── cmd/                # Helper programs for testing (e.g. mock backend)
+└── (benchmarks live alongside code as *_bench_test.go files in internal/)
 ```
 
 ## Unit Testing
@@ -476,7 +481,7 @@ jobs:
         run: make test
       
       - name: Race detection
-        run: go test -race ./...
+        run: go test -race -short ./...
       
       - name: Coverage
         run: |

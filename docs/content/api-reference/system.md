@@ -13,6 +13,7 @@ Internal endpoints for health monitoring, system status, and process information
 | GET | `/internal/status/models` | Model registry status |
 | GET | `/internal/stats/models` | Model usage statistics |
 | GET | `/internal/stats/translators` | Translator usage and performance statistics |
+| GET | `/internal/stats/sticky` | Sticky session statistics (returns `{"enabled":false}` when sticky sessions are disabled) |
 | GET | `/internal/process` | Process information and metrics |
 
 ---
@@ -31,15 +32,56 @@ curl -X GET http://localhost:40114/version
 
 ```json
 {
+  "name": "Olla",
   "version": "0.1.0",
+  "edition": "community",
+  "description": "High-performance proxy and load balancer for LLM infrastructure",
   "build": {
-    "version": "0.1.0",
     "commit": "abc123def",
-    "date": "2024-01-15",
-    "go_version": "go1.24.0"
+    "date": "2026-04-15T10:00:00Z",
+    "go_version": "go1.24.0",
+    "platform": "linux/amd64"
+  },
+  "capabilities": ["proxy", "load-balancing", "health-checking"],
+  "capabilities_experimental": [],
+  "supported_backends": ["ollama", "lm-studio", "vllm", "llamacpp"],
+  "api": {
+    "version": "v1",
+    "endpoints": {
+      "health": "/internal/health",
+      "status": "/internal/status",
+      "process": "/internal/process",
+      "version": "/version"
+    }
+  },
+  "links": {
+    "homepage": "https://github.com/thushan/olla",
+    "documentation": "https://github.com/thushan/olla#readme",
+    "releases": "https://github.com/thushan/olla/releases/latest"
   }
 }
 ```
+
+### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Application name |
+| `version` | string | Olla version |
+| `edition` | string | Build edition |
+| `description` | string | Application description |
+| `build` | object | Build metadata |
+| `build.commit` | string | Git commit hash |
+| `build.date` | string | Build timestamp |
+| `build.go_version` | string | Go toolchain version used to build |
+| `build.platform` | string | OS/arch the binary is running on |
+| `capabilities` | array | Stable capabilities advertised by this build |
+| `capabilities_experimental` | array | Experimental capabilities advertised by this build |
+| `supported_backends` | array | Backend types this build supports |
+| `api` | object | API metadata |
+| `api.version` | string | Public API version |
+| `api.endpoints` | object | Map of named endpoints to their paths |
+| `links` | object | Project links (homepage, documentation, releases) |
 
 ---
 
@@ -57,25 +99,7 @@ curl -X GET http://localhost:40114/internal/health
 
 ```json
 {
-  "status": "healthy",
-  "timestamp": "2024-01-15T10:30:00Z",
-  "uptime": "2h30m15s",
-  "endpoints": [
-    {
-      "name": "local-ollama",
-      "url": "http://localhost:11434",
-      "status": "healthy",
-      "latency": "1.2ms",
-      "last_check": "2024-01-15T10:29:45Z"
-    },
-    {
-      "name": "local-lm-studio",
-      "url": "http://localhost:11234", 
-      "status": "healthy",
-      "latency": "0.8ms",
-      "last_check": "2024-01-15T10:29:45Z"
-    }
-  ]
+  "status": "healthy"
 }
 ```
 
@@ -83,15 +107,9 @@ curl -X GET http://localhost:40114/internal/health
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `status` | string | Overall health status (healthy/degraded/unhealthy) |
-| `timestamp` | string | Current timestamp in RFC3339 format |
-| `uptime` | string | Time since Olla started |
-| `endpoints` | array | Status of each configured endpoint |
-| `endpoints[].name` | string | Endpoint identifier |
-| `endpoints[].url` | string | Backend URL |
-| `endpoints[].status` | string | Endpoint health (healthy/unhealthy) |
-| `endpoints[].latency` | string | Last health check latency |
-| `endpoints[].last_check` | string | Timestamp of last health check |
+| `status` | string | Always `"healthy"` when the process is responding. The endpoint always returns HTTP 200 with this body; it confirms the process is alive but does not reflect backend health. |
+
+> :memo: For per-endpoint health, request statistics, and proxy configuration, use [`/internal/status`](#get-internalstatus) or `/internal/status/endpoints`.
 
 ---
 
@@ -109,49 +127,46 @@ curl -X GET http://localhost:40114/internal/status
 
 ```json
 {
-  "version": "0.1.0",
-  "build": {
+  "timestamp": "2026-04-15T10:30:00Z",
+  "endpoints": [
+    {
+      "name": "local-ollama",
+      "status": "healthy",
+      "success_rate": "99.6%",
+      "avg_latency": "120ms",
+      "traffic": "1.2 GB",
+      "last_check": "2 seconds ago",
+      "next_check": "in 3 seconds",
+      "issues": "",
+      "models": { "last_updated": "2026-04-15T10:25:00Z", "count": 3 },
+      "priority": 100,
+      "connections": 2,
+      "requests": 1200
+    }
+  ],
+  "proxy": {
+    "engine": "olla",
+    "profile": "auto",
+    "balancer": "least-connections"
+  },
+  "security": {
+    "status": "normal",
+    "blocked_ips": 0,
+    "violations": { "rate_limits": 0, "size_limits": 0 }
+  },
+  "system": {
+    "status": "healthy",
+    "endpoints_up": "2/2",
+    "success_rate": "99.2%",
+    "avg_latency": "125ms",
+    "total_traffic": "1.5 GB",
+    "uptime": "2h30m15s",
     "version": "0.1.0",
-    "commit": "abc123def",
-    "date": "2024-01-15",
-    "go_version": "go1.24.0"
-  },
-  "config": {
-    "proxy_engine": "sherpa",
-    "load_balancer": "least-connections",
-    "endpoints_configured": 2,
-    "models_discovered": 5
-  },
-  "statistics": {
-    "requests_total": 1523,
-    "requests_active": 3,
-    "requests_failed": 12,
-    "average_latency": "125ms",
-    "p95_latency": "450ms",
-    "p99_latency": "850ms"
-  },
-  "endpoints": {
-    "local-ollama": {
-      "healthy": true,
-      "models": 3,
-      "requests": 1200,
-      "errors": 5,
-      "average_latency": "120ms"
-    },
-    "local-lm-studio": {
-      "healthy": true,
-      "models": 2,
-      "requests": 323,
-      "errors": 7,
-      "average_latency": "135ms"
-    }
-  },
-  "models": {
-    "total": 5,
-    "by_provider": {
-      "ollama": ["llama3.2:latest", "mistral:latest", "codellama:latest"],
-      "lm-studio": ["phi-3-mini", "gemma-2b"]
-    }
+    "commit": "abc123de",
+    "active_connections": 3,
+    "security_violations": 0,
+    "total_requests": 1523,
+    "total_failures": 12
   }
 }
 ```
@@ -160,12 +175,15 @@ curl -X GET http://localhost:40114/internal/status
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `version` | string | Olla version |
-| `build` | object | Build information |
-| `config` | object | Current configuration |
-| `statistics` | object | Request statistics |
-| `endpoints` | object | Per-endpoint statistics |
-| `models` | object | Model information |
+| `timestamp` | string | RFC3339 timestamp at which the response was generated |
+| `endpoints` | array | Per-endpoint runtime view (see below) |
+| `proxy` | object | Active proxy configuration: `engine`, `profile`, `balancer` |
+| `security` | object | Security posture: `status`, `blocked_ips`, `violations.{rate_limits, size_limits}` |
+| `system` | object | Aggregate system summary (see below) |
+
+**`endpoints[]` fields**: `name`, `status`, `success_rate`, `avg_latency`, `traffic`, `last_check`, `next_check`, `issues`, `models.{last_updated, count}`, `priority`, `connections`, `requests`. The `last_check` and `next_check` values are human-readable relative strings (e.g. `"2 seconds ago"`, `"in 3 seconds"`), not RFC3339 timestamps.
+
+**`system` fields**: `status` (healthy/degraded/critical), `endpoints_up`, `success_rate`, `avg_latency`, `total_traffic`, `uptime`, `version`, `commit`, `active_connections`, `security_violations`, `total_requests`, `total_failures`.
 
 ---
 
@@ -183,33 +201,38 @@ curl -X GET http://localhost:40114/internal/process
 
 ```json
 {
-  "pid": 12345,
-  "started_at": "2024-01-15T08:00:00Z",
-  "uptime_seconds": 9015,
+  "timestamp": "2026-04-15T10:30:00Z",
   "memory": {
-    "alloc_mb": 45.2,
-    "total_alloc_mb": 512.8,
-    "sys_mb": 72.3,
-    "heap_alloc_mb": 45.2,
-    "heap_objects": 125432,
-    "gc_runs": 42,
-    "gc_pause_ms": 0.125
+    "heap_alloc": "45.2 MB",
+    "heap_sys": "72.3 MB",
+    "heap_inuse": "50.1 MB",
+    "heap_released": "12.0 MB",
+    "stack_inuse": "1.5 MB",
+    "total_alloc": "512.8 MB",
+    "memory_pressure": "low"
   },
-  "cpu": {
-    "goroutines": 28,
-    "threads": 12,
-    "cpu_percent": 2.5
+  "garbage_collection": {
+    "last_gc": "2026-04-15T10:29:50Z",
+    "total_gc_time": "120ms",
+    "avg_gc_pause": "2.9ms",
+    "gc_cpu_fraction": 0.00021,
+    "num_gc_cycles": 42
   },
-  "connections": {
-    "active": 3,
-    "idle": 12,
-    "total_created": 1523
+  "goroutines": {
+    "health_status": "healthy",
+    "count": 28,
+    "cgo_calls": 0
   },
   "runtime": {
+    "uptime": "2h30m15s",
     "go_version": "go1.24.0",
-    "os": "linux",
-    "arch": "amd64",
-    "max_procs": 8
+    "num_cpu": 8,
+    "gomaxprocs": 8
+  },
+  "allocations": {
+    "total_mallocs": 1532411,
+    "total_frees": 1406979,
+    "net_objects": 125432
   }
 }
 ```
@@ -218,23 +241,29 @@ curl -X GET http://localhost:40114/internal/process
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `pid` | integer | Process ID |
-| `started_at` | string | Process start time |
-| `uptime_seconds` | integer | Uptime in seconds |
-| `memory` | object | Memory statistics |
-| `memory.alloc_mb` | float | Currently allocated memory |
-| `memory.total_alloc_mb` | float | Total allocated memory |
-| `memory.sys_mb` | float | System memory |
-| `memory.heap_alloc_mb` | float | Heap allocated memory |
-| `memory.heap_objects` | integer | Number of heap objects |
-| `memory.gc_runs` | integer | Number of GC runs |
-| `memory.gc_pause_ms` | float | Last GC pause duration |
-| `cpu` | object | CPU statistics |
-| `cpu.goroutines` | integer | Active goroutines |
-| `cpu.threads` | integer | OS threads |
-| `cpu.cpu_percent` | float | CPU usage percentage |
-| `connections` | object | Connection pool stats |
-| `runtime` | object | Runtime information |
+| `timestamp` | string | RFC3339 timestamp at which the snapshot was taken |
+| `memory.heap_alloc` | string | Currently allocated heap, human-readable |
+| `memory.heap_sys` | string | Heap memory obtained from OS |
+| `memory.heap_inuse` | string | Heap memory currently in use |
+| `memory.heap_released` | string | Heap memory released back to OS |
+| `memory.stack_inuse` | string | Stack memory in use |
+| `memory.total_alloc` | string | Cumulative bytes allocated for heap objects |
+| `memory.memory_pressure` | string | Derived pressure indicator (low/medium/high) |
+| `garbage_collection.last_gc` | string | RFC3339 timestamp of last GC (omitted if none yet) |
+| `garbage_collection.total_gc_time` | string | Cumulative GC time, human-readable |
+| `garbage_collection.avg_gc_pause` | string | Average pause per GC cycle |
+| `garbage_collection.gc_cpu_fraction` | float | Fraction of CPU time spent in GC |
+| `garbage_collection.num_gc_cycles` | integer | Total GC cycles since start |
+| `goroutines.health_status` | string | Derived goroutine health (healthy/elevated/critical) |
+| `goroutines.count` | integer | Active goroutines |
+| `goroutines.cgo_calls` | integer | Total cgo calls |
+| `runtime.uptime` | string | Process uptime, human-readable |
+| `runtime.go_version` | string | Go toolchain version |
+| `runtime.num_cpu` | integer | Logical CPUs reported by runtime |
+| `runtime.gomaxprocs` | integer | Current GOMAXPROCS |
+| `allocations.total_mallocs` | integer | Cumulative malloc count |
+| `allocations.total_frees` | integer | Cumulative free count |
+| `allocations.net_objects` | integer | Net live objects (mallocs - frees) |
 
 ## GET /internal/stats/translators
 
@@ -309,7 +338,7 @@ curl -X GET http://localhost:40114/internal/stats/translators
 | `non_streaming_requests` | integer | Non-streaming requests |
 | `fallback_no_compatible_endpoints` | integer | Fallbacks due to no healthy endpoints available |
 | `fallback_translator_does_not_support_passthrough` | integer | Fallbacks because the translator lacks passthrough capability |
-| `fallback_cannot_passthrough` | integer | Fallbacks because no backend declares native support |
+| `fallback_cannot_passthrough` | integer | Fallbacks because no compatible backend declares native support |
 | `average_latency` | string | Human-readable average request latency |
 
 #### Summary
@@ -332,9 +361,9 @@ curl -X GET http://localhost:40114/internal/stats/translators
 
 **Fallback Reasons**: The three `fallback_*` fields help diagnose why passthrough is not being used:
 
-- `fallback_no_compatible_endpoints` -- No healthy endpoints available (operational issue, check health endpoint)
-- `fallback_cannot_passthrough` -- Backends do not declare native support for the translator's format (configuration issue)
-- `fallback_translator_does_not_support_passthrough` -- Expected for translators without passthrough capability
+- `fallback_no_compatible_endpoints`: No healthy endpoints available (operational issue, check health endpoint)
+- `fallback_cannot_passthrough`: No compatible backend declares native support for the translator's format
+- `fallback_translator_does_not_support_passthrough`: Expected for translators without passthrough capability
 
 **Success Rate**: A declining `success_rate` may indicate backend issues or incompatible request formats.
 

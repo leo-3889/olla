@@ -15,8 +15,8 @@ This guide covers security considerations and best practices for deploying Olla 
 >     global_requests_per_minute: 1000
 >     per_ip_requests_per_minute: 100
 >   request_limits:
->     max_body_size: 52428800  # 50MB
->     max_header_size: 524288   # 512KB
+>     max_body_size: 104857600  # 100MB
+>     max_header_size: 1048576  # 1MB
 > ```
 > **Key Settings**:
 > 
@@ -24,7 +24,7 @@ This guide covers security considerations and best practices for deploying Olla 
 > - Request size limits prevent abuse
 > - No authentication built-in (use reverse proxy)
 > 
-> **Environment Variables**: `OLLA_SERVER_RATE_LIMITS_*`
+> **Environment Variables**: `OLLA_SERVER_GLOBAL_RATE_LIMIT`, `OLLA_SERVER_PER_IP_RATE_LIMIT`, `OLLA_SERVER_MAX_BODY_SIZE`, `OLLA_SERVER_MAX_HEADER_SIZE`
 
 ## Security Principles
 
@@ -217,7 +217,7 @@ When using Docker:
 
 ```dockerfile
 # Run as non-root user
-FROM golang:1.21-alpine AS builder
+FROM golang:1.24-alpine AS builder
 # ... build steps ...
 
 FROM alpine:latest

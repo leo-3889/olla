@@ -118,9 +118,12 @@ go test -bench=BenchmarkProxyComparison -benchmem \
 ### Load Balancer Performance
 
 ```bash
-# Test balancer strategies
-go test -bench=BenchmarkBalancer -benchmem \
-    ./internal/adapter/balancer/
+# Test all balancer strategies (or use make bench-balancer)
+go test -bench="BenchmarkFactory|BenchmarkPriority|BenchmarkRoundRobin|BenchmarkLeastConnections" \
+    -benchmem ./internal/adapter/balancer/
+
+# Via make
+make bench-balancer
 ```
 
 ### Concurrent Performance

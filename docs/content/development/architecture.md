@@ -113,73 +113,76 @@ Contains the business logic and domain models.
 
 #### Domain Entities
 
+The actual structs (do not invent fields not present in the source):
+
 ```go
-// internal/core/domain/endpoint.go
+// internal/core/domain/endpoint.go (key fields only, see source for full definition)
 type Endpoint struct {
-    URL            string
-    Name           string
-    Type           EndpointType  // ollama, lm-studio, vllm, openai-compatible (openai is an alias)
-    Priority       int
-    Health         HealthStatus
-    CircuitBreaker *CircuitBreaker
-    Models         []Model
+    URL              *url.URL
+    Name             string
+    Type             string        // ollama, lm-studio, vllm, openai-compatible (openai is an alias)
+    Status           EndpointStatus
+    Priority         int
+    PreservePath     bool
+    CheckInterval    time.Duration
+    CheckTimeout     time.Duration
+    ConsecutiveFailures int
+    // ... auth, header, timing fields
 }
 
 // internal/core/domain/model.go
-type Model struct {
-    ID           string
-    Name         string
-    Family       string      // llama, mistral, etc
-    Size         int64       // Model size in bytes
-    Capabilities []string    // vision, embeddings, code
-    Context      int         // Context window size
-    Endpoints    []string    // Available on these endpoints
+// Model metadata is held in ModelInfo; there is no standalone Model struct.
+type ModelInfo struct {
+    Name        string
+    Type        string
+    Description string
+    Size        int64         // Disk size in bytes
+    Details     *ModelDetails // Family, quantisation, digest, state, etc.
+    LastSeen    time.Time
 }
 
 // internal/core/domain/routing.go
-type RoutingDecision struct {
-    Endpoint    *Endpoint
-    Model       string
-    Strategy    string      // How the decision was made
-    Alternatives []Endpoint  // Fallback options
+// Routing decision for model-aware routing (not general endpoint selection)
+type ModelRoutingDecision struct {
+    Strategy   string // strategy name
+    Action     string // routed, fallback, rejected
+    Reason     string // human-readable reason
+    StatusCode int    // suggested HTTP status for failures
 }
 ```
 
 #### Port Interfaces
 
-Ports define contracts between layers:
+Ports define contracts between layers. Signatures are taken directly from source:
 
 ```go
 // internal/core/ports/proxy.go
 type ProxyService interface {
-    ProxyRequest(ctx context.Context, w http.ResponseWriter, 
-                 r *http.Request, stats *RequestStats, 
-                 logger StyledLogger) error
+    ProxyRequest(ctx context.Context, w http.ResponseWriter,
+                 r *http.Request, stats *RequestStats,
+                 rlog logger.StyledLogger) error
+    ProxyRequestToEndpoints(ctx context.Context, w http.ResponseWriter,
+                            r *http.Request, endpoints []*domain.Endpoint,
+                            stats *RequestStats, rlog logger.StyledLogger) error
     GetStats(ctx context.Context) (ProxyStats, error)
     UpdateConfig(configuration ProxyConfiguration)
 }
 
-// internal/core/ports/discovery.go
+// DiscoveryService is defined in internal/core/ports/proxy.go
 type DiscoveryService interface {
+    GetEndpoints(ctx context.Context) ([]*domain.Endpoint, error)
     GetHealthyEndpoints(ctx context.Context) ([]*domain.Endpoint, error)
     RefreshEndpoints(ctx context.Context) error
-    RegisterEndpoint(endpoint *domain.Endpoint) error
-    UnregisterEndpoint(name string) error
+    UpdateEndpointStatus(ctx context.Context, endpoint *domain.Endpoint) error
 }
 
-// internal/core/ports/balancer.go
+// EndpointSelector is defined in internal/core/domain/endpoint.go
+// (no model string parameter; no UpdateMetrics or GetType methods)
 type EndpointSelector interface {
-    Select(ctx context.Context, endpoints []*domain.Endpoint, 
-           model string) (*domain.Endpoint, error)
-    UpdateMetrics(endpoint string, latency time.Duration, success bool)
-    GetType() string
-}
-
-// internal/core/ports/health.go
-type HealthChecker interface {
-    CheckEndpoint(ctx context.Context, endpoint *domain.Endpoint) error
-    StartMonitoring(ctx context.Context) error
-    GetStatus() map[string]HealthStatus
+    Select(ctx context.Context, endpoints []*domain.Endpoint) (*domain.Endpoint, error)
+    Name() string
+    IncrementConnections(endpoint *domain.Endpoint)
+    DecrementConnections(endpoint *domain.Endpoint)
 }
 ```
 
@@ -191,90 +194,46 @@ Infrastructure implementations of the core ports.
 
 Two implementations with different trade-offs:
 
-**Sherpa Engine** - Simple and maintainable:
-```go
-type SherpaProxy struct {
-    client     *http.Client      // Shared HTTP client
-    bufferPool *pool.Pool[*[]byte]
-    config     *Configuration
-}
+**Sherpa Engine** - Simple and maintainable (illustrative, see `internal/adapter/proxy/sherpa/service.go` for exact signatures):
 
-// Simple implementation with shared transport
-func (s *SherpaProxy) ProxyRequest(ctx context.Context, 
-    w http.ResponseWriter, r *http.Request, 
-    stats *RequestStats, logger StyledLogger) error {
-    req := s.createBackendRequest(r)
-    resp, err := s.client.Do(req)
-    if err != nil {
-        return err
-    }
-    defer resp.Body.Close()
-    
-    // Stream response with new signature
-    // Returns: 
-    //   - bytesWritten: total bytes successfully written to client
-    //   - lastChunk: final bytes of response (up to 8KB) for metrics extraction
-    //   - err: streaming error if any
-    buffer := make([]byte, 32*1024)
-    bytesWritten, lastChunk, err := s.streamResponse(ctx, ctx, w, resp, buffer, logger)
-    if err != nil {
-        return fmt.Errorf("streaming failed after %d bytes: %w", bytesWritten, err)
-    }
-    
-    // lastChunk contains the tail of the response (for extracting provider metrics)
-    // This avoids buffering the entire response while still capturing completion stats
-    if len(lastChunk) > 0 {
-        // Extract provider metrics from the last chunk of response
-        s.extractMetrics(lastChunk, stats)
-    }
-    
-    return nil
+```go
+// internal/adapter/proxy/sherpa/service.go
+// Service (not SherpaProxy) uses a single shared http.Transport plus a buffer pool.
+type Service struct {
+    *core.BaseProxyComponents
+    transport     *http.Transport
+    configuration *Configuration
+    bufferPool    *pool.Pool[*[]byte]
+    retryHandler  *core.RetryHandler
 }
 ```
 
-**Olla Engine** - High-performance:
+Sherpa does not implement circuit breaking; it is maintenance-mode. See `internal/adapter/proxy/sherpa/service.go:28` for the explicit disclaimer.
+
+**Olla Engine** - High-performance (illustrative, see `internal/adapter/proxy/olla/service.go` for exact signatures):
+
 ```go
-type OllaProxy struct {
-    pools      map[string]*ConnectionPool  // Per-endpoint pools
-    bufferPool *pool.Pool[*[]byte]
-    config     *Configuration
+// internal/adapter/proxy/olla/service.go
+// Service uses per-endpoint connection pools and per-endpoint circuit breakers.
+type Service struct {
+    *core.BaseProxyComponents
+    bufferPool    *pool.Pool[*[]byte]
+    requestPool   *pool.Pool[*requestContext]
+    errorPool     *pool.Pool[*errorContext]
+    transport     *http.Transport
+    configuration *Configuration
+    retryHandler  *core.RetryHandler
+    endpointPools   xsync.Map[string, *connectionPool]
+    circuitBreakers xsync.Map[string, *circuitBreaker]
+    cleanupOnce     sync.Once
+    // ...
 }
 
-// Advanced implementation with connection pooling
-func (o *OllaProxy) ProxyRequest(ctx context.Context,
-    w http.ResponseWriter, r *http.Request,
-    stats *RequestStats, logger StyledLogger) error {
-    endpoint := o.selectEndpoint()
-    pool := o.getPool(endpoint)
-    
-    resp, err := pool.RoundTrip(r)
-    if err != nil {
-        return err
-    }
-    defer resp.Body.Close()
-    
-    // Get buffer from pool for zero-allocation streaming
-    buffer := o.bufferPool.Get()
-    defer o.bufferPool.Put(buffer)
-    
-    // Stream with optimized backpressure handling
-    // Returns: bytes written, last chunk for metrics, error
-    bytesWritten, lastChunk, err := o.streamResponse(
-        r.Context(),           // client context
-        resp.Request.Context(), // upstream context
-        w, resp, *buffer, logger)
-    
-    if err != nil && !errors.Is(err, context.Canceled) {
-        return fmt.Errorf("stream failed: %w", err)
-    }
-    
-    // Extract metrics from last chunk (Olla buffers only final bytes)
-    if len(lastChunk) > 0 {
-        o.extractProviderMetrics(lastChunk, endpoint, stats)
-    }
-    
-    stats.TotalBytes = bytesWritten
-    return nil
+// connectionPool isolates one http.Transport per endpoint
+type connectionPool struct {
+    transport *http.Transport
+    lastUsed  int64 // atomic nanoseconds
+    healthy   int64 // atomic: 0=unhealthy, 1=healthy
 }
 ```
 
@@ -333,39 +292,21 @@ func (p *PriorityBalancer) Select(ctx context.Context,
 
 #### Statistics (`/internal/adapter/stats/`)
 
-Lock-free atomic counters for performance:
+Lock-free using `xsync.Counter` and `xsync.Map` (illustrative, see `internal/adapter/stats/collector.go` for full fields):
 
 ```go
-type StatsCollector struct {
-    // Using xsync for lock-free operations
-    endpoints *xsync.Map[string, *endpointStats]
-    total     *xsync.Counter
-}
-
-type endpointStats struct {
-    requests   int64  // atomic
-    errors     int64  // atomic
-    totalTime  int64  // atomic nanoseconds
-    lastError  int64  // atomic unix timestamp
-}
-
-func (s *StatsCollector) RecordRequest(endpoint string, duration time.Duration, err error) {
-    // Lock-free increment
-    s.total.Add(1)
-    
-    // Get or create endpoint stats
-    stats, _ := s.endpoints.LoadOrStore(endpoint, &endpointStats{})
-    
-    // Atomic updates
-    atomic.AddInt64(&stats.requests, 1)
-    atomic.AddInt64(&stats.totalTime, int64(duration))
-    
-    if err != nil {
-        atomic.AddInt64(&stats.errors, 1)
-        atomic.StoreInt64(&stats.lastError, time.Now().Unix())
-    }
+// internal/adapter/stats/collector.go
+type Collector struct {
+    endpoints          *xsync.Map[string, *endpointData]
+    totalRequests      *xsync.Counter
+    successfulRequests *xsync.Counter
+    failedRequests     *xsync.Counter
+    totalLatency       *xsync.Counter
+    // ...
 }
 ```
+
+`xsync.Counter` provides lock-free increment (`.Inc()`, `.Add(n)`, `.Value()`). The per-endpoint data uses `xsync.Map[string, *endpointData]` with `LoadOrCompute` for atomic get-or-create.
 
 ## Request Flow
 
@@ -431,19 +372,20 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 Services follow a managed lifecycle with dependency injection:
 
 ```go
-// internal/app/app.go
+// internal/app/services/manager.go
 type ManagedService interface {
     Name() string
-    Dependencies() []string
     Start(ctx context.Context) error
     Stop(ctx context.Context) error
+    Dependencies() []string
 }
 
-// Service Manager uses Kahn's algorithm for topological sorting
+// ServiceManager uses topological sorting for dependency-ordered startup.
+// Illustrative field names; see manager.go for the exact struct.
 type ServiceManager struct {
-    services  map[string]ManagedService
-    order     []string  // Startup order
-    mu        sync.RWMutex
+    services   map[string]ManagedService
+    startOrder []string // dependency-resolved start order
+    mu         sync.RWMutex
 }
 ```
 
@@ -466,83 +408,34 @@ Olla uses Go's goroutine-based concurrency:
 
 ### Connection Pool Management
 
-```go
-type ConnectionPool struct {
-    endpoint  string
-    available chan net.Conn
-    factory   ConnectionFactory
-    
-    // Metrics
-    created   int64  // atomic
-    active    int64  // atomic
-    destroyed int64  // atomic
-}
-
-func (p *ConnectionPool) Get(ctx context.Context) (net.Conn, error) {
-    select {
-    case conn := <-p.available:
-        if p.isHealthy(conn) {
-            atomic.AddInt64(&p.active, 1)
-            return conn, nil
-        }
-        p.destroy(conn)
-        return p.create(ctx)
-        
-    case <-ctx.Done():
-        return nil, ctx.Err()
-        
-    default:
-        return p.create(ctx)
-    }
-}
-```
+The Olla engine uses one `*http.Transport` per endpoint (not a `chan net.Conn` pool). Each transport is stored in an `xsync.Map` and lazily created via `LoadOrStore`. Stale pools are cleaned up every 5 minutes by a background goroutine. See `internal/adapter/proxy/olla/service.go:connectionPool` and `getOrCreateEndpointPool` for the real implementation.
 
 ## Memory Optimisation
 
 ### Object Pooling
 
-Reducing GC pressure through object reuse:
+Reducing GC pressure through object reuse. The real pool is in `pkg/pool/lite_pool.go`:
 
 ```go
-// Generic pool implementation
+// pkg/pool/lite_pool.go
+// Pool wraps sync.Pool with type safety via generics.
+// If the pooled type implements Resettable (has a Reset() method),
+// Put() calls Reset() automatically before returning to the pool.
 type Pool[T any] struct {
     pool sync.Pool
     new  func() T
-    reset func(T)
 }
 
-// Buffer pool for streaming
-var bufferPool = &Pool[*[]byte]{
-    new: func() *[]byte {
-        buf := make([]byte, 8192)
-        return &buf
-    },
-    reset: func(buf *[]byte) {
-        // Clear sensitive data
-        clear(*buf)
-    },
-}
+// NewLitePool is the only constructor; there is no separate reset parameter.
+pool, err := pool.NewLitePool(func() *[]byte {
+    buf := make([]byte, streamBufferSize)
+    return &buf
+})
 ```
 
 ### Memory Layout Optimisation
 
-```go
-// Optimised struct layout for cache efficiency
-type Endpoint struct {
-    // Hot path fields (frequently accessed)
-    Health    int32   // 4 bytes, atomic access
-    Priority  int32   // 4 bytes, fits in same cache line
-    
-    // Warm path fields
-    URL       string  // 16 bytes (string header)
-    Name      string  // 16 bytes
-    
-    // Cold path fields (rarely accessed)
-    Type      EndpointType
-    Models    []Model
-    CreatedAt time.Time
-}
-```
+Struct field ordering in `internal/core/domain/endpoint.go` is managed by `betteralign` (run via `make ready` or `make align`) to minimise padding. Run `make align` to auto-apply optimal layout after adding or changing fields.
 
 ## Error Handling
 

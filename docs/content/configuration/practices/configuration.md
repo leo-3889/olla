@@ -131,14 +131,14 @@ docker run -v $(pwd)/config:/app/config \
 
 Environment variables override config file values, useful for simple settings or CI/CD pipelines.
 
-```bash
-# Pattern
-OLLA_<SECTION>_<KEY>=value
+Only a curated set of variables is recognised. They are hand-mapped in the code; arbitrary `OLLA_*` names that do not appear in the list in [Configuration Reference](../reference.md#environment-variables) are silently ignored.
 
-# Examples
+```bash
+# Common examples
 OLLA_SERVER_PORT=8080
 OLLA_PROXY_ENGINE=olla
-OLLA_LOG_LEVEL=debug
+OLLA_LOGGING_LEVEL=debug   # runtime log level (overrides logging.level in YAML)
+# Note: OLLA_LOG_LEVEL sets the bootstrap-only logger that runs before config load
 ```
 
 **When to use environment variables:**

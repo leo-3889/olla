@@ -29,7 +29,7 @@ When running multiple LLM backends (Ollama, LM Studio, llamacpp, vLLM, etc.), th
 - `llama-3.1-8b-instruct` on LM Studio
 - `Meta-Llama-3.1-8B-Instruct.gguf` on llamacpp
 
-Without aliases, a client request for `llama3.1:8b` would only match the Ollama endpoint — even though the other backends have the same model.
+Without aliases, a client request for `llama3.1:8b` would only match the Ollama endpoint, even though the other backends have the same model.
 
 **Model aliases** let you define a single virtual model name that maps to all of these variants, so any backend that has the model can serve the request.
 
@@ -64,10 +64,10 @@ Client request: "model": "my-llama"
       Backend
 ```
 
-1. **Alias resolution** — Olla checks whether the requested model name is a configured alias and looks up the list of actual model names.
-2. **Endpoint discovery** — For each actual model name, Olla queries the model registry to find endpoints that serve it. This builds an endpoint → actual model name mapping.
-3. **Load balancing** — The matched endpoints are filtered through the normal load balancing pipeline (priority, health checks, etc.).
-4. **Model rewrite** — Before the request is sent to the selected backend, Olla rewrites the `"model"` field in the JSON request body to the actual model name that backend expects.
+1. **Alias resolution**: Olla checks whether the requested model name is a configured alias and looks up the list of actual model names.
+2. **Endpoint discovery**: For each actual model name, Olla queries the model registry to find endpoints that serve it. This builds an endpoint to actual model name mapping.
+3. **Load balancing**: The matched endpoints are filtered through the normal load balancing pipeline (priority, health checks, etc.).
+4. **Model rewrite**: Before the request is sent to the selected backend, Olla rewrites the `"model"` field in the JSON request body to the actual model name that backend expects.
 
 ## Configuration
 
@@ -205,7 +205,7 @@ A request for `"model": "llama3"` will:
 
 **Issue**: An alias is intercepting requests meant for a real model with the same name.
 
-**This is by design** — aliases always take priority. If you need to reach the real model directly, either:
+**This is by design**: aliases always take priority. If you need to reach the real model directly, either:
 
 - Remove the alias, or
 - Include the real model name in the alias list (self-referencing) so it stays in the candidate pool

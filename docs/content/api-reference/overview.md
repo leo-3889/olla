@@ -27,7 +27,15 @@ Internal endpoints for health monitoring, system status, and statistics.
 - `/internal/status/models` - Model registry status
 - `/internal/stats/models` - Model usage statistics
 - `/internal/stats/translators` - Translator usage and performance statistics
+- `/internal/stats/sticky` - Sticky session statistics
 - `/internal/process` - Process information
+- `/version` - Olla version information
+
+### Universal Proxy
+The universal entry point that routes to any backend.
+
+- `/olla/proxy/*` - Universal proxy entry, routes to any backend
+- `/olla/proxy/v1/models` - OpenAI-compatible aggregated models listing
 
 ### [Unified Models API](models.md)
 Cross-provider model discovery and information.
@@ -56,12 +64,22 @@ Proxy endpoints for OpenAI-compatible services.
 Proxy endpoints for LMDeploy inference servers.
 
 - `/olla/lmdeploy/*` - LMDeploy API endpoints
-- OpenAI-compatible endpoints plus token encoding and reward pooling
+- OpenAI-compatible endpoints plus passthrough for LMDeploy-specific paths (token encoding, reward pooling, generate)
 
 ### [vLLM API](vllm.md)
 Proxy endpoints for vLLM servers.
 
 - `/olla/vllm/*` - vLLM API endpoints
+
+### [vLLM-MLX API](vllm-mlx.md)
+Proxy endpoints for vLLM-MLX servers (Apple Silicon).
+
+- `/olla/vllm-mlx/*` - vLLM-MLX API endpoints
+
+### [Docker Model Runner API](docker-model-runner.md)
+Proxy endpoints for Docker Model Runner.
+
+- `/olla/dmr/*` - Docker Model Runner API endpoints
 
 ### [SGLang API](sglang.md)
 Proxy endpoints for SGLang servers with RadixAttention and Frontend Language support.
@@ -88,7 +106,7 @@ Proxy endpoints for Lemonade SDK servers with AMD Ryzen AI support.
 - Includes ONNX and GGUF model support with hardware acceleration
 
 ### [oMLX API](omlx.md)
-Proxy endpoints for oMLX -- the multi-model Apple Silicon (MLX) inference server.
+Proxy endpoints for oMLX, the multi-model Apple Silicon (MLX) inference server.
 
 - `/olla/omlx/*` - oMLX API endpoints
 - OpenAI-compatible endpoints with native Anthropic Messages API passthrough
@@ -108,7 +126,7 @@ Anthropic-compatible API endpoints for Claude clients.
 
 **Features**:
 - Full Anthropic Messages API v1 support
-- **Passthrough mode** for backends with native Anthropic support (vLLM, llama.cpp, LM Studio, Ollama)
+- **Passthrough mode** for backends with native Anthropic support (vLLM, vLLM-MLX, llama.cpp, LM Studio, Ollama, oMLX, Docker Model Runner)
 - Automatic fallback to translation mode when needed
 - Streaming with Server-Sent Events
 - Tool use (function calling)
@@ -130,6 +148,8 @@ Currently, Olla does not implement authentication at the proxy level. Authentica
 - Backend services (Ollama, LM Studio, etc.)
 - Network-level security (firewalls, VPNs)
 - Reverse proxy authentication (nginx, Traefik)
+
+Authentication headers (e.g. `x-api-key`, `Authorization`) are forwarded to backends without modification.
 
 ## Rate Limiting
 
@@ -159,12 +179,15 @@ All responses include:
 | `X-Olla-Request-ID` | Unique request identifier |
 | `X-Olla-Endpoint` | Backend endpoint name |
 | `X-Olla-Model` | Model used (if applicable) |
-| `X-Olla-Backend-Type` | Provider type, examples: <br> `ollama/lm-studio/llamacpp/openai/openai-compatible/vllm/sglang/lemonade/lmdeploy/omlx` |
+| `X-Olla-Backend-Type` | Provider type, examples: <br> `ollama/lm-studio/llamacpp/litellm/openai/openai-compatible/vllm/vllm-mlx/sglang/lemonade/lmdeploy/omlx/docker-model-runner` |
 | `X-Olla-Response-Time` | Total processing time |
 | `X-Olla-Routing-Strategy` | Routing strategy used (when model routing is active) |
 | `X-Olla-Routing-Decision` | Routing decision made (routed/fallback/rejected) |
 | `X-Olla-Routing-Reason` | Human-readable reason for routing decision |
 | `X-Olla-Mode` | Translator mode (`passthrough` when native format used; absent for translation mode) |
+| `X-Olla-Sticky-Session` | Sticky session status (hit/miss/repin/disabled) |
+| `X-Olla-Sticky-Key-Source` | Key source used (session_header/prefix_hash/auth_header/ip/none) |
+| `X-Olla-Session-ID` | Echoed session ID when client supplies one |
 
 ### Provider Metrics (Debug Logs)
 

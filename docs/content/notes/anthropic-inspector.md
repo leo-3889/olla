@@ -59,7 +59,7 @@ translators:
 
     inspector:
       enabled: true
-      output_dir: "logs/inspector"
+      output_dir: "logs/inspector/anthropic"  # default location
       session_header: "X-Session-ID"
 ```
 

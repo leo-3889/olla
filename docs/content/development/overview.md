@@ -21,7 +21,7 @@ cd olla
 make deps
 
 # Development workflow
-make dev      # Build with hot-reload
+make dev      # Build debug binary (./bin/olla-dev), see setup.md for `air` hot-reload
 make test     # Run tests
 make ready    # Pre-commit checks
 ```
@@ -67,10 +67,14 @@ Heavy use of lock-free patterns for performance:
 - **Worker pools** for controlled concurrency
 
 ```go
-// Example: Lock-free stats from stats/collector.go
+// Example: Lock-free stats from internal/adapter/stats/collector.go
+// (field names match source; xsync.Counter not xsync.MapOf)
 type Collector struct {
-    totalRequests *xsync.Counter
-    endpoints     *xsync.Map[string, *endpointData]
+    totalRequests      *xsync.Counter
+    successfulRequests *xsync.Counter
+    failedRequests     *xsync.Counter
+    endpoints          *xsync.Map[string, *endpointData]
+    // ...
 }
 ```
 
@@ -90,14 +94,14 @@ See [Technical Patterns](patterns.md) for comprehensive pattern documentation.
 
 ```
 .
-├── cmd/            # Application entry points
+├── main.go         # Application entry point
 ├── internal/       # Private application code
 │   ├── core/      # Business logic
 │   ├── adapter/   # External integrations
 │   └── app/       # Application layer
 ├── pkg/           # Public packages
 ├── config/        # Configuration files
-├── test/          # Integration tests
+├── test/          # Test scripts and integration tests
 └── docs/          # Documentation
 ```
 
@@ -128,7 +132,7 @@ Automatic health monitoring with circuit breakers:
 
 - Configurable check intervals
 - Exponential backoff on failures
-- Circuit breaker pattern (3 failures = open)
+- Circuit breaker pattern (3 transport failures = open in health checker; 5 in Olla proxy)
 
 ## Development Workflow
 
@@ -151,8 +155,8 @@ make ready
 # Unit tests
 make test
 
-# With race detection
-go test -race ./...
+# With race detection (short tests only, matches what make test-race runs)
+go test -race -short ./...
 
 # Benchmarks
 make bench

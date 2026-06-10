@@ -7,7 +7,7 @@ OLLA_URL="http://localhost:40114"
 ANTHROPIC_URL="${OLLA_URL}/olla/anthropic/v1"
 LLAMACPP_URL="http://localhost:8080"
 
-echo "🧪 Testing Olla + llama.cpp + Anthropic Translation..."
+echo "Testing Olla + llama.cpp + Anthropic Translation..."
 echo ""
 
 GREEN='\033[0;32m'
@@ -18,13 +18,13 @@ NC='\033[0m'
 # Test 1: llama.cpp health
 echo -e "${YELLOW}Test 1: Checking llama.cpp health...${NC}"
 if curl -sf "${LLAMACPP_URL}/health" > /dev/null; then
-    echo -e "${GREEN}✓ llama.cpp is healthy${NC}"
+    echo -e "${GREEN}  llama.cpp is healthy${NC}"
 else
-    echo -e "${RED}✗ llama.cpp health check failed${NC}"
-    echo "Possible issues:"
-    echo "  - llama.cpp still loading model (wait 30-60 seconds)"
-    echo "  - Model file path incorrect in compose.yaml"
-    echo "  - Insufficient memory for model"
+    echo -e "${RED}  llama.cpp health check failed${NC}"
+    echo "  Possible causes:"
+    echo "    - Model still loading (wait 30-60 seconds and retry)"
+    echo "    - Model file path incorrect in compose.yaml"
+    echo "    - Insufficient memory for model"
     exit 1
 fi
 echo ""
@@ -32,23 +32,23 @@ echo ""
 # Test 2: Olla health
 echo -e "${YELLOW}Test 2: Checking Olla health...${NC}"
 if curl -sf "${OLLA_URL}/internal/health" > /dev/null; then
-    echo -e "${GREEN}✓ Olla is healthy${NC}"
+    echo -e "${GREEN}  Olla is healthy${NC}"
 else
-    echo -e "${RED}✗ Olla health check failed${NC}"
+    echo -e "${RED}  Olla health check failed${NC}"
     exit 1
 fi
 echo ""
 
-# Test 3: List models
+# Test 3: List models via Anthropic endpoint
 echo -e "${YELLOW}Test 3: Listing available models...${NC}"
 MODELS=$(curl -s "${ANTHROPIC_URL}/models")
 if echo "$MODELS" | jq -e '.data | length > 0' > /dev/null 2>&1; then
-    echo -e "${GREEN}✓ Models available:${NC}"
-    echo "$MODELS" | jq -r '.data[].id' | sed 's/^/  - /'
+    echo -e "${GREEN}  Models available:${NC}"
+    echo "$MODELS" | jq -r '.data[].id' | sed 's/^/    - /'
 else
-    echo -e "${RED}✗ No models available${NC}"
-    echo "Check llama.cpp logs:"
-    echo "  docker compose logs llama-cpp"
+    echo -e "${RED}  No models available${NC}"
+    echo "  Check llama.cpp logs:"
+    echo "    docker compose logs llama-cpp"
     exit 1
 fi
 echo ""
@@ -57,24 +57,25 @@ MODEL=$(echo "$MODELS" | jq -r '.data[0].id')
 echo -e "${YELLOW}Using model: ${MODEL}${NC}"
 echo ""
 
-# Test 4: Simple message
+# Test 4: Simple message (non-streaming)
 echo -e "${YELLOW}Test 4: Testing simple message (non-streaming)...${NC}"
 RESPONSE=$(curl -s -X POST "${ANTHROPIC_URL}/messages" \
   -H "Content-Type: application/json" \
+  -H "anthropic-version: 2023-06-01" \
   -d "{
     \"model\": \"${MODEL}\",
     \"max_tokens\": 50,
     \"messages\": [
-      {\"role\": \"user\", \"content\": \"Say 'Hello from llama.cpp!'\"}
+      {\"role\": \"user\", \"content\": \"Say 'Hello from llama.cpp!' in one sentence.\"}
     ]
   }")
 
 if echo "$RESPONSE" | jq -e '.content[0].text' > /dev/null 2>&1; then
-    echo -e "${GREEN}✓ Non-streaming message successful${NC}"
-    echo "Response:"
-    echo "$RESPONSE" | jq -r '.content[0].text' | sed 's/^/  /'
+    echo -e "${GREEN}  Non-streaming message successful${NC}"
+    echo "  Response:"
+    echo "$RESPONSE" | jq -r '.content[0].text' | sed 's/^/    /'
 else
-    echo -e "${RED}✗ Non-streaming message failed${NC}"
+    echo -e "${RED}  Non-streaming message failed${NC}"
     echo "$RESPONSE" | jq .
     exit 1
 fi
@@ -84,6 +85,7 @@ echo ""
 echo -e "${YELLOW}Test 5: Testing streaming message...${NC}"
 STREAM_OUTPUT=$(curl -sN -X POST "${ANTHROPIC_URL}/messages" \
   -H "Content-Type: application/json" \
+  -H "anthropic-version: 2023-06-01" \
   -d "{
     \"model\": \"${MODEL}\",
     \"max_tokens\": 30,
@@ -94,34 +96,38 @@ STREAM_OUTPUT=$(curl -sN -X POST "${ANTHROPIC_URL}/messages" \
   }")
 
 if echo "$STREAM_OUTPUT" | grep -q "content_block_delta"; then
-    echo -e "${GREEN}✓ Streaming message successful${NC}"
+    echo -e "${GREEN}  Streaming message successful${NC}"
 else
-    echo -e "${RED}✗ Streaming message failed${NC}"
+    echo -e "${RED}  Streaming message failed${NC}"
+    echo "$STREAM_OUTPUT"
     exit 1
 fi
 echo ""
 
 # Test 6: llama.cpp native endpoint
-echo -e "${YELLOW}Test 6: Testing llama.cpp native endpoint...${NC}"
+echo -e "${YELLOW}Test 6: Testing llama.cpp native /v1/models endpoint...${NC}"
 NATIVE_RESPONSE=$(curl -s "${LLAMACPP_URL}/v1/models")
 if echo "$NATIVE_RESPONSE" | jq -e '.data | length > 0' > /dev/null 2>&1; then
-    echo -e "${GREEN}✓ llama.cpp native endpoint working${NC}"
+    echo -e "${GREEN}  llama.cpp native endpoint working${NC}"
+    echo "$NATIVE_RESPONSE" | jq -r '.data[].id' | sed 's/^/    - /'
 else
-    echo -e "${YELLOW}⚠ llama.cpp native endpoint returned unexpected format${NC}"
+    echo -e "${YELLOW}  llama.cpp native endpoint returned unexpected format${NC}"
 fi
 echo ""
 
 # Summary
-echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}✓ All tests passed!${NC}"
-echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo ""
-echo "llama.cpp backend ready for Claude Code!"
+echo -e "${GREEN}================================================${NC}"
+echo -e "${GREEN}  All tests passed!${NC}"
+echo -e "${GREEN}================================================${NC}"
 echo ""
 echo "Configure Claude Code:"
-echo "  export ANTHROPIC_BASE_URL=\"${ANTHROPIC_URL}\""
+echo "  export ANTHROPIC_BASE_URL=\"${OLLA_URL}/olla/anthropic\""
+echo "  export ANTHROPIC_AUTH_TOKEN=\"not-required\""
+echo ""
+echo "Then run: claude"
 echo ""
 echo "Useful commands:"
-echo "  - llama.cpp logs: docker compose logs -f llama-cpp"
-echo "  - Olla logs: docker compose logs -f olla"
-echo "  - llama.cpp metrics: curl ${LLAMACPP_URL}/metrics"
+echo "  llama.cpp logs:  docker compose logs -f llama-cpp"
+echo "  Olla logs:       docker compose logs -f olla"
+echo "  llama.cpp stats: curl ${LLAMACPP_URL}/metrics"
+echo "  Olla status:     curl ${OLLA_URL}/internal/status | jq"

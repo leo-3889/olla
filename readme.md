@@ -15,7 +15,8 @@
     <a href="https://docs.docker.com/ai/model-runner/"><img src="https://img.shields.io/badge/Docker Model Runner-native-lightgreen.svg" alt="Docker Model Runner: Native Support"></a><br/>
     <a href="https://ollama.com"><img src="https://img.shields.io/badge/Ollama-native-lightgreen.svg" alt="Ollama: Native Support"></a>
     <a href="https://lmstudio.ai/"><img src="https://img.shields.io/badge/LM Studio-native-lightgreen.svg" alt="LM Studio: Native Support"></a>
-    <a href="https://github.com/lemonade-sdk/lemonade"><img src="https://img.shields.io/badge/LemonadeSDK-native-lightgreen.svg" alt="LemonadeSDK: Native Support"></a>    
+    <a href="https://github.com/lemonade-sdk/lemonade"><img src="https://img.shields.io/badge/LemonadeSDK-native-lightgreen.svg" alt="LemonadeSDK: Native Support"></a>
+    <a href="https://github.com/jundot/omlx"><img src="https://img.shields.io/badge/oMLX-native-lightgreen.svg" alt="oMLX: Native Support"></a>
   </P>
   <p>
     <div align="center">
@@ -30,7 +31,7 @@
   </p>
 </div>
 
-[Olla](https://tensorfoundry.io/products/olla) is a high-performance, low-overhead, low-latency proxy and load balancer for managing LLM infrastructure. It intelligently routes LLM requests across local and remote inference nodes with a [wide variety](https://thushan.github.io/olla/integrations/overview/) of natively supported endpoints and extensible enough to support others. Olla provides model discovery and unified model catalogues within each provider, enabling seamless routing to available models on compatible endpoints.
+[Olla](https://tensorfoundry.io/products/olla) is a high-performance, low-overhead, low-latency proxy and load balancer for managing LLM infrastructure. It intelligently routes LLM requests across self-hosted inference nodes with a [wide variety](https://thushan.github.io/olla/integrations/overview/) of natively supported endpoints and extensible enough to support others. Olla provides model discovery and unified model catalogues within each provider, enabling seamless routing to available models on compatible endpoints.
 
 Olla works alongside API gateways like [LiteLLM](https://github.com/BerriAI/litellm) or orchestration platforms like [GPUStack](https://github.com/gpustack/gpustack), focusing on making your **existing** LLM infrastructure reliable through intelligent routing and failover. You can choose between two proxy engines: **Sherpa** for simplicity and maintainability or **Olla** for maximum performance with advanced features like circuit breakers and connection pooling.
 
@@ -52,10 +53,35 @@ For Large GPU deployments, Enterprise & Data-Centre use, see [TensorFoundry Foun
 - **🔧 Self-Healing**: Automatic model discovery refresh when endpoints recover
 - **📊 Request Tracking**: Detailed response headers and [statistics](https://thushan.github.io/olla/api-reference/overview/#response-headers)
 - **⚡🔄 Anthropic Messages API**: [Passthrough for backends with native support; automatic translation for others](https://thushan.github.io/olla/integrations/api-translation/anthropic/)
-- **🛡️ Production Ready**: Rate limiting, request size limits, optional CORS for browser clients, graceful shutdown
+- **🔐 Backend Authentication**: [Outbound auth](https://thushan.github.io/olla/configuration/endpoint-auth/) for local backends requiring API keys, bearer tokens, or basic auth
+- **🛡️ Production Ready**: Rate limiting, request size limits, optional CORS for browser clients, configurable proxy/server timeouts, graceful shutdown
 - **⚡ High Performance**: Sub-millisecond endpoint selection with lock-free atomic stats
 - **🎯 LLM-Optimised**: Streaming-first design with optimised timeouts for long inference
 - **⚙️ High Performance**: Designed to be very [lightweight & efficient](https://thushan.github.io/olla/configuration/practices/performance/), runs on less than 50Mb RAM.
+
+## Supported Backends
+
+Olla proxies the following self-hosted inference backends. The **Anthropic API** column shows whether `/olla/anthropic/` requests are forwarded as-is (native passthrough) or translated from Anthropic format to OpenAI format on the fly.
+
+| Backend | Docs | Anthropic API |
+|---------|------|---------------|
+| [Ollama](https://ollama.com) | [Integration](https://thushan.github.io/olla/integrations/backend/ollama/) | ⚡ Passthrough (v0.14.0+) |
+| [LM Studio](https://lmstudio.ai/) | [Integration](https://thushan.github.io/olla/integrations/backend/lmstudio/) | ⚡ Passthrough (v0.4.1+) |
+| [vLLM](https://github.com/vllm-project/vllm) | [Integration](https://thushan.github.io/olla/integrations/backend/vllm/) | ⚡ Passthrough (v0.11.1+) |
+| [vLLM-MLX](https://github.com/waybarrios/vllm-mlx/) | [Integration](https://thushan.github.io/olla/integrations/backend/vllm-mlx/) | ⚡ Passthrough |
+| [llama.cpp](https://github.com/ggerganov/llama.cpp) | [Integration](https://thushan.github.io/olla/integrations/backend/llamacpp/) | ⚡ Passthrough (b4847+) |
+| [Docker Model Runner](https://docs.docker.com/ai/model-runner/) | [Integration](https://thushan.github.io/olla/integrations/backend/docker-model-runner/) | ⚡ Passthrough |
+| [oMLX](https://github.com/jundot/omlx) | [Integration](https://thushan.github.io/olla/integrations/backend/omlx/) | ⚡ Passthrough (v0.4.2+) |
+| [SGLang](https://github.com/sgl-project/sglang) | [Integration](https://thushan.github.io/olla/integrations/backend/sglang/) | 🔄 Translation |
+| [LMDeploy](https://github.com/InternLM/lmdeploy) | [Integration](https://thushan.github.io/olla/integrations/backend/lmdeploy/) | 🔄 Translation |
+| [Lemonade SDK](https://github.com/lemonade-sdk/lemonade) | [Integration](https://thushan.github.io/olla/integrations/backend/lemonade/) | 🔄 Translation |
+| [LiteLLM](https://github.com/BerriAI/litellm) | [Integration](https://thushan.github.io/olla/integrations/backend/litellm/) | 🔄 Translation |
+| OpenAI-compatible (generic) | [Integration](https://thushan.github.io/olla/integrations/overview/) | 🔄 Translation |
+
+> **⚡ Passthrough**: Olla forwards Anthropic-format requests directly; the backend handles them natively, with no translation overhead.
+> **🔄 Translation**: Olla converts Anthropic ↔ OpenAI format automatically; any OpenAI-compatible backend works transparently.
+
+LiteLLM is the recommended bridge when you need Olla to reach hosted cloud APIs (OpenAI, Anthropic, Bedrock, etc.).
 
 ## Platform Support
 
@@ -103,7 +129,7 @@ git clone https://github.com/thushan/olla.git && cd olla && make build-release
 ```bash
 # Build Docker image locally (no goreleaser required)
 git clone https://github.com/thushan/olla.git && cd olla && make docker-build-local
-docker run -p 40114:40114 ghcr.io/thushan/olla:local
+docker run -p 40114:40114 ghcr.io/thushan/olla:local-amd64
 ```
 
 ### Verification
@@ -129,14 +155,14 @@ Olla exposes multiple API paths depending on your use case:
 
 | Path | Format | Use Case |
 |------|--------|----------|
-| `/olla/proxy/` | OpenAI | Routes to any backend — universal endpoint |
-| `/olla/openai/` | OpenAI | Routes to any backend — universal endpoint |
+| `/olla/proxy/` | OpenAI | Routes to any backend, universal endpoint |
 | `/olla/anthropic/` | Anthropic | Claude-compatible clients (passthrough or translated) |
+| `/olla/openai/` | OpenAI | OpenAI-compatible route (`type: "openai"` is an alias for `openai-compatible`) |
 | `/olla/{provider}/` | OpenAI | Target a specific backend type (e.g. `/olla/vllm/`, `/olla/ollama/`) |
 
 #### OpenAI-Compatible (Universal Proxy)
 
-You can use `/olla/openai` or `/olla/proxy`
+Use `/olla/proxy/` as the universal entry point that routes to any backend.
 
 ```bash
 # Chat completion (routes to best available backend)
@@ -222,7 +248,7 @@ You can learn more about [OpenWebUI Ollama with Olla](https://thushan.github.io/
 
 Olla's Anthropic Messages API support (v0.0.20+) is **enabled by default**, allowing you to use CLI tools like Claude Code with local AI models on your machine via `/olla/anthropic`. It operates in two modes depending on your backend:
 
-- ⚡ **Passthrough**: requests are forwarded as-is for backends with native Anthropic support (vLLM, llama.cpp, Ollama, LM Studio, Lemonade)
+- ⚡ **Passthrough**: requests are forwarded as-is for backends with native Anthropic support (vLLM, vLLM-MLX, llama.cpp, Ollama, LM Studio, Docker Model Runner, oMLX)
 - 🔄 **Translation**: Anthropic ↔ OpenAI format conversion for backends that don't natively support the Anthropic Messages API
 
 Still actively being improved -- please report any issues or feedback.

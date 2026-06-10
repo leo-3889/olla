@@ -145,7 +145,7 @@ api:
 
 **Key details**:
 
-- Token counting (`/v1/messages/count_tokens`): **Supported** (unlike standard vLLM)
+- Native token counting metadata (`/v1/messages/count_tokens`): **Supported** (unlike standard vLLM). Olla's public token-count endpoint uses local translator estimation.
 - Passthrough mode is automatic -- no client-side configuration needed
 - Responses include `X-Olla-Mode: passthrough` header when passthrough is active
 - Falls back to translation mode if passthrough conditions are not met
@@ -260,7 +260,7 @@ The vLLM-MLX profile includes Apple Silicon-optimised settings:
 ```yaml
 characteristics:
   timeout: 2m
-  max_concurrent_requests: 50
+  max_concurrent_requests: 20
   streaming_support: true
 
 resources:

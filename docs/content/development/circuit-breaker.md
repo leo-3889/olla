@@ -11,16 +11,18 @@ The circuit breaker pattern protects your LLM infrastructure by automatically is
 > :memo: **Default Configuration**
 > ```yaml
 > # Circuit breaker settings (hardcoded for reliability)
-> # Failure threshold: 3 consecutive failures
+> # Health checker failure threshold:  3 consecutive failures
+> # Olla proxy failure threshold:      5 consecutive failures
 > # Timeout: 30 seconds
-> # Half-open test limit: 1 request
+> # Half-open test: 1 request
 > ```
 > **Key Settings**:
-> 
-> - Opens after 3 consecutive failures
-> - Waits 30 seconds before testing recovery
-> - Tests with 1 request in half-open state
-> 
+>
+> - Health checker circuit breaker opens after 3 consecutive transport failures
+> - Olla proxy circuit breaker opens after 5 consecutive transport failures (higher tolerance)
+> - Both wait 30 seconds before testing recovery
+> - One successful request in half-open state closes the circuit
+>
 > **Note**: These values are currently hardcoded and not configurable via YAML or environment variables.
 
 ## How It Works
@@ -59,15 +61,33 @@ stateDiagram-v2
 
 ## Implementation Details
 
-The circuit breaker is implemented in `internal/adapter/health/circuit_breaker.go`:
+There are two separate circuit breaker implementations: one in the health checker and one embedded in the Olla proxy engine:
+
+**Health-checker circuit breaker** (`internal/adapter/health/circuit_breaker.go`):
 
 ```go
 type CircuitBreaker struct {
-    state           State
-    failureCount    int64
-    successCount    int64
-    lastFailureTime time.Time
-    halfOpenTests   int64
+    endpoints        *xsync.Map[string, *circuitState]
+    failureThreshold int    // DefaultCircuitBreakerThreshold = 3
+    timeout          time.Duration // DefaultCircuitBreakerTimeout = 30s
+}
+
+type circuitState struct {
+    failures    int64 // atomic
+    lastFailure int64 // atomic nanoseconds
+    lastAttempt int64 // atomic nanoseconds (half-open sentinel)
+    isOpen      int32 // atomic: 0=closed, 1=open
+}
+```
+
+**Olla-proxy circuit breaker** (`internal/adapter/proxy/olla/service.go`): a separate unexported type with a three-state model:
+
+```go
+type circuitBreaker struct {
+    failures    int64 // atomic
+    lastFailure int64 // atomic nanoseconds
+    state       int64 // atomic: 0=closed, 1=open, 2=half-open
+    threshold   int64 // circuitBreakerThreshold = 5
 }
 ```
 
@@ -77,27 +97,34 @@ Circuit breaker parameters are currently hardcoded in the implementation:
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
-| **Failure Threshold** | 3 consecutive failures | Trips the circuit |
+| **Failure Threshold (health checker)** | 3 consecutive failures | Trips the health-checker circuit |
+| **Failure Threshold (Olla proxy)** | 5 consecutive failures | Trips the proxy-layer circuit |
 | **Timeout** | 30 seconds | Time before testing recovery |
-| **Half-Open Tests** | 3 successful requests | Required to close circuit |
+| **Half-Open Tests** | 1 successful request | Required to close circuit |
 
 ### Failure Detection
 
 The circuit breaker tracks these failure conditions:
 
 - Connection timeouts
-- HTTP 5xx responses
 - Request timeouts
 - Connection refused errors
 - DNS resolution failures
+- Other transport-layer errors
+
+!!! note "HTTP 5xx responses"
+    The two circuit breakers handle HTTP 5xx responses differently.
+
+    The **proxy-layer CB** (`internal/adapter/proxy/olla/service.go`) records a failure only on transport errors (connection refused, timeout, DNS failure). When `RoundTrip` succeeds it calls `RecordSuccess` regardless of `resp.StatusCode`, so a backend returning HTTP 5xx does **not** trip the proxy CB. This is the gap tracked in [issue #144](https://github.com/thushan/olla/issues/144).
+
+    The **health-checker CB** (`internal/adapter/health/client.go`) does trip on a 5xx from the health endpoint. An unhealthy or unknown status from the health check calls `RecordFailure`; only `StatusHealthy` and `StatusBusy` call `RecordSuccess`. So a backend that returns 5xx on its health path **will** trip the health-checker CB after three consecutive failures.
 
 ### Recovery Process
 
 1. After 30 seconds in Open state, transitions to Half-Open
-2. Next request is allowed through as a test
-3. If successful, allows more test requests
-4. After 3 successful requests, circuit closes
-5. Any failure returns to Open state
+2. One request is allowed through as a test
+3. If that request succeeds, the circuit closes immediately
+4. Any failure returns to Open state
 
 ## Integration with Health Checking
 
@@ -184,8 +211,8 @@ Current implementation limitations:
 
 - Parameters not configurable via YAML
 - No per-endpoint customisation
-- No circuit breaker events or webhooks
-- Half-open state testing is conservative
+- The Olla proxy publishes a `circuit_breaker.open` event on the internal eventbus when a circuit opens; there are no external webhooks
+- HTTP 5xx responses do not trip the circuit breaker (issue #144)
 
 ## Future Enhancements
 
@@ -207,6 +234,8 @@ Planned improvements:
 
 For implementation details, see:
 
-- `internal/adapter/health/circuit_breaker.go` - Core implementation
+- `internal/adapter/health/circuit_breaker.go` - Health-checker circuit breaker (threshold 3)
 - `internal/adapter/health/checker.go` - Integration with health checking
+- `internal/adapter/proxy/olla/service.go` - Olla proxy circuit breaker (threshold 5)
+- `internal/adapter/health/types.go` - Shared constants (`DefaultCircuitBreakerThreshold`, `DefaultCircuitBreakerTimeout`)
 - `internal/adapter/balancer/` - Load balancer integration

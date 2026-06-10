@@ -26,9 +26,9 @@ keywords: llm proxy, ollama proxy, lm studio proxy, vllm proxy, sglang, lemonade
   </P>
 </div>
 
-Olla is a high-performance, low-overhead, low-latency proxy and load balancer for managing LLM infrastructure. It intelligently routes LLM requests across local and remote inference nodes with a [wide variety](https://thushan.github.io/olla/integrations/overview/) of natively supported endpoints and extensible enough to support others. Olla provides model discovery and unified model catalogues within each provider, enabling seamless routing to available models on compatible endpoints.
+Olla is a high-performance, low-overhead, low-latency proxy and load balancer for managing LLM infrastructure. It intelligently routes LLM requests across self-hosted inference nodes with a [wide variety](https://thushan.github.io/olla/integrations/overview/) of natively supported engines and is extensible enough to support others. Olla provides model discovery and unified model catalogues within each provider, enabling seamless routing to available models on compatible endpoints.
 
-Olla works alongside API gateways like [LiteLLM](https://github.com/BerriAI/litellm) or orchestration platforms like [GPUStack](https://github.com/gpustack/gpustack), focusing on making your **existing** LLM infrastructure reliable through intelligent routing and failover. You can choose between two proxy engines: **Sherpa** for simplicity and maintainability or **Olla** for maximum performance with advanced features like circuit breakers and connection pooling.
+Olla works alongside API gateways like [LiteLLM](https://github.com/BerriAI/litellm) or orchestration platforms like [GPUStack](https://github.com/gpustack/gpustack), focusing on making your **existing** LLM infrastructure reliable through intelligent routing and failover. The high-performance **Olla** engine is the default, with **Sherpa** available as a simpler, maintenance-mode alternative.
 
 !!! info "Local-First"
     Olla is built for local, self-hosted inference: Ollama, llama.cpp, vLLM, LM Studio, LiteLLM, SGLang, and similar engines running on hardware you control. Remote authenticated APIs (Ollama Cloud, OpenAI, Anthropic, OpenRouter, Groq, etc.) are not a first-class use case. The auth machinery is generic enough to point at them, but Olla makes no guarantees about health check accuracy, rate limit handling, or model unification for cloud providers. If you want to proxy remote APIs, see [Remote Backend Auth (Experimental)](configuration/endpoint-auth-remote.md).
@@ -40,7 +40,7 @@ Olla works alongside API gateways like [LiteLLM](https://github.com/BerriAI/lite
 - **Intelligent Load Balancing**: Priority-based, round-robin, and least-connections strategies
 - **Health Monitoring**: Circuit breakers and automatic failover
 - **High Performance**: Connection pooling, object pooling, and lock-free statistics
-- **Security**: Built-in rate limiting, request validation, and optional CORS for browser clients
+- **Security**: Built-in rate limiting, request validation, optional CORS for browser clients, and outbound authentication for protected backends
 - **Observability**: Comprehensive metrics and request tracing
 - **API Translation**: [Anthropic Messages API](concepts/api-translation.md) support for Claude-compatible clients
 
@@ -90,7 +90,7 @@ Get up and running with Olla in minutes:
     git clone https://github.com/thushan/olla.git
     cd olla
     make build-release
-    ./olla
+    ./bin/olla
     ```
 
 ## Response Headers
@@ -101,7 +101,7 @@ Olla provides detailed response headers for observability:
 |--------|-------------|
 | `X-Olla-Endpoint` | Backend endpoint name |
 | `X-Olla-Model` | Model used for the request |
-| `X-Olla-Backend-Type` | Backend type (ollama/openai/openai-compatible/lm-studio/llamacpp/vllm/sglang/lemonade/lmdeploy/docker-model-runner/omlx) |
+| `X-Olla-Backend-Type` | Backend type (ollama/openai/openai-compatible/lm-studio/llamacpp/vllm/vllm-mlx/sglang/lemonade/lmdeploy/docker-model-runner/omlx) |
 | `X-Olla-Request-ID` | Unique request identifier |
 | `X-Olla-Response-Time` | Total processing time |
 

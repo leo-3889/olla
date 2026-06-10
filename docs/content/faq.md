@@ -10,7 +10,7 @@ keywords: olla faq, troubleshooting, common questions, proxy help
 
 ### What is Olla?
 
-Olla is a high-performance proxy and load balancer specifically designed for LLM infrastructure. It intelligently routes requests across multiple LLM backends (Ollama, LM Studio, LMDeploy, vLLM, SGLang, Lemonade SDK, LiteLLM, oMLX, and OpenAI-compatible endpoints) while providing load balancing, health checking, and unified model management.
+Olla is a high-performance proxy and load balancer specifically designed for LLM infrastructure. It intelligently routes requests across multiple LLM backends (Ollama, LM Studio, llama.cpp, vLLM, vLLM-MLX, SGLang, Lemonade SDK, LiteLLM, LMDeploy, Docker Model Runner, oMLX, and OpenAI-compatible endpoints) while providing load balancing, health checking, and unified model management.
 
 See how Olla compares to [other tools](compare/overview.md) in the ecosystem.
 
@@ -26,8 +26,8 @@ Olla provides several benefits:
 
 ### Which proxy engine should I use?
 
-- **Sherpa (default)**: Use for development, testing, or moderate traffic (< 100 concurrent users)
-- **Olla**: Use for production, high traffic, or when you need optimal streaming performance
+- **Olla (default)**: Use for production, high traffic, or when you need optimal streaming performance
+- **Sherpa**: Use for development, testing, or moderate traffic (< 100 concurrent users). Sherpa is in maintenance mode; new feature work targets the Olla engine.
 
 See [Proxy Engines](concepts/proxy-engines.md) for detailed comparison.
 
@@ -74,8 +74,11 @@ Yes, most settings support environment variables:
 ```bash
 OLLA_SERVER_PORT=8080
 OLLA_PROXY_ENGINE=olla
-OLLA_LOG_LEVEL=debug
+OLLA_LOGGING_LEVEL=debug    # runtime log level (post-config)
+OLLA_LOG_LEVEL=debug        # bootstrap log level (pre-config, e.g. startup output)
 ```
+
+`OLLA_LOG_LEVEL` controls logging before the config file is read. `OLLA_LOGGING_LEVEL` overrides the `logging.level` value from your YAML config after it loads. For most purposes, set both or configure `logging.level` in YAML.
 
 However, some settings like `proxy.profile` must be set in the YAML configuration file.
 
@@ -393,7 +396,7 @@ Yes! Olla works well in combination with other tools:
 
 Create a GitHub issue with:
 
-1. Olla version (`olla version`)
+1. Olla version (`olla --version`)
 2. Configuration (sanitised)
 3. Steps to reproduce
 4. Expected vs actual behaviour

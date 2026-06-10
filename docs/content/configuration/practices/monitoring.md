@@ -27,7 +27,7 @@ This guide covers monitoring and observability for Olla deployments.
 > - JSON logging for structured monitoring
 > - No external dependencies required
 > 
-> **Environment Variables**: `OLLA_LOG_LEVEL`, `OLLA_LOG_FORMAT`
+> **Environment Variables**: `OLLA_LOG_LEVEL` (bootstrap logger), `OLLA_LOGGING_LEVEL` / `OLLA_LOGGING_FORMAT` (post-config)
 
 ## Monitoring Overview
 
@@ -180,13 +180,32 @@ Use these for:
 
 ### Log Configuration
 
-Configure appropriate logging:
+Olla has two logging layers with separate environment variables.
+
+**Bootstrap logger** (`OLLA_LOG_*`) - active before the YAML config is parsed, used for startup output and file rotation:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `OLLA_LOG_LEVEL` | `info` | Log level for the early/bootstrap logger |
+| `OLLA_LOG_DIR` | `./logs` | Directory for rotating log files |
+| `OLLA_LOG_SIZE_MB` | `1` | Max size per log file (MB) before rotation |
+| `OLLA_LOG_MAX_BACKUPS` | `7` | Number of rotated files to retain |
+| `OLLA_LOG_MAX_AGE_DAYS` | `14` | Max age (days) before a rotated file is pruned |
+
+**Config-layer logger** (`OLLA_LOGGING_*`) - overrides the `logging:` YAML section after config is loaded:
+
+| Variable | Maps to | Notes |
+|---|---|---|
+| `OLLA_LOGGING_LEVEL` | `logging.level` | Runtime log level (`debug`, `info`, `warn`, `error`) |
+| `OLLA_LOGGING_FORMAT` | `logging.format` | `json` or `text` |
+
+Configure the runtime logger via YAML:
 
 ```yaml
 logging:
   level: "info"    # info for production, debug for troubleshooting
   format: "json"   # Structured logs for parsing
-  output: "stdout" # Or file path
+  output: "stdout" # Or a file path
 ```
 
 ### Log Levels

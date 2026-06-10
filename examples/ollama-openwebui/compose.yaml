@@ -7,17 +7,17 @@ services:
     ports:
       - "40114:40114"
     volumes:
-      # Overide the default with our custom configuration
+      # Override the default config with our custom configuration
       - ./olla.yaml:/app/config.yaml:ro
       - ./.container/olla/logs:/app/logs
     healthcheck:
-        test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:40114/internal/health"]
-        timeout: 5s
-        interval: 30s
-        retries: 3
-        start_period: 10s
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:40114/internal/health"]
+      timeout: 5s
+      interval: 30s
+      retries: 3
+      start_period: 10s
 
-  # OpenWebUI - the web interface
+  # Open WebUI - the web interface
   openwebui:
     image: ghcr.io/open-webui/open-webui:main
     container_name: openwebui
@@ -27,12 +27,17 @@ services:
     volumes:
       - openwebui_data:/app/backend/data
     environment:
-      # Point OpenWebUI to Olla instead of directly to Ollama
+      # Point Open WebUI at Olla using the Ollama-compatible endpoint.
+      # Open WebUI appends /api/* paths itself; provide only the base URL.
       - OLLAMA_BASE_URL=http://olla:40114/olla/ollama
-      # Optional: Set other OpenWebUI configuration
-      - WEBUI_NAME=Olla + OpenWebUI
+      # Optional: also expose Olla as an OpenAI-compatible connection.
+      # Open WebUI expects the full /v1 path for OpenAI-style endpoints.
+      # - OPENAI_API_BASE_URL=http://olla:40114/olla/proxy/v1
+      # - OPENAI_API_KEY=olla
+      # Optional: customise the Web UI
+      - WEBUI_NAME=Olla + Open WebUI
       - WEBUI_URL=http://localhost:3000
-      - WEBUI_SECRET_KEY=your-secret-key-change-this
+      - WEBUI_SECRET_KEY=change-this-secret-key
     depends_on:
       olla:
         condition: service_healthy

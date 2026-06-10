@@ -21,9 +21,10 @@ Understanding the trade-offs between these engines helps you choose the right on
 ### [Load Balancing](load-balancing.md)
 Intelligent request distribution across multiple endpoints:
 
+- **Least-connections**: Routes to least busy endpoints (default)
 - **Priority-based**: Routes to preferred endpoints first
 - **Round-robin**: Even distribution across endpoints
-- **Least-connections**: Routes to least busy endpoints
+- **[Sticky Sessions](sticky-sessions.md)**: Optional decorator that pins multi-turn conversations to the same backend for KV-cache reuse
 
 Load balancing ensures optimal resource utilisation and failover capability.
 
@@ -66,7 +67,7 @@ Profiles optimise response handling for specific workload patterns.
 ### [Profile System](profile-system.md)
 Provider-specific configuration templates:
 
-- Pre-configured profiles for Ollama, LM Studio, LMDeploy, vLLM, SGLang, Lemonade SDK, LiteLLM, OpenAI
+- Pre-configured profiles for Ollama, LM Studio, LMDeploy, vLLM, vLLM-MLX, SGLang, llama.cpp, Lemonade SDK, LiteLLM, oMLX, Docker Model Runner, OpenAI-compatible
 - Custom header mappings and endpoint patterns
 - Model format converters for each provider
 
@@ -142,7 +143,7 @@ graph TD
 
 ### For Development
 
-- **Engine**: Sherpa (simpler, easier to debug)
+- **Engine**: Olla (default) for parity with production; Sherpa available for a simpler codebase to debug (maintenance mode)
 - **Balancer**: Priority (predictable routing)
 - **Profile**: Auto (handles most cases)
 
@@ -166,6 +167,20 @@ Olla follows a **convention over configuration** approach:
 - Progressive disclosure of advanced options
 - Provider-specific profiles for quick setup
 - Fine-grained control when needed
+
+### Cross-Origin Resource Sharing (CORS)
+
+CORS support is built in and disabled by default. Enable it when browser-based clients need to access Olla directly:
+
+```yaml
+server:
+  cors:
+    enabled: true
+    allowed_origins:
+      - "https://yourapp.example.com"
+```
+
+See the [Configuration Reference](../configuration/reference.md) for the full CORS option set.
 
 ## Next Steps
 

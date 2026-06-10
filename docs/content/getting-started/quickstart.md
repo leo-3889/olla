@@ -189,7 +189,7 @@ discovery:
       # Low priority OpenAI-compatible fallback (e.g. a self-hosted LiteLLM gateway)
       - url: "http://litellm:4000"
         name: "litellm-fallback"
-        type: "openai-compatible"  # or "openai" — both are accepted aliases
+        type: "openai-compatible"  # or "openai" - both are accepted aliases
         priority: 10
 ```
 

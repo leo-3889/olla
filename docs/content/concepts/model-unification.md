@@ -21,8 +21,8 @@ keywords: model unification, model catalogue, ollama models, lm studio models, m
 > - `concurrent_workers` _(default: 5)_ - Parallel discovery workers
 > 
 > **Environment Variables**: 
-> - `OLLA_DISCOVERY_MODEL_DISCOVERY_ENABLED`
-> - `OLLA_DISCOVERY_MODEL_DISCOVERY_INTERVAL`
+> - `OLLA_MODEL_UNIFIER_ENABLED`
+> - `OLLA_MODEL_UNIFIER_CACHE_TTL`
 
 Model unification creates a consolidated view of models available across multiple endpoints **of the same type**. When you have multiple Ollama instances or multiple LM Studio servers, Olla deduplicates and merges the model lists to show you what's available and where for each type.
 

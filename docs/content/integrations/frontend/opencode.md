@@ -8,7 +8,7 @@ keywords: OpenCode, Olla, SST, AI SDK, local LLM, Ollama, vLLM, LM Studio, load 
 
 OpenCode is an open-source AI coding assistant that can connect to Olla's API endpoints, enabling you to use local LLM infrastructure with flexible OpenAI or Anthropic API compatibility.
 
-**Set in OpenCode config** (`~/.opencode/config.json`):
+**Minimal OpenCode config** (`~/.config/opencode/opencode.json`):
 
 ```json
 {
@@ -16,13 +16,19 @@ OpenCode is an open-source AI coding assistant that can connect to Olla's API en
   "provider": {
     "olla": {
       "npm": "@ai-sdk/openai-compatible",
+      "name": "Olla",
       "options": {
         "baseURL": "http://localhost:40114/olla/openai/v1"
+      },
+      "models": {
+        "llama3.2:latest": { "name": "Llama 3.2" }
       }
     }
   }
 }
 ```
+
+The `models` map is required. OpenCode will not expose any models for the provider if this field is absent. Keys must match the model IDs that appear in `/v1/models` responses from your backend.
 
 **What you get via Olla**
 
@@ -49,7 +55,7 @@ OpenCode is an open-source AI coding assistant that can connect to Olla's API en
     </tr>
     <tr>
         <th>Connection Method</th>
-        <td>AI SDK with OpenAI-compatible or Anthropic providers</td>
+        <td>AI SDK with OpenAI-compatible provider</td>
     </tr>
     <tr>
         <th>
@@ -59,7 +65,7 @@ OpenCode is an open-source AI coding assistant that can connect to Olla's API en
         <td>
             <ul>
                 <li>Chat Completions</li>
-                <li>Code Generation & Editing</li>
+                <li>Code Generation &amp; Editing</li>
                 <li>Streaming Responses</li>
                 <li>Model Selection</li>
                 <li>Tool Use (Function Calling)</li>
@@ -69,10 +75,8 @@ OpenCode is an open-source AI coding assistant that can connect to Olla's API en
     <tr>
         <th>Configuration</th>
         <td>
-            Edit <code>~/.opencode/config.json</code> to add Olla provider <br/>
+            Edit <code>~/.config/opencode/opencode.json</code> to add Olla provider <br/>
             <pre>baseURL: "http://localhost:40114/olla/openai/v1"</pre>
-            or
-            <pre>baseURL: "http://localhost:40114/olla/anthropic/v1"</pre>
         </td>
     </tr>
     <tr>
@@ -85,35 +89,34 @@ OpenCode is an open-source AI coding assistant that can connect to Olla's API en
 
 ## What is OpenCode?
 
-OpenCode is an open-source AI coding assistant built with Node.js and TypeScript that provides:
+OpenCode is an open-source AI coding assistant built with Go that provides:
 
 - **Intelligent Code Generation**: Context-aware code suggestions and completions
 - **Multi-file Editing**: Understands and modifies entire codebases
 - **Terminal Integration**: Works directly in your development environment
-- **Flexible API Support**: Compatible with OpenAI and Anthropic APIs via AI SDK
+- **Flexible API Support**: Compatible with OpenAI-compatible and other AI provider APIs
 
 **Repository**: [https://github.com/sst/opencode](https://github.com/sst/opencode)
 
 **Project Status**: The original OpenCode project was archived by the creator. It is now actively maintained as a fork by the SST (Serverless Stack) team. The SST fork continues to receive updates and improvements.
 
-By default, OpenCode can connect to OpenAI or Anthropic cloud APIs. With Olla's API compatibility, you can redirect it to local models whilst maintaining full functionality.
+By default, OpenCode connects to cloud APIs (Anthropic, OpenAI, etc.). With Olla's API compatibility you can redirect it to local models whilst maintaining full functionality.
 
 ## Architecture
 
-```
-┌──────────────┐    OpenAI or          ┌──────────┐    OpenAI API    ┌─────────────────────┐
-│  OpenCode    │    Anthropic API      │   Olla   │─────────────────▶│ Ollama :11434       │
-│  (Node.js)   │─────────────────────▶│  :40114  │  /v1/*           └─────────────────────┘
-│              │  /openai/v1/* or      │          │                   ┌─────────────────────┐
-│              │  /anthropic/v1/*      │  • API   │─────────────────▶│ LM Studio :1234     │
-│              │                       │    Translation              └─────────────────────┘
-│              │                       │  • Load Balancing           ┌─────────────────────┐
-│              │◀─────────────────────│  • Health Checks │─────────▶│ vLLM :8000          │
-└──────────────┘    API format        └──────────┘                   └─────────────────────┘
-                                           │
-                                           ├─ Routes to healthy backend
-                                           ├─ Translates formats if needed
-                                           └─ Unified model registry
+```text
+┌──────────────┐    OpenAI-compatible   ┌──────────┐    OpenAI API    ┌─────────────────────┐
+│  OpenCode    │    API requests        │   Olla   │─────────────────▶│ Ollama :11434       │
+│  (Terminal)  │───────────────────────▶│  :40114  │  /v1/*           └─────────────────────┘
+│              │  /olla/openai/v1/*     │          │                   ┌─────────────────────┐
+│              │                        │  • Load  │─────────────────▶│ LM Studio :1234     │
+│              │◀──────────────────────│    Balancing                 └─────────────────────┘
+└──────────────┘    Streamed response  │  • Health │                   ┌─────────────────────┐
+                                        │    Checks │─────────────────▶│ vLLM :8000          │
+                                        └──────────┘                   └─────────────────────┘
+                                             │
+                                             ├─ Routes to healthy backend
+                                             └─ Unified model registry
 ```
 
 ## Prerequisites
@@ -122,21 +125,24 @@ Before starting, ensure you have:
 
 1. **OpenCode Installed**
    - SST fork: [https://github.com/sst/opencode](https://github.com/sst/opencode)
-   - Node.js 18+ required
-   - Install via: `npm install -g @sst/opencode` (check SST documentation for current method)
+   - Install via curl (recommended): `curl -fsSL https://opencode.ai/install | bash`
+   - Or via npm: `npm install -g opencode-ai`
+   - Or via Homebrew: `brew install anomalyco/tap/opencode`
 
 2. **Olla Running**
    - Installed and configured (see [Installation Guide](../../getting-started/installation.md))
-   - Both OpenAI and Anthropic endpoints available (default configuration)
+   - Default port: 40114
 
 3. **At Least One Backend**
    - Ollama, LM Studio, vLLM, llama.cpp, or any OpenAI-compatible endpoint
    - With at least one model loaded/available
 
-4. **Docker & Docker Compose** (for examples)
-   - Required only if following Docker-based quick start
+4. **Docker & Docker Compose** (for the Docker quick start)
+   - Required only if following the Docker-based setup below
 
 ## Quick Start (Docker Compose)
+
+A complete working example lives in [`examples/opencode-lmstudio/`](https://github.com/thushan/olla/tree/main/examples/opencode-lmstudio/). The steps below walk through it manually.
 
 ### 1. Create Project Directory
 
@@ -159,7 +165,6 @@ services:
       - "40114:40114"
     volumes:
       - ./olla.yaml:/app/config.yaml:ro
-      - ./logs:/app/logs
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:40114/internal/health"]
       interval: 30s
@@ -167,23 +172,19 @@ services:
       retries: 3
       start_period: 10s
 
-  lmstudio:
-    image: lmstudio/lmstudio:latest  # Adjust based on LM Studio Docker availability
-    container_name: lmstudio
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
     restart: unless-stopped
-    ports:
-      - "1234:1234"
     volumes:
-      - lmstudio_models:/app/models
-    environment:
-      - LMSTUDIO_PORT=1234
+      - ollama_data:/root/.ollama
 
 volumes:
-  lmstudio_models:
+  ollama_data:
     driver: local
 ```
 
-> **Note**: LM Studio may not have an official Docker image. See the [example directory](https://github.com/thushan/olla/tree/main/examples/opencode-lmstudio/) for alternative setup methods, or substitute with Ollama if preferred.
+> **Note**: This example uses Ollama because LM Studio does not publish an official Docker image. To use LM Studio instead, run it on the host and point the endpoint URL at `http://host.docker.internal:1234` (Windows/macOS) or the Docker bridge IP (Linux). See `examples/opencode-lmstudio/` for the LM Studio-specific setup.
 
 Create **`olla.yaml`**:
 
@@ -191,44 +192,42 @@ Create **`olla.yaml`**:
 server:
   host: 0.0.0.0
   port: 40114
-  log_level: info
 
 proxy:
-  engine: sherpa           # or: olla (lower overhead)
-  load_balancer: priority  # or: least-connections
-  response_timeout: 1800s  # 30 min for long generations
+  engine: olla                 # high-performance engine; sherpa is maintenance-mode
+  load_balancer: least-connections
+  response_timeout: 1800s      # 30 min for long generations
   read_timeout: 600s
 
-# Both translators enabled by default
+# OpenAI is the native format, no translator needed.
+# Anthropic translator enables the /olla/anthropic/v1/messages endpoint.
 translators:
-  openai:
-    enabled: true
   anthropic:
     enabled: true
 
-# Service discovery for backends
 discovery:
   type: static
   static:
     endpoints:
-      - url: http://lmstudio:1234
-        name: lmstudio-local
-        type: lmstudio
+      - url: http://ollama:11434
+        name: ollama-local
+        type: ollama
         priority: 100
-        health_check:
-          enabled: true
-          interval: 30s
-          timeout: 5s
+        health_check_url: /api/tags
+        check_interval: 30s
+        check_timeout: 5s
 
-# Optional: Rate limiting
-security:
-  rate_limit:
-    enabled: false  # Enable in production
-
-# Optional: Streaming optimisation
-# proxy:
-#   profile: streaming
+logging:
+  level: info
+  format: json
 ```
+
+Key points about the Olla config:
+
+- `server.rate_limits` (under `server:`, not a top-level `security:` block) controls rate limiting.
+- Endpoint health fields are flat: `health_check_url`, `check_interval`, `check_timeout`. There is no nested `health_check:` block.
+- Only `translators.anthropic` exists as a translator. OpenAI is the native format, not a translator.
+- `proxy.write_timeout` does not exist. Use `server.write_timeout: 0s` if you need to override it (0 disables the server-level write timeout, which is required for streaming).
 
 ### 3. Start Services
 
@@ -242,17 +241,13 @@ Wait for services to be healthy:
 docker compose ps
 ```
 
-### 4. Load a Model in LM Studio
-
-Start LM Studio and load a model through its UI, or use Ollama as an alternative:
+### 4. Load a Model
 
 ```bash
-# Alternative: Use Ollama instead
-# Replace lmstudio service with ollama in compose.yaml, then:
 docker exec ollama ollama pull llama3.2:latest
 
 # Or a coding-focused model:
-docker exec ollama ollama pull qwen2.5-coder:32b
+docker exec ollama ollama pull qwen2.5-coder:7b
 ```
 
 ### 5. Verify Olla Setup
@@ -264,10 +259,7 @@ curl http://localhost:40114/internal/health
 # List available models (OpenAI format)
 curl http://localhost:40114/olla/openai/v1/models | jq
 
-# Or Anthropic format
-curl http://localhost:40114/olla/anthropic/v1/models | jq
-
-# Test message (OpenAI format)
+# Test a completion
 curl -X POST http://localhost:40114/olla/openai/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
@@ -279,70 +271,13 @@ curl -X POST http://localhost:40114/olla/openai/v1/chat/completions \
 
 ### 6. Configure OpenCode
 
-OpenCode uses a configuration file at `~/.opencode/config.json`.
-
-**Option A: OpenAI-Compatible Endpoint (Recommended)**
-
-Create or edit `~/.opencode/config.json`:
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "provider": {
-    "olla-openai": {
-      "npm": "@ai-sdk/openai-compatible",
-      "options": {
-        "baseURL": "http://localhost:40114/olla/openai/v1",
-        "apiKey": "not-required"
-      }
-    }
-  }
-}
-```
-
-**Option B: Anthropic API Endpoint**
-
-If you prefer using Anthropic's API format:
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "provider": {
-    "olla-anthropic": {
-      "npm": "@ai-sdk/anthropic",
-      "options": {
-        "baseURL": "http://localhost:40114/olla/anthropic/v1",
-        "apiKey": "not-required"
-      }
-    }
-  }
-}
-```
-
-**Configuration Notes**:
-- The `npm` field specifies which AI SDK provider package to use
-- `@ai-sdk/openai-compatible` works with any OpenAI-compatible API
-- `@ai-sdk/anthropic` uses Anthropic's SDK (requires Anthropic API format)
-- `apiKey` can be any value for local use; Olla doesn't enforce authentication by default
-
-### 7. Start OpenCode
+OpenCode reads from `~/.config/opencode/opencode.json` (global config) and merges any `opencode.json` found in your project root. Create the global config:
 
 ```bash
-opencode
+mkdir -p ~/.config/opencode
 ```
 
-Try prompts like:
-- "Write a Python function to calculate factorial"
-- "Explain this code: [paste code]"
-- "Help me refactor this function"
-
-## Configuration Options
-
-### OpenCode Configuration File
-
-**Location**: `~/.opencode/config.json`
-
-**Full Configuration Example**:
+**`~/.config/opencode/opencode.json`**:
 
 ```json
 {
@@ -350,28 +285,94 @@ Try prompts like:
   "provider": {
     "olla": {
       "npm": "@ai-sdk/openai-compatible",
+      "name": "Olla",
       "options": {
         "baseURL": "http://localhost:40114/olla/openai/v1",
         "apiKey": "not-required"
+      },
+      "models": {
+        "llama3.2:latest": { "name": "Llama 3.2" },
+        "qwen2.5-coder:7b": { "name": "Qwen 2.5 Coder 7B" }
       }
     }
-  },
-  "model": "qwen2.5-coder:32b",
-  "temperature": 0.7,
-  "maxTokens": 4096
+  }
 }
 ```
 
-**Configuration Options**:
+**Important**: The `models` map is required. Without it, OpenCode won't know which models to show for the provider. The keys must match the model IDs returned by Olla's `/v1/models` endpoint. Check with:
 
-| Field | Type | Description | Default |
-|-------|------|-------------|---------|
-| `provider.<name>.npm` | string | AI SDK package to use | Required |
-| `provider.<name>.options.baseURL` | string | Olla API endpoint | Required |
-| `provider.<name>.options.apiKey` | string | API key (not validated locally) | Optional |
-| `model` | string | Default model to use | Provider default |
-| `temperature` | number | Sampling temperature (0-2) | 0.7 |
-| `maxTokens` | number | Maximum tokens in response | 4096 |
+```bash
+curl http://localhost:40114/olla/openai/v1/models | jq '.data[].id'
+```
+
+### 7. Start OpenCode
+
+```bash
+opencode
+```
+
+Select a model using the `/models` command within the OpenCode UI. Try prompts like:
+
+- "Write a Python function to calculate factorial"
+- "Explain this code: [paste code]"
+- "Help me refactor this function"
+
+## Configuration Reference
+
+### OpenCode Configuration File
+
+**Location**: `~/.config/opencode/opencode.json` (global), or `opencode.json` in your project root (project-level, highest precedence).
+
+**Configuration merging**: OpenCode merges configs from multiple sources, where later configs override only conflicting keys. This lets you have a global Olla provider and project-specific model selections.
+
+**Complete Example**:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "olla/qwen2.5-coder:7b",
+  "provider": {
+    "olla": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Olla (local)",
+      "options": {
+        "baseURL": "http://localhost:40114/olla/openai/v1",
+        "apiKey": "not-required"
+      },
+      "models": {
+        "llama3.2:latest": {
+          "name": "Llama 3.2"
+        },
+        "qwen2.5-coder:7b": {
+          "name": "Qwen 2.5 Coder 7B",
+          "limit": {
+            "context": 32768,
+            "output": 8192
+          }
+        },
+        "qwen2.5-coder:32b": {
+          "name": "Qwen 2.5 Coder 32B"
+        }
+      }
+    }
+  }
+}
+```
+
+**Configuration Fields**:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `provider.<id>.npm` | string | AI SDK package. Use `@ai-sdk/openai-compatible` for Olla. |
+| `provider.<id>.name` | string | Display name shown in the OpenCode UI. |
+| `provider.<id>.options.baseURL` | string | Olla OpenAI endpoint URL. |
+| `provider.<id>.options.apiKey` | string | Any value; Olla does not validate keys by default. |
+| `provider.<id>.models` | object | Map of model IDs to display config. **Required.** |
+| `provider.<id>.models.<id>.name` | string | Model display name. |
+| `provider.<id>.models.<id>.limit` | object | Optional `context`/`output` token limits. |
+| `model` | string | Default model in `provider_id/model_id` format. |
+
+**Note**: `temperature` and `maxTokens` are not valid top-level fields in `opencode.json`. Per-model options (reasoning effort, etc.) are configured inside the provider's `models.<id>.options` block. See the [OpenCode docs](https://opencode.ai/docs/config/) for full reference.
 
 ### Olla Configuration
 
@@ -380,25 +381,38 @@ Edit `olla.yaml` to customise:
 **Load Balancing Strategy**:
 ```yaml
 proxy:
-  load_balancer: priority  # Options: priority, round-robin, least-connections
+  load_balancer: least-connections  # round-robin, least-connections, priority
 ```
 
-- **priority**: Uses highest priority backend first (recommended for local + fallback setup)
+- **priority**: Uses highest priority backend first (recommended for local + fallback)
 - **round-robin**: Distributes evenly across all backends
-- **least-connections**: Routes to backend with fewest active requests
+- **least-connections**: Routes to backend with fewest active requests (default)
 
 **Timeout Configuration**:
 ```yaml
 proxy:
-  response_timeout: 1800s  # Max time for response (30 minutes)
+  response_timeout: 1800s  # Max time for full response (30 minutes)
   read_timeout: 600s       # Max time for reading response body
-  write_timeout: 30s       # Max time for writing request
 ```
+
+`proxy.write_timeout` does not exist. If you need to adjust the server-level write deadline (to avoid cuts in long-running streams), set `server.write_timeout: 0s` which disables it entirely.
 
 **Streaming Optimisation**:
 ```yaml
 proxy:
-  profile: streaming  # Optimised for streaming responses
+  profile: streaming  # Optimised buffer sizes and timeouts for streaming
+```
+
+**Rate Limiting** (under `server:`, not a top-level `security:` block):
+```yaml
+server:
+  rate_limits:
+    global_requests_per_minute: 1000
+    per_ip_requests_per_minute: 100
+    burst_size: 50
+    health_requests_per_minute: 1000
+    cleanup_interval: 5m
+    trust_proxy_headers: false
 ```
 
 **Multiple Backends**:
@@ -406,73 +420,106 @@ proxy:
 discovery:
   static:
     endpoints:
-      - url: http://lmstudio:1234
+      - url: http://lmstudio-host:1234
         name: lmstudio-gpu
         type: lmstudio
         priority: 100
+        health_check_url: /v1/models
+        check_interval: 30s
+        check_timeout: 5s
 
       - url: http://ollama:11434
         name: local-ollama
         type: ollama
         priority: 90
+        health_check_url: /api/tags
+        check_interval: 30s
+        check_timeout: 5s
 
       - url: http://vllm:8000
         name: vllm-cluster
         type: vllm
         priority: 80
+        health_check_url: /health
+        check_interval: 30s
+        check_timeout: 5s
 ```
 
-## Usage Examples
+## Usage
 
-### Basic Code Generation
+### Selecting Models
 
-```bash
-# In OpenCode terminal
-> Write a Python function that calculates the Fibonacci sequence recursively
-```
-
-### Multi-file Code Editing
-
-```bash
-# OpenCode can read and modify multiple files
-> Refactor the user authentication in auth.js to use async/await
-```
-
-### Code Explanation
-
-```bash
-# Paste code and ask for explanation
-> Explain this code:
-[paste complex code snippet]
-```
-
-### Debugging Assistance
-
-```bash
-> I'm getting this error: [paste error message and code]
-> Help me fix it
-```
-
-### Using Specific Models
-
-Configure default model in `~/.opencode/config.json`:
+Use the `/models` command within OpenCode to pick from the models you've declared in your `opencode.json`. To set a default at startup, add a top-level `model` field in your config:
 
 ```json
 {
-  "model": "qwen2.5-coder:32b"
+  "model": "olla/qwen2.5-coder:7b"
 }
 ```
 
-Or query available models:
+The format is `provider_id/model_id`, where `provider_id` is the key you used under `"provider"` in `opencode.json`.
+
+### List Available Model IDs
 
 ```bash
-# List models from Olla
+# Check which model IDs Olla sees from your backends
 curl http://localhost:40114/olla/openai/v1/models | jq '.data[].id'
+```
+
+Use the exact IDs returned here as keys in your `models` map.
+
+### Basic Usage
+
+```text
+# In OpenCode terminal
+> Write a Python function that calculates the Fibonacci sequence recursively
+> Refactor the user authentication in auth.js to use async/await
+> Explain this code: [paste code snippet]
+> I'm getting this error: [paste error], help me fix it
 ```
 
 ## Docker Deployment (Production)
 
-For production deployments, enhance security and reliability:
+### Production olla.yaml
+
+```yaml
+server:
+  host: 0.0.0.0
+  port: 40114
+  rate_limits:
+    global_requests_per_minute: 1000
+    per_ip_requests_per_minute: 100
+    burst_size: 50
+    health_requests_per_minute: 1000
+    cleanup_interval: 5m
+
+proxy:
+  engine: olla
+  load_balancer: least-connections
+  response_timeout: 1800s
+  read_timeout: 600s
+  profile: streaming
+
+translators:
+  anthropic:
+    enabled: true
+
+discovery:
+  type: static
+  static:
+    endpoints:
+      - url: http://ollama:11434
+        name: local-ollama
+        type: ollama
+        priority: 100
+        health_check_url: /api/tags
+        check_interval: 30s
+        check_timeout: 5s
+
+logging:
+  level: info
+  format: json
+```
 
 ### Enhanced compose.yaml
 
@@ -486,9 +533,6 @@ services:
       - "40114:40114"
     volumes:
       - ./olla.yaml:/app/config.yaml:ro
-      - ./logs:/app/logs
-    environment:
-      - OLLA_LOG_LEVEL=info
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:40114/internal/health"]
       interval: 30s
@@ -513,11 +557,6 @@ services:
       - ollama_data:/root/.ollama
     networks:
       - olla-network
-    healthcheck:
-      test: ["CMD", "ollama", "list"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
 volumes:
   ollama_data:
@@ -528,66 +567,19 @@ networks:
     driver: bridge
 ```
 
-### Production olla.yaml
-
-```yaml
-server:
-  host: 0.0.0.0
-  port: 40114
-  log_level: info
-
-proxy:
-  engine: olla  # Use high-performance engine
-  load_balancer: least-connections
-  response_timeout: 1800s
-  read_timeout: 600s
-  profile: streaming
-
-translators:
-  openai:
-    enabled: true
-  anthropic:
-    enabled: true
-
-discovery:
-  type: static
-  static:
-    endpoints:
-      - url: http://ollama:11434
-        name: local-ollama
-        type: ollama
-        priority: 100
-        health_check:
-          enabled: true
-          interval: 30s
-          timeout: 5s
-          unhealthy_threshold: 3
-          healthy_threshold: 2
-
-security:
-  rate_limit:
-    enabled: true
-    requests_per_minute: 100
-    burst: 50
-
-logging:
-  level: info
-  format: json
-```
-
 ## Model Selection Tips
 
 ### Recommended Models for OpenCode
 
 **Code-Focused Models**:
 - `qwen2.5-coder:32b` - Excellent for code generation and understanding
+- `qwen2.5-coder:7b` - Good balance of speed and quality
 - `deepseek-coder-v2:latest` - Strong multi-language support
 - `codellama:34b` - Meta's specialised coding model
 - `phi3.5:latest` - Efficient, good for quick tasks
 
 **General Purpose (Code + Chat)**:
 - `llama3.3:latest` - Well-balanced, fast
-- `mistralai/magistral-small` - Good reasoning abilities
 - `qwen3:32b` - Strong multi-task performance
 
 **Performance vs Quality Trade-offs**:
@@ -602,13 +594,10 @@ logging:
 
 ```bash
 # Ollama
-docker exec ollama ollama pull qwen2.5-coder:32b
+docker exec ollama ollama pull qwen2.5-coder:7b
 
 # Check loaded models
 docker exec ollama ollama list
-
-# Remove unused models to save space
-docker exec ollama ollama rm <model-name>
 ```
 
 ## Troubleshooting
@@ -617,35 +606,25 @@ docker exec ollama ollama rm <model-name>
 
 **Check configuration file**:
 ```bash
-cat ~/.opencode/config.json
-# Verify baseURL points to correct Olla endpoint
+cat ~/.config/opencode/opencode.json
+# Verify baseURL points to the correct Olla endpoint
 ```
 
 **Test Olla directly**:
 ```bash
 curl http://localhost:40114/internal/health
-
-# If this fails, Olla isn't running
-docker compose ps
 ```
 
-**Check OpenCode logs**:
+**Check endpoint health**:
 ```bash
-# OpenCode typically outputs logs to stderr/stdout
-opencode --verbose  # Check if verbose mode is available
+curl http://localhost:40114/internal/status/endpoints | jq
 ```
 
 ### No Models Available
 
-**List models from Olla**:
+**Verify model IDs**: The keys in your `models` map must match exactly what Olla returns:
 ```bash
-# OpenAI format
-curl http://localhost:40114/olla/openai/v1/models | jq
-
-# Anthropic format
-curl http://localhost:40114/olla/anthropic/v1/models | jq
-
-# Should show models from all backends
+curl http://localhost:40114/olla/openai/v1/models | jq '.data[].id'
 ```
 
 **Check backend health**:
@@ -656,33 +635,19 @@ curl http://localhost:40114/internal/status/endpoints | jq
 **Verify backend directly**:
 ```bash
 # Ollama
-docker exec ollama ollama list
-
-# Or via API
 curl http://localhost:11434/api/tags
 
 # LM Studio
 curl http://localhost:1234/v1/models
 ```
 
-**Pull a model if empty**:
-```bash
-docker exec ollama ollama pull llama3.2:latest
-```
-
 ### Slow Responses
 
-**Switch to high-performance proxy engine**:
+**Ensure high-performance proxy engine is active**:
 ```yaml
 proxy:
-  engine: olla  # Instead of sherpa
+  engine: olla   # not sherpa; sherpa is maintenance-mode
   profile: streaming
-```
-
-**Use smaller, faster models**:
-```bash
-docker exec ollama ollama pull phi3.5:latest
-docker exec ollama ollama pull llama3.2:latest
 ```
 
 **Increase timeout for large models**:
@@ -694,29 +659,21 @@ proxy:
 
 **Check backend performance**:
 ```bash
-# Ollama GPU usage
-docker exec ollama nvidia-smi
-
-# Container resources
 docker stats ollama
+docker exec ollama nvidia-smi
 ```
 
 ### Connection Refused
 
 **From OpenCode to Olla**:
 ```bash
-# Test from host
 curl http://localhost:40114/internal/health
-
-# If this works but OpenCode fails, check firewall
 ```
 
 **From Olla to Backend (Docker)**:
 ```bash
-# Test from Olla container
 docker exec olla wget -q -O- http://ollama:11434/api/tags
-
-# If this fails, check Docker network
+# If this fails, check the Docker network
 docker network inspect opencode-olla_default
 ```
 
@@ -727,10 +684,6 @@ docker network inspect opencode-olla_default
 proxy:
   profile: streaming
 ```
-
-**Check OpenCode streaming support**:
-- Ensure you're using a recent version
-- Check SST fork documentation for streaming capabilities
 
 **Test streaming directly**:
 ```bash
@@ -745,49 +698,56 @@ curl -N -X POST http://localhost:40114/olla/openai/v1/chat/completions \
 
 ### API Key Issues
 
-Olla doesn't enforce API keys by default. If OpenCode requires one:
+Olla doesn't enforce API keys by default. If OpenCode requires one, set any placeholder value:
 
 ```json
 {
   "provider": {
     "olla": {
       "options": {
-        "apiKey": "dummy-key-not-validated"
+        "apiKey": "not-required"
       }
     }
   }
 }
 ```
 
-Any placeholder value will work.
+### Anthropic Endpoint Issues
+
+If you want to use the Anthropic Messages API format (via `@ai-sdk/anthropic` pointing at Olla), be aware there is an [active bug in OpenCode](https://github.com/sst/opencode/issues/21737) where the API key is dropped at runtime when using a custom `baseURL` with the `@ai-sdk/anthropic` package. The workaround is to use `@ai-sdk/openai-compatible` with the OpenAI endpoint (`/olla/openai/v1`) instead. It works reliably and requires no translation overhead.
+
+If you specifically need the Anthropic Messages format, point a separate provider at Olla's `/olla/anthropic/v1` endpoint. Olla serves that format for every backend (passthrough where native support exists, translation otherwise), so the backend does not need to speak Anthropic itself. See the [Anthropic API Translation](../api-translation/anthropic.md) docs for how passthrough and translation are selected.
 
 ## Advanced Configuration
 
 ### Using Non-Docker Backends
-
-If your backends run outside Docker:
 
 **olla.yaml with host services**:
 ```yaml
 discovery:
   static:
     endpoints:
-      # Linux: Use host IP
-      - url: http://192.168.1.100:11434
-        name: ollama-workstation
-        type: ollama
-        priority: 100
-
       # macOS/Windows: Use host.docker.internal
       - url: http://host.docker.internal:1234
         name: lmstudio-local
         type: lmstudio
         priority: 100
+        health_check_url: /v1/models
+        check_interval: 30s
+        check_timeout: 5s
+
+      # Linux: Use host IP directly
+      - url: http://192.168.1.100:11434
+        name: ollama-workstation
+        type: ollama
+        priority: 90
+        health_check_url: /api/tags
+        check_interval: 30s
+        check_timeout: 5s
 ```
 
 ### Load Balancing Across Multiple GPUs
 
-**Setup multiple backend instances**:
 ```yaml
 discovery:
   static:
@@ -796,92 +756,32 @@ discovery:
         name: gpu1
         type: ollama
         priority: 100
+        health_check_url: /api/tags
+        check_interval: 30s
+        check_timeout: 5s
 
       - url: http://gpu2-ollama:11434
         name: gpu2
         type: ollama
         priority: 100
+        health_check_url: /api/tags
+        check_interval: 30s
+        check_timeout: 5s
 
       - url: http://gpu3-vllm:8000
         name: gpu3-vllm
         type: vllm
         priority: 90
+        health_check_url: /health
+        check_interval: 30s
+        check_timeout: 5s
 
 proxy:
   load_balancer: least-connections  # Distribute load evenly
 ```
 
-### Switching Between OpenAI and Anthropic APIs
-
-OpenCode supports both API formats. You can configure multiple providers:
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "provider": {
-    "olla-openai": {
-      "npm": "@ai-sdk/openai-compatible",
-      "options": {
-        "baseURL": "http://localhost:40114/olla/openai/v1"
-      }
-    },
-    "olla-anthropic": {
-      "npm": "@ai-sdk/anthropic",
-      "options": {
-        "baseURL": "http://localhost:40114/olla/anthropic/v1"
-      }
-    }
-  }
-}
-```
-
-Check OpenCode documentation for how to switch between providers.
-
-### Integration with CI/CD
-
-**Using OpenCode in CI pipelines** (if supported):
-
-```yaml
-# .github/workflows/code-review.yml
-name: AI Code Review
-
-on: [pull_request]
-
-jobs:
-  review:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Install OpenCode
-        run: |
-          npm install -g @sst/opencode
-
-      - name: Configure for Olla
-        run: |
-          mkdir -p ~/.opencode
-          cat > ~/.opencode/config.json << EOF
-          {
-            "provider": {
-              "olla": {
-                "npm": "@ai-sdk/openai-compatible",
-                "options": {
-                  "baseURL": "${{ secrets.OLLA_URL }}"
-                }
-              }
-            }
-          }
-          EOF
-
-      - name: Run AI Review
-        run: |
-          # Check OpenCode CLI documentation for review commands
-          opencode review
-```
-
 ### Monitoring and Observability
 
-**Check Olla metrics**:
 ```bash
 # Endpoint status
 curl http://localhost:40114/internal/status/endpoints | jq
@@ -895,22 +795,16 @@ curl http://localhost:40114/internal/health
 
 **View logs**:
 ```bash
-# Olla logs
 docker compose logs -f olla
-
-# Backend logs
-docker compose logs -f ollama
-docker compose logs -f lmstudio
-
-# Filter for errors
 docker compose logs olla | grep -i error
 ```
 
-**Custom logging**:
+**Custom logging** (under `logging:`, not under `server:`):
 ```yaml
 logging:
-  level: debug  # Options: debug, info, warn, error
-  format: json  # Options: json, text
+  level: debug   # debug, info, warn, error
+  format: json   # json, text
+  output: stdout # stdout, file
 ```
 
 ## Best Practices
@@ -920,33 +814,32 @@ logging:
 - **Start small**: Test with smaller models (3-8B) before using larger ones
 - **Specialised models**: Use code-specific models (e.g., `qwen2.5-coder`) for better results
 - **Clean up**: Remove unused models to save disk space
-- **Version models**: Use specific tags (`:v1.2`) rather than `:latest` for consistency
+- **Keep models map current**: Update your `opencode.json` models map whenever you pull new models
 
 ### 2. Performance Optimisation
 
 - **GPU acceleration**: Use CUDA-enabled backend images for GPU support
 - **Resource limits**: Set Docker memory/CPU limits to prevent host resource exhaustion
-- **Connection pooling**: Use `olla` proxy engine for better connection handling
-- **Streaming profile**: Enable for real-time response feel
+- **Olla engine**: Use `engine: olla` (default) for better connection handling
+- **Streaming profile**: Enable `profile: streaming` for real-time response feel
 
 ### 3. Development Workflow
 
 - **Local-first**: Configure highest priority for local backends
 - **Fallback remotes**: Add lower-priority remote endpoints for reliability
 - **Model isolation**: Separate models for different tasks (code vs chat vs analysis)
-- **Version control**: Keep `olla.yaml` and OpenCode config in your project repo
+- **Version control**: Keep `olla.yaml` in your project repo; keep OpenCode config in your home dir
 
 ### 4. Security
 
 - **Network isolation**: Use Docker networks to isolate services
-- **Rate limiting**: Enable in production to prevent abuse
+- **Rate limiting**: Enable `server.rate_limits` in production to prevent abuse
 - **No public exposure**: Don't expose Olla directly to the internet without authentication
 - **API gateway**: Use nginx/Traefik with auth for external access
 
 ### 5. Cost Efficiency
 
 - **Local models**: Save on API costs whilst maintaining privacy
-- **Batch operations**: Group similar tasks to reduce cold-start delays
 - **Model caching**: Keep frequently used models loaded
 - **Resource sharing**: One Olla instance can serve multiple developers
 
@@ -954,11 +847,11 @@ logging:
 
 | Feature | OpenCode | Claude Code | Crush CLI |
 |---------|----------|-------------|-----------|
-| **License** | Open Source (archived) | Proprietary | Open Source |
+| **License** | Open Source (archived original) | Proprietary | Open Source |
 | **Maintenance** | SST fork active | Anthropic official | Charmbracelet active |
-| **API Support** | OpenAI or Anthropic | Anthropic only | Both |
-| **Platform** | Node.js/TypeScript | Unknown | Go |
-| **Configuration** | JSON config file | Environment variables | YAML config |
+| **API Support** | OpenAI-compatible (primary) | Anthropic only | Both |
+| **Platform** | Go | Unknown | Go |
+| **Configuration** | JSON config file | Environment variables | JSON config file |
 | **Best For** | Customisable workflows | Official Anthropic support | Modern terminal UI |
 
 ## Next Steps
@@ -973,7 +866,7 @@ logging:
 
 ### Integration Examples
 
-- **[OpenCode + LM Studio Example](https://github.com/thushan/olla/tree/main/examples/opencode-lmstudio/)** - Complete setup (if available)
+- **[OpenCode + LM Studio Example](https://github.com/thushan/olla/tree/main/examples/opencode-lmstudio/)** - Complete setup
 - **[Claude Code + Ollama Example](https://github.com/thushan/olla/tree/main/examples/claude-code-ollama/)** - Similar setup pattern
 - **[Claude Code Integration](claude-code.md)** - Official Anthropic CLI
 - **[Crush CLI Integration](crush-cli.md)** - Modern terminal assistant
@@ -999,9 +892,9 @@ logging:
 - Discussions: [https://github.com/thushan/olla/discussions](https://github.com/thushan/olla/discussions)
 
 **OpenCode Resources**:
-- SST OpenCode Fork: [https://github.com/sst/opencode](https://github.com/sst/opencode)
-- Original Project: [https://github.com/opencodecli/opencode](https://github.com/opencodecli/opencode) (archived)
-- SST Documentation: [https://sst.dev](https://sst.dev)
+- SST OpenCode: [https://github.com/sst/opencode](https://github.com/sst/opencode)
+- OpenCode Docs: [https://opencode.ai/docs](https://opencode.ai/docs)
+- SST: [https://sst.dev](https://sst.dev)
 
 **Common Resources**:
 - [Olla Project Home](../../index.md)
@@ -1012,7 +905,7 @@ logging:
 ```bash
 # Verify setup
 curl http://localhost:40114/internal/health
-curl http://localhost:40114/olla/openai/v1/models | jq
+curl http://localhost:40114/olla/openai/v1/models | jq '.data[].id'
 
 # Test message
 curl -X POST http://localhost:40114/olla/openai/v1/chat/completions \

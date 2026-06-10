@@ -232,7 +232,7 @@ curl -X POST http://localhost:40114/olla/lmdeploy/generate \
 
 ## POST /olla/lmdeploy/pooling
 
-Reward or score pooling for embedding-style tasks. This is the correct path for pooling operations — `/v1/embeddings` is not supported.
+Reward or score pooling for embedding-style tasks. This is the correct path for pooling operations; `/v1/embeddings` is not supported.
 
 ### Request
 
@@ -269,7 +269,7 @@ curl -X POST http://localhost:40114/olla/lmdeploy/pooling \
 
 ## GET /olla/lmdeploy/is_sleeping
 
-Probe whether the LMDeploy engine is in sleep mode. Sleeping instances return HTTP 503 on generation endpoints — Olla's health checker treats this as a transient failure rather than a hard outage.
+Probe whether the LMDeploy engine is in sleep mode. Sleeping instances return HTTP 503 on generation endpoints, which Olla's health checker treats as a transient failure rather than a hard outage.
 
 ### Request
 

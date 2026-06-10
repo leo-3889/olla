@@ -12,12 +12,12 @@ This document details the advanced Go patterns and techniques used throughout Ol
 
 ### Lock-Free Data Structures with xsync
 
-Olla heavily leverages `github.com/puzpuzpuz/xsync/v3` for lock-free concurrent data structures:
+Olla heavily leverages `github.com/puzpuzpuz/xsync/v4` for lock-free concurrent data structures:
 
 ```go
 // Thread-safe map without locks
 type EndpointRegistry struct {
-    endpoints *xsync.MapOf[string, *Endpoint]
+    endpoints *xsync.Map[string, *Endpoint]
 }
 
 // Concurrent access without explicit synchronisation
@@ -68,56 +68,39 @@ func (s *ModelStats) GetAverageLatency() time.Duration {
 
 ### Circuit Breaker State Machine
 
-The circuit breaker uses atomic operations for lock-free state transitions:
+There are two circuit breaker implementations. Neither uses `atomic.Int64` wrapper types; both use raw `int64` fields with `sync/atomic` package calls.
+
+**Health-checker CB** (`internal/adapter/health/circuit_breaker.go`): keyed by endpoint URL in an `xsync.Map`; threshold = 3; state encoded as `int32` (`isOpen`).
 
 ```go
-const (
-    circuitClosed   int64 = 0
-    circuitOpen     int64 = 1
-    circuitHalfOpen int64 = 2
-)
-
+// internal/adapter/health/circuit_breaker.go
 type CircuitBreaker struct {
-    state           atomic.Int64
-    failures        atomic.Int64
-    lastFailureTime atomic.Int64
-    threshold       int64
-    timeout         time.Duration
+    endpoints        *xsync.Map[string, *circuitState]
+    failureThreshold int
+    timeout          time.Duration
 }
 
-func (cb *CircuitBreaker) RecordFailure() {
-    failures := cb.failures.Add(1)
-    cb.lastFailureTime.Store(time.Now().UnixNano())
-    
-    if failures >= cb.threshold {
-        // Atomic state transition
-        cb.state.CompareAndSwap(circuitClosed, circuitOpen)
-    }
-}
-
-func (cb *CircuitBreaker) CanPass() bool {
-    state := cb.state.Load()
-    
-    switch state {
-    case circuitClosed:
-        return true
-    case circuitOpen:
-        // Check if timeout expired
-        lastFailure := time.Unix(0, cb.lastFailureTime.Load())
-        if time.Since(lastFailure) > cb.timeout {
-            // Try to transition to half-open
-            if cb.state.CompareAndSwap(circuitOpen, circuitHalfOpen) {
-                cb.failures.Store(0)
-            }
-            return true
-        }
-        return false
-    case circuitHalfOpen:
-        return true
-    }
-    return false
+type circuitState struct {
+    failures    int64 // atomic
+    lastFailure int64 // atomic nanoseconds
+    lastAttempt int64 // atomic nanoseconds (half-open sentinel)
+    isOpen      int32 // atomic: 0=closed, 1=open
 }
 ```
+
+**Olla-proxy CB** (`internal/adapter/proxy/olla/service.go`): one `circuitBreaker` per endpoint, stored in `xsync.Map`; threshold = 5; three-state (`int64`: 0=closed, 1=open, 2=half-open).
+
+```go
+// internal/adapter/proxy/olla/service.go
+type circuitBreaker struct {
+    failures    int64 // atomic
+    lastFailure int64 // atomic nanoseconds
+    state       int64 // atomic: 0=closed, 1=open, 2=half-open
+    threshold   int64
+}
+```
+
+One success closes the circuit in both implementations. HTTP 5xx responses do NOT trip either circuit breaker; only transport errors do (issue #144).
 
 ### Worker Pool Pattern
 
@@ -176,92 +159,46 @@ func (wp *WorkerPool[T]) Submit(task T) {
 
 ### Generic Object Pool
 
-Type-safe object pooling with generics:
+Type-safe object pooling with generics. The real implementation is in `pkg/pool/lite_pool.go`:
 
 ```go
+// pkg/pool/lite_pool.go
 type Pool[T any] struct {
     pool sync.Pool
     new  func() T
-    reset func(*T)
+    // No separate reset field; types implement Resettable instead
 }
 
-func NewPool[T any](newFn func() T, resetFn func(*T)) *Pool[T] {
-    return &Pool[T]{
-        pool: sync.Pool{
-            New: func() interface{} {
-                return newFn()
-            },
-        },
-        new:   newFn,
-        reset: resetFn,
-    }
-}
+// NewLitePool is the sole constructor; it takes only a constructor function.
+// If T implements Reset(), Put() calls it automatically.
+func NewLitePool[T any](newFn func() T) (*Pool[T], error)
 
-func (p *Pool[T]) Get() T {
-    v := p.pool.Get()
-    if v == nil {
-        return p.new()
-    }
-    return v.(T)
-}
+// Usage: types that need zeroing implement Resettable:
+type requestContext struct { ... }
+func (r *requestContext) Reset() { r.requestID = ""; r.startTime = time.Time{} }
 
-func (p *Pool[T]) Put(v T) {
-    if p.reset != nil {
-        p.reset(&v)
-    }
-    p.pool.Put(v)
-}
-
-// Usage example
-var bufferPool = NewPool(
-    func() []byte { return make([]byte, 0, 32*1024) },
-    func(b *[]byte) { *b = (*b)[:0] }, // Reset slice
-)
+pool, err := pool.NewLitePool(func() *requestContext {
+    return &requestContext{}
+})
+ctx := pool.Get()
+defer pool.Put(ctx) // Reset() called automatically
 ```
 
 ### Connection Pool Management
 
-Per-endpoint connection pools with automatic cleanup:
+Per-endpoint connection pools with automatic cleanup. The real implementation in `internal/adapter/proxy/olla/service.go` uses raw `int64` fields with `sync/atomic` calls (not `atomic.Int64` wrapper types), and `xsync.Map` with `LoadOrStore`:
 
 ```go
-type ConnectionPool struct {
-    transport   *http.Transport
-    lastUsed    atomic.Int64
-    activeConns atomic.Int64
+// internal/adapter/proxy/olla/service.go (simplified illustrative form)
+type connectionPool struct {
+    transport *http.Transport
+    lastUsed  int64 // atomic nanoseconds
+    healthy   int64 // atomic: 0=unhealthy, 1=healthy
 }
 
-type PoolManager struct {
-    pools        *xsync.MapOf[string, *ConnectionPool]
-    cleanupTimer *time.Timer
-}
-
-func (pm *PoolManager) GetPool(endpoint string) *ConnectionPool {
-    pool, _ := pm.pools.LoadOrCompute(endpoint, func() *ConnectionPool {
-        return &ConnectionPool{
-            transport: &http.Transport{
-                MaxIdleConns:        10,
-                MaxIdleConnsPerHost: 10,
-                IdleConnTimeout:     90 * time.Second,
-                DisableCompression:  true, // Better for local networks
-            },
-        }
-    })
-    
-    pool.lastUsed.Store(time.Now().UnixNano())
-    return pool
-}
-
-func (pm *PoolManager) cleanupStale() {
-    threshold := time.Now().Add(-5 * time.Minute).UnixNano()
-    
-    pm.pools.Range(func(endpoint string, pool *ConnectionPool) bool {
-        if pool.lastUsed.Load() < threshold && pool.activeConns.Load() == 0 {
-            pool.transport.CloseIdleConnections()
-            pm.pools.Delete(endpoint)
-        }
-        return true
-    })
-}
+// Pools are stored in:  xsync.Map[string, *connectionPool]
+// Created lazily with:  endpointPools.LoadOrStore(endpoint, newPool)
+// Cleaned up by a background goroutine every 5 minutes.
 ```
 
 ### Buffer Reuse Pattern
@@ -470,7 +407,7 @@ type Event[T any] struct {
 }
 
 type EventBus[T any] struct {
-    subscribers *xsync.MapOf[string, []chan Event[T]]
+    subscribers *xsync.Map[string, []chan Event[T]]
     workerPool  *WorkerPool[Event[T]]
 }
 

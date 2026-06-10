@@ -6,11 +6,12 @@ Proxy endpoints for LM Studio servers. Available through multiple prefixes: `/ol
 
 | Method | URI | Description |
 |--------|-----|-------------|
-| GET | `/olla/lmstudio/v1/models` | List available models |
+| GET | `/olla/lmstudio/v1/models` | List available models (OpenAI format) |
+| GET | `/olla/lmstudio/api/v1/models` | List available models (OpenAI format, alternate path) |
+| GET | `/olla/lmstudio/api/v0/models` | List available models (LM Studio enhanced format) |
 | POST | `/olla/lmstudio/v1/chat/completions` | Chat completion |
 | POST | `/olla/lmstudio/v1/completions` | Text completion |
 | POST | `/olla/lmstudio/v1/embeddings` | Generate embeddings |
-| GET | `/olla/lmstudio/api/v0/models` | Legacy models endpoint |
 
 ## Alternative Prefixes
 

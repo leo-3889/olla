@@ -50,17 +50,20 @@ Olla's Anthropic API Translation enables Claude-compatible clients (Claude Code,
     <tr>
         <th>Compatible Backends</th>
         <td>
-            All OpenAI-compatible backends:
+            All OpenAI-compatible backends (passthrough where native Anthropic support exists, translation otherwise):
             <ul>
-                <li>Ollama</li>
-                <li>LM Studio</li>
-                <li>vLLM</li>
-                <li>SGLang</li>
-                <li>llama.cpp</li>
-                <li>Lemonade SDK</li>
-                <li>LiteLLM</li>
-                <li>oMLX</li>
-                <li>Any OpenAI-compatible endpoint</li>
+                <li>Ollama (passthrough, v0.14.0+)</li>
+                <li>LM Studio (passthrough, v0.4.1+)</li>
+                <li>vLLM (passthrough, v0.11.1+)</li>
+                <li>vLLM-MLX (passthrough)</li>
+                <li>llama.cpp (passthrough, b4847+)</li>
+                <li>Docker Model Runner (passthrough)</li>
+                <li>oMLX (passthrough, v0.4.2+)</li>
+                <li>SGLang (translation)</li>
+                <li>LMDeploy (translation)</li>
+                <li>Lemonade SDK (translation)</li>
+                <li>LiteLLM (translation)</li>
+                <li>Any OpenAI-compatible endpoint (translation)</li>
             </ul>
         </td>
     </tr>
@@ -75,10 +78,11 @@ Olla supports two modes for handling Anthropic API requests, selected automatica
 ```
 ┌──────────────────┐       ┌────────── Olla ─────────────┐       ┌─────────────────┐
 │  Claude Code     │       │ /olla/anthropic/v1/*        │       │ vLLM (v0.11.1+) │
-│  OpenCode        │──────▶│                             │──────▶│ llama.cpp (b4847+)
-│  Crush CLI       │       │ 1. Validate request         │       │ LM Studio (v0.4.1+)
-│                  │       │ 2. Detect native support    │       │ Ollama (v0.14.0+)│
-│  (Anthropic API) │       │ 3. Forward as-is            │       │                 │
+│  OpenCode        │──────▶│                             │──────▶│ vLLM-MLX        │
+│  Crush CLI       │       │ 1. Validate request         │       │ llama.cpp (b4847+)
+│                  │       │ 2. Detect native support    │       │ LM Studio (v0.4.1+)
+│  (Anthropic API) │       │ 3. Forward as-is            │       │ Ollama (v0.14.0+)
+│                  │       │                             │       │ Docker Model Runner │
 │                  │◀──────│                             │◀──────│ (Native Anthropic)
 └──────────────────┘       └─────────────────────────────┘       └─────────────────┘
 ```
@@ -91,6 +95,9 @@ Olla supports two modes for handling Anthropic API requests, selected automatica
 4. Backend processes request natively
 5. Response returned to client as-is
 6. Response includes `X-Olla-Mode: passthrough` header
+
+!!! important "Keep native message paths consistent"
+    Mixed deployments are supported: endpoints without native Anthropic support can be left in the fleet and Olla will use translation for them when passthrough is not available. For passthrough-capable endpoints, v0.0.28 chooses one `anthropic_support.messages_path` before proxy endpoint selection. Keep capable backend types with different native message paths, such as Docker Model Runner (`/anthropic/v1/messages`) and vLLM (`/v1/messages`), in separate fleets or disable passthrough for one side.
 
 ### Translation Mode (Fallback)
 
@@ -310,7 +317,7 @@ discovery:
         type: "lm-studio"
         priority: 80
         model_url: "/v1/models"
-        health_check_url: "/"
+        health_check_url: "/v1/models"
         check_interval: 2s
 
       # Remote vLLM (low priority, fallback)
@@ -324,7 +331,7 @@ discovery:
 
 proxy:
   load_balancer: priority  # Use priority-based routing
-  engine: sherpa          # or: olla (for high performance)
+  engine: olla            # default high-performance engine (sherpa is maintenance-mode)
   profile: streaming      # Low-latency streaming
 ```
 
@@ -524,10 +531,12 @@ These backends natively support the Anthropic Messages API and benefit from pass
 | Backend | Min Version | Token Counting | Config Section |
 |---------|-------------|----------------|----------------|
 | **vLLM** | v0.11.1+ | No | `api.anthropic_support` in `config/profiles/vllm.yaml` |
+| **vLLM-MLX** | -- | Yes | `api.anthropic_support` in `config/profiles/vllm-mlx.yaml` |
 | **llama.cpp** | b4847+ | Yes | `api.anthropic_support` in `config/profiles/llamacpp.yaml` |
 | **LM Studio** | v0.4.1+ | No | `api.anthropic_support` in `config/profiles/lmstudio.yaml` |
 | **Ollama** | v0.14.0+ | No | `api.anthropic_support` in `config/profiles/ollama.yaml` |
-| **oMLX** | -- | No | `api.anthropic_support` in `config/profiles/omlx.yaml` |
+| **Docker Model Runner** | -- | Yes | `api.anthropic_support` in `config/profiles/dmr.yaml` |
+| **oMLX** | v0.4.2+ | No | `api.anthropic_support` in `config/profiles/omlx.yaml` |
 
 When using these backends, Olla automatically detects native Anthropic support and forwards requests directly. You can verify passthrough mode is active by checking the `X-Olla-Mode: passthrough` response header.
 
@@ -552,7 +561,7 @@ All OpenAI-compatible backends work through translation:
   name: "local-lmstudio"
   type: "lm-studio"
   model_url: "/v1/models"
-  health_check_url: "/"
+  health_check_url: "/v1/models"
 ```
 
 **llama.cpp**
@@ -611,27 +620,31 @@ See [Claude Code Integration](../frontend/claude-code.md) for complete setup.
 
 ### OpenCode
 
-Configure OpenCode in `~/.opencode/config.json`:
+Configure OpenCode in `~/.config/opencode/opencode.json`. The recommended setup points at Olla's OpenAI endpoint via `@ai-sdk/openai-compatible` (the `@ai-sdk/anthropic` package has a [known bug](https://github.com/sst/opencode/issues/21737) that drops the API key with a custom `baseURL`):
 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
   "provider": {
-    "olla-anthropic": {
-      "npm": "@ai-sdk/anthropic",
+    "olla": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Olla",
       "options": {
-        "baseURL": "http://localhost:40114/olla/anthropic/v1"
+        "baseURL": "http://localhost:40114/olla/openai/v1"
+      },
+      "models": {
+        "llama3.2:latest": { "name": "Llama 3.2" }
       }
     }
   }
 }
 ```
 
-See [OpenCode Integration](../frontend/opencode.md) for complete setup.
+The `models` map is required; OpenCode exposes no models for the provider without it. See [OpenCode Integration](../frontend/opencode.md) for complete setup.
 
 ### Crush CLI
 
-Configure Crush in `~/.crush/config.json`:
+Configure Crush in `~/.config/crush/crush.json` (`%LOCALAPPDATA%\crush\crush.json` on Windows). A custom provider must declare both `base_url` and a non-empty `models` array or Crush silently skips it:
 
 ```json
 {
@@ -639,8 +652,15 @@ Configure Crush in `~/.crush/config.json`:
     "olla-anthropic": {
       "type": "anthropic",
       "base_url": "http://localhost:40114/olla/anthropic/v1",
-      "api_key": "not-required"
+      "api_key": "not-required",
+      "models": [
+        { "id": "llama3.2:latest", "name": "Llama 3.2" }
+      ]
     }
+  },
+  "models": {
+    "large": { "model": "llama3.2:latest", "provider": "olla-anthropic" },
+    "small": { "model": "llama3.2:latest", "provider": "olla-anthropic" }
   }
 }
 ```
@@ -700,9 +720,9 @@ Translation quality depends on backend capabilities:
 
 ### Translation Limitations
 
-- **Token Counting**: Cannot pre-count tokens before request
-  - Anthropic's `count_tokens` endpoint not implemented
-  - Use backend's reported token counts after generation
+- **Token Counting**: Olla exposes `/olla/anthropic/v1/messages/count_tokens` using local translator estimation
+  - Backend profile `token_count` metadata describes native backend support, but Olla does not currently proxy native backend token-count endpoints
+  - Use backend-reported token counts after generation for exact usage
 
 - **Error Messages**: Backend errors translated to Anthropic format
   - Original error context may be lost
@@ -926,8 +946,10 @@ Translation quality depends on backend capabilities:
 
    If either is `false`, Olla falls back to translation mode.
 
-4. **Check all endpoints support passthrough**:
-   Passthrough mode requires that all healthy endpoints' profiles declare `anthropic_support.enabled: true`. If any endpoint lacks native support, Olla falls back to translation for consistency.
+4. **Check that at least one compatible endpoint supports passthrough**:
+   Mixed deployments are supported. Olla filters to healthy endpoints whose profiles declare `anthropic_support.enabled: true` and can passthrough to that capable subset. If no compatible endpoint remains, it falls back to translation.
+
+   The capable subset should use the same native `anthropic_support.messages_path`. In v0.0.28, Olla sets one backend target path before proxy endpoint selection, so a single passthrough fleet should not combine different native message paths such as Docker Model Runner's `/anthropic/v1/messages` and vLLM's `/v1/messages`.
 
 5. **Enable debug logging** to see mode selection:
    ```yaml
@@ -1043,7 +1065,7 @@ api:
 |-------|------|----------|-------------|
 | `enabled` | boolean | Yes | Whether the backend supports native Anthropic format |
 | `messages_path` | string | Yes | Backend path for the Anthropic Messages API |
-| `token_count` | boolean | No | Whether `/v1/messages/count_tokens` is supported |
+| `token_count` | boolean | No | Whether the backend/profile advertises native token-count support. Olla's `/olla/anthropic/v1/messages/count_tokens` currently uses local translator estimation rather than proxying this backend endpoint. |
 | `min_version` | string | No | Minimum backend version with Anthropic support |
 | `limitations` | list | No | Known limitations (e.g., `no_token_counting`) |
 

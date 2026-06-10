@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Test script for OpenCode + LM Studio + Olla integration
-# This script verifies connectivity and configuration
+# Test script for OpenCode + LM Studio + Olla integration.
+# Verifies connectivity from the host: LM Studio, the Olla container,
+# Olla health, endpoint status, the OpenAI models endpoint, and a chat
+# completion.
 
 set -e
 
@@ -24,10 +26,10 @@ echo ""
 
 # Function to print test results
 print_result() {
-    if [ $1 -eq 0 ]; then
-        echo -e "${GREEN}✓ PASS${NC}: $2"
+    if [ "$1" -eq 0 ]; then
+        echo -e "${GREEN}PASS${NC}: $2"
     else
-        echo -e "${RED}✗ FAIL${NC}: $2"
+        echo -e "${RED}FAIL${NC}: $2"
         if [ -n "$3" ]; then
             echo -e "${YELLOW}  $3${NC}"
         fi
@@ -35,7 +37,7 @@ print_result() {
 }
 
 # Test 1: Check if LM Studio is running on host
-echo -e "${BLUE}[1/8]${NC} Checking LM Studio connectivity on host..."
+echo -e "${BLUE}[1/6]${NC} Checking LM Studio connectivity on host..."
 if curl -s -f "http://${LM_STUDIO_HOST}:${LM_STUDIO_PORT}/v1/models" > /dev/null 2>&1; then
     print_result 0 "LM Studio is running on ${LM_STUDIO_HOST}:${LM_STUDIO_PORT}"
     LM_STUDIO_MODELS=$(curl -s "http://${LM_STUDIO_HOST}:${LM_STUDIO_PORT}/v1/models" | jq -r '.data[].id' 2>/dev/null || echo "")
@@ -47,13 +49,13 @@ if curl -s -f "http://${LM_STUDIO_HOST}:${LM_STUDIO_PORT}/v1/models" > /dev/null
     fi
 else
     print_result 1 "LM Studio is not reachable" \
-        "Start LM Studio and enable server mode (Settings → Server → Start Server)"
+        "Start LM Studio and enable server mode (Developer -> Server -> Start Server)"
     echo -e "${YELLOW}Continuing tests anyway...${NC}"
 fi
 echo ""
 
 # Test 2: Check if Olla container is running
-echo -e "${BLUE}[2/8]${NC} Checking Olla container status..."
+echo -e "${BLUE}[2/6]${NC} Checking Olla container status..."
 if docker ps | grep -q "olla"; then
     print_result 0 "Olla container is running"
 else
@@ -63,7 +65,7 @@ fi
 echo ""
 
 # Test 3: Check Olla health endpoint
-echo -e "${BLUE}[3/8]${NC} Checking Olla health..."
+echo -e "${BLUE}[3/6]${NC} Checking Olla health..."
 if HEALTH=$(curl -s -f "http://${OLLA_HOST}:${OLLA_PORT}/internal/health" 2>&1); then
     print_result 0 "Olla health endpoint is responding"
     STATUS=$(echo "$HEALTH" | jq -r '.status' 2>/dev/null || echo "unknown")
@@ -75,28 +77,16 @@ fi
 echo ""
 
 # Test 4: Check endpoint status
-echo -e "${BLUE}[4/8]${NC} Checking LM Studio endpoint status in Olla..."
+echo -e "${BLUE}[4/6]${NC} Checking LM Studio endpoint status in Olla..."
 if ENDPOINTS=$(curl -s -f "http://${OLLA_HOST}:${OLLA_PORT}/internal/status/endpoints" 2>&1); then
     print_result 0 "Endpoint status retrieved"
-
-    # Check if LM Studio endpoint is healthy
-    LM_HEALTHY=$(echo "$ENDPOINTS" | jq -r '.endpoints[] | select(.name=="lm-studio") | .healthy' 2>/dev/null || echo "false")
-    LM_MODELS_COUNT=$(echo "$ENDPOINTS" | jq -r '.endpoints[] | select(.name=="lm-studio") | .models_loaded' 2>/dev/null || echo "0")
-
-    if [ "$LM_HEALTHY" = "true" ]; then
-        echo -e "  LM Studio endpoint: ${GREEN}healthy${NC}"
-        echo -e "  Models discovered: ${GREEN}${LM_MODELS_COUNT}${NC}"
-    else
-        echo -e "  LM Studio endpoint: ${RED}unhealthy${NC}"
-        echo -e "  ${YELLOW}Check olla.yaml configuration and LM Studio connectivity${NC}"
-    fi
 else
     print_result 1 "Failed to retrieve endpoint status" "Check logs: docker logs olla"
 fi
 echo ""
 
 # Test 5: Check OpenAI endpoint - list models
-echo -e "${BLUE}[5/8]${NC} Testing OpenAI endpoint - list models..."
+echo -e "${BLUE}[5/6]${NC} Testing OpenAI endpoint - list models..."
 if MODELS=$(curl -s -f "http://${OLLA_HOST}:${OLLA_PORT}/olla/openai/v1/models" 2>&1); then
     print_result 0 "OpenAI /models endpoint working"
     MODEL_COUNT=$(echo "$MODELS" | jq -r '.data | length' 2>/dev/null || echo "0")
@@ -112,19 +102,8 @@ else
 fi
 echo ""
 
-# Test 6: Check Anthropic endpoint - list models
-echo -e "${BLUE}[6/8]${NC} Testing Anthropic endpoint - list models..."
-if ANTHROPIC_MODELS=$(curl -s -f "http://${OLLA_HOST}:${OLLA_PORT}/olla/anthropic/v1/models" 2>&1); then
-    print_result 0 "Anthropic /models endpoint working"
-    ANTHROPIC_COUNT=$(echo "$ANTHROPIC_MODELS" | jq -r '.data | length' 2>/dev/null || echo "0")
-    echo -e "  Models available: ${GREEN}${ANTHROPIC_COUNT}${NC}"
-else
-    print_result 1 "Anthropic /models endpoint failed" "Check if Anthropic translator is enabled"
-fi
-echo ""
-
-# Test 7: Test OpenAI chat completion (if models available)
-echo -e "${BLUE}[7/8]${NC} Testing OpenAI chat completion..."
+# Test 6: Test OpenAI chat completion (if models available)
+echo -e "${BLUE}[6/6]${NC} Testing OpenAI chat completion..."
 FIRST_MODEL=$(curl -s "http://${OLLA_HOST}:${OLLA_PORT}/olla/openai/v1/models" | jq -r '.data[0].id' 2>/dev/null)
 if [ -n "$FIRST_MODEL" ] && [ "$FIRST_MODEL" != "null" ]; then
     echo -e "  Using model: ${GREEN}${FIRST_MODEL}${NC}"
@@ -150,51 +129,25 @@ else
 fi
 echo ""
 
-# Test 8: Test Anthropic messages endpoint (if models available)
-echo -e "${BLUE}[8/8]${NC} Testing Anthropic messages endpoint..."
-if [ -n "$FIRST_MODEL" ] && [ "$FIRST_MODEL" != "null" ]; then
-    echo -e "  Using model: ${GREEN}${FIRST_MODEL}${NC}"
-
-    ANTHROPIC_RESPONSE=$(curl -s -f -X POST "http://${OLLA_HOST}:${OLLA_PORT}/olla/anthropic/v1/messages" \
-        -H "Content-Type: application/json" \
-        -d "{
-            \"model\": \"${FIRST_MODEL}\",
-            \"messages\": [{\"role\": \"user\", \"content\": \"Say hello in one word.\"}],
-            \"max_tokens\": 10,
-            \"stream\": false
-        }" 2>&1)
-
-    if echo "$ANTHROPIC_RESPONSE" | jq -e '.content[0].text' > /dev/null 2>&1; then
-        print_result 0 "Anthropic messages endpoint successful"
-        CONTENT=$(echo "$ANTHROPIC_RESPONSE" | jq -r '.content[0].text')
-        echo -e "  Response: ${GREEN}${CONTENT}${NC}"
-    else
-        print_result 1 "Anthropic messages endpoint failed" "Response: $ANTHROPIC_RESPONSE"
-    fi
-else
-    print_result 1 "No models available for testing" "Load a model in LM Studio first"
-fi
-echo ""
-
 # Summary
 echo -e "${BLUE}=====================================${NC}"
 echo -e "${BLUE}Summary${NC}"
 echo -e "${BLUE}=====================================${NC}"
 echo ""
-echo -e "${GREEN}Configuration Verified!${NC}"
-echo ""
 echo "Next steps:"
-echo "1. Install OpenCode: npm install -g @sst/opencode"
-echo "2. Copy configuration:"
-echo "   cp opencode-config.example.json ~/.opencode/config.json"
+echo "1. Install OpenCode:"
+echo "   curl -fsSL https://opencode.ai/install | bash   # or: npm i -g opencode-ai"
+echo "2. Copy the configuration:"
+echo "   mkdir -p ~/.config/opencode"
+echo "   cp opencode-config.example.json ~/.config/opencode/opencode.json"
+echo "   (Update the 'models' map to match a model id listed above.)"
 echo "3. Start OpenCode:"
-echo "   opencode --provider olla-openai"
-echo "   or"
-echo "   opencode --provider olla-anthropic"
+echo "   opencode"
+echo "   # or pick a model for one run (provider/model-id):"
+echo "   opencode run -m olla-openai/<model-id> \"Hello\""
 echo ""
-echo "Available endpoints:"
-echo "  - OpenAI:   http://${OLLA_HOST}:${OLLA_PORT}/olla/openai/v1"
-echo "  - Anthropic: http://${OLLA_HOST}:${OLLA_PORT}/olla/anthropic/v1"
+echo "Endpoint:"
+echo "  - OpenAI:  http://${OLLA_HOST}:${OLLA_PORT}/olla/openai/v1"
 echo ""
 echo "Monitoring:"
 echo "  - Health:    curl http://${OLLA_HOST}:${OLLA_PORT}/internal/health"

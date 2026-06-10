@@ -87,21 +87,23 @@ LocalAI and Olla work perfectly together:
 ### High Availability LocalAI
 ```yaml
 # Olla config for multiple LocalAI instances
-endpoints:
-  - name: localai-gpu
-    url: http://gpu-server:8080
-    priority: 1
-    type: openai-compatible  # or "openai" — accepted alias
-  
-  - name: localai-cpu
-    url: http://cpu-server:8080
-    priority: 2
-    type: openai-compatible
-  
-  - name: ollama-backup
-    url: http://ollama:11434
-    priority: 3
-    type: ollama
+discovery:
+  static:
+    endpoints:
+      - name: localai-gpu
+        url: http://gpu-server:8080
+        priority: 1
+        type: openai-compatible  # or "openai" - accepted alias
+
+      - name: localai-cpu
+        url: http://cpu-server:8080
+        priority: 2
+        type: openai-compatible
+
+      - name: ollama-backup
+        url: http://ollama:11434
+        priority: 3
+        type: ollama
 ```
 
 ### Benefits:
@@ -129,31 +131,40 @@ LocalAI  LocalAI  Ollama
 ### Scenario 2: Mixed Model Types
 ```yaml
 # Route different requests to specialised endpoints
-endpoints:
-  - name: localai-llm
-    url: http://localhost:8080
-    priority: 1  # For LLM requests
-    
-  - name: localai-whisper
-    url: http://localhost:8081
-    priority: 1  # For STT requests
-    
-  - name: ollama-coding
-    url: http://localhost:11434
-    priority: 1  # For code models
+discovery:
+  static:
+    endpoints:
+      - name: localai-llm
+        url: http://localhost:8080
+        type: openai-compatible
+        priority: 1  # For LLM requests
+
+      - name: localai-whisper
+        url: http://localhost:8081
+        type: openai-compatible
+        priority: 1  # For STT requests
+
+      - name: ollama-coding
+        url: http://localhost:11434
+        type: ollama
+        priority: 1  # For code models
 ```
 
 ### Scenario 3: Development Environment
 ```yaml
 # Developers get automatic failover
-endpoints:
-  - name: localai-local
-    url: http://localhost:8080
-    priority: 1
-    
-  - name: localai-shared
-    url: http://team-server:8080
-    priority: 2
+discovery:
+  static:
+    endpoints:
+      - name: localai-local
+        url: http://localhost:8080
+        type: openai-compatible
+        priority: 1
+
+      - name: localai-shared
+        url: http://team-server:8080
+        type: openai-compatible
+        priority: 2
 ```
 
 ## Integration Patterns
@@ -162,25 +173,33 @@ endpoints:
 ```yaml
 # Use LocalAI for OpenAI compatibility
 # Use Olla for high availability
-endpoints:
-  - name: localai-primary
-    url: http://localai1:8080
-    priority: 1
-  - name: localai-secondary
-    url: http://localai2:8080
-    priority: 1  # Round-robin between both
+discovery:
+  static:
+    endpoints:
+      - name: localai-primary
+        url: http://localai1:8080
+        type: openai-compatible
+        priority: 1
+      - name: localai-secondary
+        url: http://localai2:8080
+        type: openai-compatible
+        priority: 1  # Round-robin between both
 ```
 
 ### Pattern 2: Model-Specific Routing
 ```yaml
 # Different LocalAI instances for different models
-endpoints:
-  - name: localai-llama
-    url: http://llama-server:8080
-    priority: 1
-  - name: localai-mistral
-    url: http://mistral-server:8080
-    priority: 1
+discovery:
+  static:
+    endpoints:
+      - name: localai-llama
+        url: http://llama-server:8080
+        type: openai-compatible
+        priority: 1
+      - name: localai-mistral
+        url: http://mistral-server:8080
+        type: openai-compatible
+        priority: 1
 ```
 
 ## Performance Considerations
@@ -222,23 +241,31 @@ A: Yes! Olla routes any HTTP endpoint, including all LocalAI's capabilities.
 
 ### Example Migration Config
 ```yaml
-# Start with existing LocalAI
-endpoints:
-  - name: existing-localai
-    url: http://localhost:8080
-    priority: 1
+# Phase 1: start with existing LocalAI
+discovery:
+  static:
+    endpoints:
+      - name: existing-localai
+        url: http://localhost:8080
+        type: openai-compatible
+        priority: 1
 
-# Later add redundancy across local instances
-endpoints:
-  - name: localai-primary
-    url: http://localhost:8080
-    priority: 1
-  - name: localai-backup
-    url: http://backup:8080
-    priority: 2
-  - name: localai-extra
-    url: http://extra-node:8080
-    priority: 10
+# Phase 2: add redundancy across local instances
+# discovery:
+#   static:
+#     endpoints:
+#       - name: localai-primary
+#         url: http://localhost:8080
+#         type: openai-compatible
+#         priority: 1
+#       - name: localai-backup
+#         url: http://backup:8080
+#         type: openai-compatible
+#         priority: 2
+#       - name: localai-extra
+#         url: http://extra-node:8080
+#         type: openai-compatible
+#         priority: 10
 ```
 
 ## Complementary Features

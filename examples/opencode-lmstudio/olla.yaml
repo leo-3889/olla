@@ -1,12 +1,16 @@
-# Olla Configuration for OpenCode + LM Studio Integration
-# This configuration enables both OpenAI and Anthropic API formats
-# for use with OpenCode via LM Studio running on the host machine.
+# Olla configuration for OpenCode + LM Studio
+#
+# OpenCode talks to Olla's OpenAI-compatible endpoint
+# (http://localhost:40114/olla/openai/v1) and Olla proxies to LM Studio
+# running on the host machine. The Anthropic translator is left enabled so
+# the /olla/anthropic/v1 endpoint is available too (LM Studio has native
+# Anthropic support, so those requests are passed through, not translated).
 
 server:
   host: "0.0.0.0"
   port: 40114
   read_timeout: 30s
-  write_timeout: 0s # For LLM streaming, leave this as 0s
+  write_timeout: 0s # for LLM streaming, leave this as 0s
   shutdown_timeout: 10s
   request_logging: true
   request_limits:
@@ -29,14 +33,14 @@ server:
     ]
 
 proxy:
-  engine: "sherpa" # Available: sherpa, olla
+  engine: "olla" # Available: sherpa, olla (olla is the default, high-performance engine)
   connection_timeout: 40s
   response_timeout: 900s  # 15 minutes for longer generations
   read_timeout: 300s
-  max_retries: 3
-  retry_backoff: 500ms
   load_balancer: "priority" # Available: round-robin, least-connections, priority
   stream_buffer_size: 8192
+  # Note: retry is automatic and tuned internally; there is no max_retries /
+  # retry_backoff to set here.
 
 discovery:
   type: "static"
@@ -45,28 +49,28 @@ discovery:
     endpoints:
       # LM Studio endpoint - adjust URL based on your platform
       #
-      # Windows/Mac: Use host.docker.internal
+      # Windows/Mac: use host.docker.internal to reach the host
       - url: "http://host.docker.internal:1234"
         name: "lm-studio"
-        type: "lmstudio"
+        type: "lm-studio"
         priority: 100
         model_url: "/api/v0/models"
         health_check_url: "/v1/models"
         check_interval: 2s
         check_timeout: 1s
 
-      # Linux: Use Docker bridge IP (uncomment and comment above if on Linux)
+      # Linux: use the Docker bridge IP (uncomment and comment above if on Linux)
       # - url: "http://172.17.0.1:1234"
       #   name: "lm-studio"
-      #   type: "lmstudio"
+      #   type: "lm-studio"
       #   priority: 100
       #   model_url: "/api/v0/models"
       #   health_check_url: "/v1/models"
       #   check_interval: 2s
       #   check_timeout: 1s
 
-      # Note: LM Studio typically runs on port 1234
-      # Ensure LM Studio server is enabled in Settings → Server → Start Server
+      # Note: LM Studio typically runs on port 1234.
+      # Enable the server in Developer -> Server -> Start Server.
 
   model_discovery:
     enabled: true
@@ -81,11 +85,11 @@ model_registry:
   enable_unifier: true
   unification:
     enabled: true
-    stale_threshold: 24h  # How long to keep models in memory after last seen
-    cleanup_interval: 10m  # How often to check for stale models
+    stale_threshold: 24h  # how long to keep models in memory after last seen
+    cleanup_interval: 10m  # how often to check for stale models
 
-# Anthropic translator configuration
-# This enables OpenCode to use the Anthropic Messages API format
+# Anthropic Messages API translation (enabled by default).
+# Leave this on so the /olla/anthropic/v1 endpoint is also available.
 translators:
   anthropic:
     enabled: true

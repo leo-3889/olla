@@ -1,19 +1,18 @@
 # OpenAI-Compatible API
 
-Proxy endpoints for OpenAI-compatible local inference backends (LocalAI, vLLM, llama.cpp, LM Studio, etc.). Available through the `/olla/openai/` and `/olla/openai-compatible/` prefixes — both route through the same `openai-compatible` profile.
+Proxy endpoints for OpenAI-compatible local inference backends (LocalAI, vLLM, llama.cpp, LM Studio, etc.). Available through the `/olla/openai/` and `/olla/openai-compatible/` prefixes; both route through the same `openai-compatible` profile.
 
 ## Endpoints Overview
 
+The model-listing endpoint is explicitly registered. All other paths under `/olla/openai/` are transparently proxied to the configured backend via a catch-all handler.
+
 | Method | URI | Description |
 |--------|-----|-------------|
-| GET | `/olla/openai/v1/models` | List available models |
-| POST | `/olla/openai/v1/chat/completions` | Chat completion |
-| POST | `/olla/openai/v1/completions` | Text completion |
-| POST | `/olla/openai/v1/embeddings` | Generate embeddings |
-| POST | `/olla/openai/v1/images/generations` | Generate images |
-| POST | `/olla/openai/v1/audio/transcriptions` | Transcribe audio |
-| POST | `/olla/openai/v1/audio/translations` | Translate audio |
-| POST | `/olla/openai/v1/moderations` | Content moderation |
+| GET | `/olla/openai/v1/models` | List available models (explicitly registered) |
+| POST | `/olla/openai/v1/chat/completions` | Chat completion (proxied) |
+| POST | `/olla/openai/v1/completions` | Text completion (proxied) |
+| POST | `/olla/openai/v1/embeddings` | Generate embeddings (proxied) |
+| `*` | `/olla/openai/*` | Any other path proxied transparently to backend |
 
 ---
 
@@ -337,12 +336,14 @@ curl -X POST http://localhost:40114/olla/openai/v1/images/generations \
 The Authorization header is forwarded to the backend as-is. For most local backends no key is required, but if your backend expects one you can pass it through:
 
 ```yaml
-endpoints:
-  - url: "http://localhost:8080"
-    name: "my-openai-compatible-backend"
-    type: "openai-compatible"  # or "openai" — both are accepted aliases
-    headers:
-      Authorization: "Bearer ${API_KEY}"
+discovery:
+  static:
+    endpoints:
+      - url: "http://localhost:8080"
+        name: "my-openai-compatible-backend"
+        type: "openai-compatible"  # or "openai" - both are accepted aliases
+        headers:
+          Authorization: "Bearer ${API_KEY}"
 ```
 
 ## Rate Limits
@@ -355,7 +356,7 @@ OpenAI rate limits are enforced by the backend service. Olla adds its own config
 
 ## Error Handling
 
-OpenAI errors are forwarded with additional context:
+OpenAI errors are forwarded unchanged. Olla does not inject additional fields into the response body:
 
 ```json
 {
@@ -364,11 +365,6 @@ OpenAI errors are forwarded with additional context:
     "type": "invalid_request_error",
     "param": null,
     "code": "invalid_api_key"
-  },
-  "olla_context": {
-    "endpoint": "openai-production",
-    "request_id": "req_abc123",
-    "timestamp": "2024-01-15T10:30:00Z"
   }
 }
 ```

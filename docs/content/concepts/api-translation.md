@@ -247,7 +247,7 @@ The translator performs semantic mapping for tool choice parameters:
 
 ### What is Passthrough?
 
-Passthrough mode is an optimisation that bypasses the translation pipeline entirely when a backend natively supports the incoming request format. For example, vLLM (v0.11.1+), llama.cpp (b4847+), LM Studio (v0.4.1+), and Ollama (v0.14.0+) all natively support the Anthropic Messages API. When Olla detects a compatible backend, it forwards the request directly without any Anthropic-to-OpenAI-and-back conversion.
+Passthrough mode is an optimisation that bypasses the translation pipeline entirely when a backend natively supports the incoming request format. For example, vLLM (v0.11.1+), vLLM-MLX, llama.cpp (b4847+), LM Studio (v0.4.1+), Ollama (v0.14.0+), oMLX (v0.4.2+), and Docker Model Runner all natively support the Anthropic Messages API. When Olla detects a compatible backend, it forwards the request directly without any Anthropic-to-OpenAI-and-back conversion.
 
 **Key Benefit**: Zero translation overhead -- requests are forwarded as-is, preserving the original wire format.
 
@@ -273,8 +273,8 @@ flowchart TD
 2. Olla checks whether the translator implements `PassthroughCapable`
 3. If yes, checks whether `passthrough_enabled` is `true` in the translator config
 4. If yes, checks available endpoints against their profile configurations
-5. If **all** endpoints' profiles have `anthropic_support.enabled: true`, passthrough mode is used
-6. If any endpoint does not support passthrough, falls back to translation mode automatically
+5. Filters available endpoints to those whose profiles have `anthropic_support.enabled: true`
+6. If at least one capable endpoint remains, passthrough mode is used for that capable subset; otherwise Olla falls back to translation mode automatically
 
 ### Passthrough vs Translation Comparison
 
@@ -295,9 +295,12 @@ Backends that support passthrough (native Anthropic Messages API):
 | Backend | Min Version | Token Counting | Profile Config |
 |---------|-------------|----------------|----------------|
 | vLLM | v0.11.1+ | No | `config/profiles/vllm.yaml` |
+| vLLM-MLX | recent | Yes | `config/profiles/vllm-mlx.yaml` |
 | llama.cpp | b4847+ | Yes | `config/profiles/llamacpp.yaml` |
 | LM Studio | v0.4.1+ | No | `config/profiles/lmstudio.yaml` |
 | Ollama | v0.14.0+ | No | `config/profiles/ollama.yaml` |
+| oMLX | v0.4.2+ | No (not yet forwarded) | `config/profiles/omlx.yaml` |
+| Docker Model Runner | recent | Yes | `config/profiles/dmr.yaml` |
 
 ### Backend Profile Configuration
 
@@ -319,7 +322,7 @@ api:
 |-------|------|-------------|
 | `enabled` | boolean | Whether the backend supports native Anthropic format |
 | `messages_path` | string | Backend path for the Messages API (e.g., `/v1/messages`) |
-| `token_count` | boolean | Whether the backend supports `/v1/messages/count_tokens` |
+| `token_count` | boolean | Whether the backend/profile advertises native token-count support. Olla's `/olla/anthropic/v1/messages/count_tokens` currently uses local translator estimation rather than proxying this backend endpoint. |
 | `min_version` | string | Minimum backend version with Anthropic support |
 | `limitations` | list | Known limitations (e.g., `no_token_counting`, `token_counting_404`) |
 
@@ -331,7 +334,7 @@ When passthrough is not possible, Olla falls back to translation mode automatica
 |----------------|-------------|
 | `no_compatible_endpoints` | No healthy endpoints available |
 | `translator_does_not_support_passthrough` | Translator lacks `PassthroughCapable` interface |
-| `cannot_passthrough` | Endpoints don't declare native Anthropic support |
+| `cannot_passthrough` | No compatible endpoint declares native Anthropic support |
 
 ### Observability
 
@@ -424,6 +427,9 @@ internal/
 6. Backend responds in native Anthropic format
 7. Response returned to client as-is
 
+!!! important "Mixed passthrough paths"
+    Olla can use passthrough against the capable subset of a mixed deployment, so endpoints without native Anthropic support can still coexist and use translation. In v0.0.28, however, Olla chooses one backend target path before proxy endpoint selection. Do not mix passthrough-capable backend types with different `anthropic_support.messages_path` values in the same fleet, such as Docker Model Runner (`/anthropic/v1/messages`) and vLLM (`/v1/messages`), unless you partition the fleet or disable passthrough for one side.
+
 ### Memory Optimisation
 
 The translator uses buffer pooling to minimise memory allocations:
@@ -496,7 +502,7 @@ Easy to add new translations:
 - Proportional to content size for vision models
 - Buffer pool reduces allocation overhead
 
-**Recommendation**: Use passthrough mode when backends support native Anthropic format (vLLM, llama.cpp, LM Studio, Ollama) for zero translation overhead. Use native endpoints when translation isn't needed for maximum performance.
+**Recommendation**: Use passthrough mode when backends support native Anthropic format (vLLM, vLLM-MLX, llama.cpp, LM Studio, Ollama, oMLX, Docker Model Runner) for zero translation overhead. Use native endpoints when translation isn't needed for maximum performance.
 
 ### Feature Parity
 
@@ -677,10 +683,7 @@ discovery:
    ```
 
 3. **Connection Pooling**:
-   ```yaml
-   proxy:
-     max_connections_per_endpoint: 100
-   ```
+   The Olla proxy engine maintains per-endpoint connection pools automatically. Pool sizes are not currently configurable via YAML.
 
 4. **Local Backends**:
    - Prefer Ollama/LM Studio on same machine
@@ -733,7 +736,7 @@ discovery:
 
 - `passthrough_enabled` is `false` in the translator config
 - Backend profile does not declare `api.anthropic_support.enabled: true`
-- Not all healthy endpoints support native Anthropic format
+- No healthy compatible endpoint supports native Anthropic format
 
 **Solutions**:
 

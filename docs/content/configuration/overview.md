@@ -70,15 +70,16 @@ The first file found is merged on top of the built-in defaults. Only one YAML fi
 
 ## Configuration Structure
 
-The configuration file is organised into six main sections:
+The configuration file is organised into seven main sections:
 
 ```yaml
-server:    # HTTP server and security settings
-proxy:     # Proxy engine and behaviour
-discovery: # Endpoint discovery and health checking
+server:         # HTTP server and security settings
+proxy:          # Proxy engine and behaviour
+discovery:      # Endpoint discovery and health checking
 model_registry: # Model management and unification
-logging:   # Logging configuration
-engineering: # Advanced debugging features
+translators:    # API translation (e.g., Anthropic Messages API)
+logging:        # Logging configuration
+engineering:    # Advanced debugging features
 ```
 
 ## Server Configuration
@@ -89,11 +90,11 @@ The `server` section controls the HTTP server, security and rate limiting.
 server:
   host: "localhost"  # Bind address (use 0.0.0.0 for all interfaces)
   port: 40114        # Listen port (4-OLLA)
-  read_timeout: 20s
+  read_timeout: 30s
   write_timeout: 0s  # Keep at 0s for streaming
   shutdown_timeout: 10s
   # idle_timeout: 120s  # Optional: connection idle timeout (default: no timeout)
-  request_logging: false # Enable HTTP request logging
+  request_logging: true  # Log HTTP requests (default: true; set false to reduce noise)
 ```
 
 Key settings:
@@ -111,8 +112,8 @@ Control the maximum size of incoming requests:
 ```yaml
 server:
   request_limits:
-    max_body_size: 52428800  # 50MB
-    max_header_size: 524288  # 512KB
+    max_body_size: 104857600  # 100MB
+    max_header_size: 1048576  # 1MB
 ```
 
 ### Rate Limiting
@@ -167,13 +168,13 @@ The `proxy` section controls request routing and proxy behaviour.
 
 ```yaml
 proxy:
-  engine: "sherpa"            # sherpa or olla
-  profile: "auto"             # auto, streaming or standard
-  load_balancer: "priority"   # priority, round-robin or least-connections
-  connection_timeout: 30s     # Timeout for establishing connections
-  response_timeout: 600s      # Timeout for complete response (10 minutes)
-  read_timeout: 120s         # Timeout for reading response chunks
-  stream_buffer_size: 8192   # Buffer size for streaming responses (8KB)
+  engine: "olla"                    # olla (default) or sherpa
+  profile: "auto"                   # auto, streaming or standard
+  load_balancer: "least-connections" # least-connections, priority, or round-robin
+  connection_timeout: 60s           # Timeout for establishing connections
+  response_timeout: 15m             # Timeout for complete response
+  read_timeout: 10m                 # Timeout for reading response chunks
+  stream_buffer_size: 8192          # Buffer size for streaming responses (8KB)
 ```
 
 ### Proxy Settings
@@ -182,9 +183,9 @@ Key timeout and retry settings:
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| **connection_timeout** | Time to establish TCP connection | `30s` |
-| **response_timeout** | Maximum time for complete response | `600s` |
-| **read_timeout** | Time to wait for response chunks | `120s` |
+| **connection_timeout** | Time to establish TCP connection | `60s` |
+| **response_timeout** | Maximum time for complete response | `15m` |
+| **read_timeout** | Time to wait for response chunks | `10m` |
 | **stream_buffer_size** | Buffer size for SSE streaming | `8192` |
 
 > **ℹ️ Automatic Retry Behaviour**
@@ -336,6 +337,20 @@ Unification creates a single model catalogue across endpoints of the same type:
 
 See **[Model Unification](../concepts/model-unification.md)** for deduplication strategies, routing, and monitoring.
 
+## Translators Configuration
+
+The `translators` section enables API format translation. Currently only the Anthropic translator is supported; it allows Claude-compatible clients to reach OpenAI-compatible backends.
+
+```yaml
+translators:
+  anthropic:
+    enabled: true              # Mount the /olla/anthropic/v1/* endpoints
+    passthrough_enabled: true  # Forward directly to backends with native Anthropic support
+    max_message_size: 10485760 # 10MB request body limit
+```
+
+See [Configuration Reference](reference.md#translators-configuration) for the full field reference, including the inspector sub-section.
+
 ## Logging Configuration
 
 Control Olla's logging output:
@@ -374,15 +389,18 @@ When enabled, displays:
 
 ## Environment Variables
 
-All configuration values can be overridden with environment variables:
+A curated set of configuration values can be overridden with environment variables:
 
 ```bash
 OLLA_SERVER_PORT=8080
 OLLA_PROXY_ENGINE=olla
-OLLA_LOG_LEVEL=debug
+OLLA_LOGGING_LEVEL=debug
 ```
 
-Pattern: `OLLA_<SECTION>_<KEY>` in uppercase with underscores.
+!!! note "Two logging variable sets"
+    `OLLA_LOG_LEVEL` controls the **bootstrap logger** (active before the config file is parsed). `OLLA_LOGGING_LEVEL` overrides `logging.level` from the YAML config and controls the **runtime logger**. For most uses, set `OLLA_LOGGING_LEVEL`. See [Environment Variables](reference.md#environment-variables) for the full list.
+
+Pattern: Environment variables are hand-mapped in `internal/config/config.go`; arbitrary `OLLA_*` names are not auto-derived from YAML paths.
 
 ## Validation
 

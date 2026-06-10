@@ -62,8 +62,8 @@ Application → LiteLLM → Provider APIs
 | Circuit breakers | ✅ | ❌ |
 | Health monitoring | ✅ Continuous | ⚠️ On-request |
 | **API Management** | | |
-| API translation | ❌ | ✅ Extensive |
-| Provider auth | ❌ | ✅ |
+| API translation | ⚠️ Anthropic only | ✅ Extensive (100+ providers) |
+| Provider auth | ✅ Outbound (v0.0.28+) | ✅ |
 | Cost tracking | ❌ | ✅ |
 | Rate limit handling | ✅ Internal | ✅ Provider-aware |
 | **Performance** | | |
@@ -101,20 +101,22 @@ With Olla's **native LiteLLM support**, integration is seamless:
 ### Native Integration (Recommended)
 ```yaml
 # Olla config with native LiteLLM support
-endpoints:
-  # Local models (high priority)
-  - name: local-ollama
-    url: http://localhost:11434
-    type: ollama
-    priority: 100
-    
-  # LiteLLM gateway (native support)
-  - name: litellm-gateway
-    url: http://localhost:4000
-    type: litellm  # Native LiteLLM profile
-    priority: 75
-    model_url: /v1/models
-    health_check_url: /health
+discovery:
+  static:
+    endpoints:
+      # Local models (high priority)
+      - name: local-ollama
+        url: http://localhost:11434
+        type: ollama
+        priority: 100
+
+      # LiteLLM gateway (native support)
+      - name: litellm-gateway
+        url: http://localhost:4000
+        type: litellm  # Native LiteLLM profile
+        priority: 75
+        model_url: /v1/models
+        health_check_url: /health
 ```
 
 **Benefits**:
@@ -143,25 +145,33 @@ Applications
 ### Home Lab with Cloud Fallback
 ```yaml
 # Use Olla to manage local + LiteLLM for cloud
-endpoints:
-  - name: local-3090
-    url: http://localhost:11434
-    priority: 1
-  - name: litellm-cloud
-    url: http://localhost:4000  # LiteLLM with OpenAI/Anthropic
-    priority: 10  # Only use when local is down
+discovery:
+  static:
+    endpoints:
+      - name: local-3090
+        url: http://localhost:11434
+        type: ollama
+        priority: 1
+      - name: litellm-cloud
+        url: http://localhost:4000  # LiteLLM with OpenAI/Anthropic
+        type: litellm
+        priority: 10  # Only use when local is down
 ```
 
 ### Enterprise Multi-Region
 ```yaml
 # Olla provides geographic routing
-endpoints:
-  - name: sydney-litellm
-    url: http://syd-litellm:8000
-    priority: 1
-  - name: melbourne-litellm
-    url: http://mel-litellm:8000
-    priority: 2
+discovery:
+  static:
+    endpoints:
+      - name: sydney-litellm
+        url: http://syd-litellm:8000
+        type: litellm
+        priority: 1
+      - name: melbourne-litellm
+        url: http://mel-litellm:8000
+        type: litellm
+        priority: 2
 ```
 
 ## Performance Considerations
@@ -197,7 +207,7 @@ endpoints:
 ## Common Questions
 
 **Q: Can Olla do API translation like LiteLLM?**
-A: No, Olla focuses on routing and reliability. Use LiteLLM for API translation.
+A: Olla supports Anthropic Messages API translation (Anthropic ↔ OpenAI format) for local backends. For broad multi-provider API translation across 100+ cloud providers, use LiteLLM.
 
 **Q: Can LiteLLM do failover like Olla?**
 A: LiteLLM has basic fallbacks, but lacks Olla's health monitoring, circuit breakers, and sophisticated load balancing.

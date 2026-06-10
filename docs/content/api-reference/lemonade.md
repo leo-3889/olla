@@ -361,14 +361,7 @@ curl http://localhost:40114/internal/health
 **Response:**
 ```json
 {
-  "status": "healthy",
-  "endpoints": {
-    "lemonade-npu": {
-      "url": "http://npu-server:8000",
-      "healthy": true,
-      "last_check": "2025-01-15T10:30:00Z"
-    }
-  }
+  "status": "healthy"
 }
 ```
 

@@ -1,6 +1,6 @@
 # Crush CLI + vLLM Integration Example
 
-This example demonstrates how to set up Crush CLI with Olla as a proxy/load balancer for vLLM high-performance inference engines. Crush CLI supports both OpenAI and Anthropic API formats, giving you the flexibility to switch between providers whilst maintaining a consistent experience.
+This example demonstrates how to set up [Crush CLI](https://github.com/charmbracelet/crush) with Olla as a proxy and load balancer for vLLM high-performance inference. Crush is configured as a custom provider that points at Olla, and the example shows both the OpenAI-compatible and Anthropic provider types so you can route the same vLLM backend through either API format.
 
 ## Architecture
 
@@ -8,9 +8,9 @@ This example demonstrates how to set up Crush CLI with Olla as a proxy/load bala
 ┌─────────────┐    ┌──────────┐    ┌─────────────────┐
 │  Crush CLI  │───▶│   Olla   │───▶│  vLLM Instance  │
 │             │    │(Port     │    │  (Port 8000)    │
-│ OpenAI or   │    │ 40114)   │    │                 │
-│ Anthropic   │    │          │    │ GPU-optimised   │
-│ Provider    │    │          │    │ PagedAttention  │
+│ openai-compat│   │ 40114)   │    │                 │
+│ or anthropic │   │          │    │ GPU-optimised   │
+│ provider     │   │          │    │ PagedAttention  │
 └─────────────┘    └──────────┘    └─────────────────┘
 ```
 
@@ -42,7 +42,7 @@ You should see your GPU listed with CUDA version information.
 ### 2. Start the Stack
 
 ```bash
-# Clone or navigate to the example directory
+# Navigate to the example directory
 cd examples/crush-vllm
 
 # Pull and start services
@@ -63,8 +63,7 @@ vLLM needs time to load the model into GPU memory:
 # Monitor vLLM logs
 docker logs vllm -f
 
-# Wait for this message:
-# "Avg prompt throughput: ... tokens/s, Avg generation throughput: ... tokens/s"
+# Wait for the server to report it is ready to accept requests
 ```
 
 Model loading times:
@@ -82,43 +81,56 @@ curl http://localhost:40114/internal/health
 # Check vLLM health
 curl http://localhost:8000/health
 
-# List available models via Olla
+# List available models via Olla (OpenAI format)
 curl http://localhost:40114/olla/openai/v1/models
 
-# List models via Anthropic endpoint
+# List models via the Anthropic endpoint
 curl http://localhost:40114/olla/anthropic/v1/models
 ```
 
 ### 5. Configure Crush CLI
 
-Create or update your Crush configuration file at `~/.crush/config.json`:
+Crush reads its global config from `~/.config/crush/crush.json`. You can also drop a
+`crush.json` (or `.crush.json`) in your project directory for project-specific config.
 
 ```bash
-# Copy the example configuration
-cp crush-config.example.json ~/.crush/config.json
+# Copy the example configuration to the global config location
+mkdir -p ~/.config/crush
+cp crush-config.example.json ~/.config/crush/crush.json
 
 # Edit the file to match your setup
-# The example includes both OpenAI and Anthropic providers
+# The example defines both an openai-compat and an anthropic provider
 ```
+
+The example config defines two custom providers (`olla-openai` and `olla-anthropic`)
+and selects the large/small models via the top-level `models` block. Both `api_key`
+values are placeholders; Crush requires a non-empty key for custom providers, but Olla
+does not validate it for local use.
 
 ### 6. Use Crush CLI
 
 ```bash
-# Start a chat session with OpenAI provider
-crush chat --provider olla-openai
+# Launch the interactive TUI (uses the large model from the config)
+crush
 
-# Or use Anthropic provider
-crush chat --provider olla-anthropic
+# Run a single non-interactive prompt
+crush run "Explain async/await in Python"
 
-# Switch between providers at any time
-crush model switch olla-anthropic
+# Pick a specific provider/model for a run
+crush run -m olla-openai/meta-llama/Meta-Llama-3.1-8B-Instruct "Write a haiku about GPUs"
 
-# List available models
-crush model list
+# Use the Anthropic provider instead
+crush run -m olla-anthropic/meta-llama/Meta-Llama-3.1-8B-Instruct "Write a haiku about GPUs"
 
-# Set default provider
-crush config set default_provider olla-openai
+# List models known to the configured providers
+crush models
+
+# View logs
+crush logs -f
 ```
+
+Inside the interactive TUI you can switch models with the in-app model picker. To change
+the default model permanently, edit the top-level `models` block in your `crush.json`.
 
 ## Configuration Files
 
@@ -133,8 +145,7 @@ Defines the Docker services:
 
 Olla configuration:
 
-- High-performance engine (`olla`) for optimal throughput
-- Streaming profile for real-time responses
+- High-performance engine (`olla`) with the streaming profile
 - vLLM endpoint discovery and health checks
 - Anthropic translator enabled for dual API support
 
@@ -142,10 +153,9 @@ Olla configuration:
 
 Crush CLI configuration showing:
 
-- Both `olla-openai` and `olla-anthropic` providers
-- Model metadata (context window, cost, capabilities)
-- Provider-specific settings
-- Schema reference to Charm
+- An `olla-openai` provider (`type: openai-compat`) and an `olla-anthropic` provider (`type: anthropic`)
+- A `models` array per provider using catwalk model fields (`id`, `name`, `context_window`, `default_max_tokens`, `cost_per_1m_in`, `cost_per_1m_out`)
+- A top-level `models` block selecting the default `large` and `small` models
 
 ## Model Configuration
 
@@ -163,10 +173,13 @@ services:
 
 Popular models for vLLM:
 
-- `meta-llama/Meta-Llama-3.1-8B-Instruct` (Recommended, 8B params, 8K context)
-- `meta-llama/Meta-Llama-3.2-3B-Instruct` (Smaller, 3B params, 8K context)
-- `mistralai/Mistral-7B-Instruct-v0.3` (7B params, 32K context)
-- `Qwen/Qwen2.5-7B-Instruct` (7B params, 32K context)
+- `meta-llama/Meta-Llama-3.1-8B-Instruct` (Recommended, 8B params)
+- `meta-llama/Meta-Llama-3.2-3B-Instruct` (Smaller, 3B params)
+- `mistralai/Mistral-7B-Instruct-v0.3` (7B params)
+- `Qwen/Qwen2.5-7B-Instruct` (7B params)
+
+If you change the vLLM model, update the model `id` values in `crush-config.example.json`
+and the top-level `models` block to match.
 
 ### GPU Memory Requirements
 
@@ -177,34 +190,18 @@ Popular models for vLLM:
 | 13B | 24-32 GB | RTX 4090, A5000 |
 | 30B+ | 48+ GB | A100, H100 |
 
-## Provider Switching
+## Comparing API Formats
 
-One of Crush CLI's key features is seamless provider switching:
-
-### Switch Providers Mid-Conversation
-
-```bash
-# Start with OpenAI format
-crush chat --provider olla-openai
-
-# Within the chat, switch to Anthropic format
-/model switch olla-anthropic
-
-# Switch back
-/model switch olla-openai
-```
-
-### Compare Response Formats
+Both providers route to the same vLLM backend through Olla. The difference is purely the
+API format used between Crush and Olla.
 
 ```bash
-# Test OpenAI endpoint
-crush chat --provider olla-openai --prompt "Explain async/await in Python"
+# OpenAI-compatible provider
+crush run -m olla-openai/meta-llama/Meta-Llama-3.1-8B-Instruct "Explain async/await in Python"
 
-# Test Anthropic endpoint (same backend!)
-crush chat --provider olla-anthropic --prompt "Explain async/await in Python"
+# Anthropic provider (same backend through Olla's translation/passthrough layer)
+crush run -m olla-anthropic/meta-llama/Meta-Llama-3.1-8B-Instruct "Explain async/await in Python"
 ```
-
-Both providers route to the same vLLM backend through Olla's translation layer. The difference is purely in the API format used for communication.
 
 ## Monitoring
 
@@ -217,8 +214,8 @@ curl http://localhost:40114/internal/health
 # Endpoint status
 curl http://localhost:40114/internal/status/endpoints
 
-# Statistics
-curl http://localhost:40114/internal/status/stats
+# Model status
+curl http://localhost:40114/internal/status/models
 ```
 
 ### Monitor vLLM Performance
@@ -245,6 +242,9 @@ docker logs vllm -f
 
 # Combined logs
 docker compose logs -f
+
+# Crush logs
+crush logs -f
 ```
 
 ## Advanced Configuration
@@ -287,22 +287,6 @@ command:
   - "--max-num-seqs"
   - "256"                     # Increase concurrent sequences
   - "--enable-prefix-caching" # Enable prompt caching
-```
-
-### Custom Crush Prompts
-
-Create custom system prompts in your Crush config:
-
-```json
-{
-  "providers": {
-    "olla-openai": {
-      "type": "openai",
-      "base_url": "http://localhost:40114/olla/openai/v1",
-      "default_system_prompt": "You are a helpful coding assistant running locally via vLLM."
-    }
-  }
-}
 ```
 
 ## Performance Tuning
@@ -364,7 +348,7 @@ proxy:
 **Causes**:
 
 - Large model download (first run)
-- Model quantization/compilation
+- Model quantisation/compilation
 - Insufficient GPU memory causing swapping
 
 **Solutions**:
@@ -396,14 +380,15 @@ curl -X POST http://localhost:40114/olla/openai/v1/chat/completions \
 
 ### Provider Not Found
 
-**Symptoms**: Crush says provider doesn't exist
+**Symptoms**: Crush does not show the configured provider or model
 
 **Solutions**:
 
-1. Check config file location: `~/.crush/config.json`
-2. Validate JSON syntax: `cat ~/.crush/config.json | jq`
-3. Verify provider names match exactly
-4. Review Crush logs: `crush --debug chat`
+1. Check the config file location: `~/.config/crush/crush.json`
+2. Validate JSON syntax: `cat ~/.config/crush/crush.json | jq`
+3. Ensure each provider has a non-empty `models` array (a custom provider with no models is dropped at load)
+4. Ensure each provider has a non-empty `api_key`
+5. Review Crush logs: `crush logs`
 
 ### Streaming Issues
 
@@ -411,10 +396,9 @@ curl -X POST http://localhost:40114/olla/openai/v1/chat/completions \
 
 **Solutions**:
 
-1. Ensure Olla is using streaming profile
-2. Check vLLM supports streaming: `curl http://localhost:8000/health`
-3. Verify Crush streaming settings in config
-4. Test streaming directly:
+1. Ensure Olla is using the streaming profile (`proxy.profile: "streaming"`)
+2. Check vLLM is healthy: `curl http://localhost:8000/health`
+3. Test streaming directly:
 ```bash
 curl -X POST http://localhost:40114/olla/openai/v1/chat/completions \
   -H "Content-Type: application/json" \
@@ -437,15 +421,15 @@ The test script checks:
 
 1. vLLM health endpoint
 2. Olla health endpoint
-3. Model discovery through both APIs
-4. OpenAI format completions
-5. Anthropic format messages
-6. Streaming functionality
+3. Endpoint discovery through Olla
+4. Model discovery through both APIs
+5. OpenAI format completions
+6. Anthropic format messages
+7. Streaming functionality
 
 ## Next Steps
 
 - **[vLLM Backend Integration](../../docs/content/integrations/backend/vllm.md)** - Full vLLM configuration guide
-- **[Crush CLI Integration](../../docs/content/integrations/frontend/crush-cli.md)** - Complete Crush CLI setup
 - **[Anthropic API Reference](../../docs/content/api-reference/anthropic.md)** - API documentation
 - **[Olla Configuration Reference](../../docs/content/configuration/reference.md)** - All configuration options
 

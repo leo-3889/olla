@@ -15,8 +15,8 @@ Complete reference for all Olla configuration options.
 >   port: 40114
 > 
 > proxy:
->   engine: "sherpa"
->   load_balancer: "priority"
+>   engine: "olla"
+>   load_balancer: "least-connections"
 > 
 > discovery:
 >   model_discovery:
@@ -29,7 +29,7 @@ Complete reference for all Olla configuration options.
 > ```
 > **Minimal Setup**: Olla starts with sensible defaults - just run `olla` and it works!
 > 
-> **Environment Variables**: All settings support `OLLA_` prefix (e.g., `OLLA_SERVER_PORT=8080`)
+> **Environment Variables**: A curated set of settings support `OLLA_` env var overrides (e.g., `OLLA_SERVER_PORT=8080`). See [Environment Variables](#environment-variables) for the full list.
 
 ## Configuration Structure
 
@@ -97,8 +97,8 @@ Example:
 ```yaml
 server:
   request_limits:
-    max_body_size: 104857600    # 100MB
-    max_header_size: 1048576     # 1MB
+    max_body_size: 52428800     # 50MB (typical production value)
+    max_header_size: 524288     # 512KB
 ```
 
 ### Rate Limits {#rate-limiting}
@@ -166,9 +166,9 @@ Proxy engine and request handling settings.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `engine` | string | `"sherpa"` | Proxy engine (`sherpa` or `olla`) |
+| `engine` | string | `"olla"` | Proxy engine (`olla` or `sherpa`; `sherpa` is in maintenance mode) |
 | `profile` | string | `"auto"` | Proxy profile (`auto`, `streaming`, `standard`) |
-| `load_balancer` | string | `"priority"` | Load balancer strategy |
+| `load_balancer` | string | `"least-connections"` | Load balancer strategy (`round-robin`, `least-connections`, `priority`) |
 
 Example:
 
@@ -183,10 +183,10 @@ proxy:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `connection_timeout` | duration | `30s` | Backend connection timeout |
+| `connection_timeout` | duration | `60s` | Backend connection timeout |
 | `connection_keep_alive` | duration | `30s` | TCP keep-alive interval for backend connections |
-| `response_timeout` | duration | `10m` | Response timeout |
-| `read_timeout` | duration | `120s` | Read timeout |
+| `response_timeout` | duration | `15m` | Response timeout |
+| `read_timeout` | duration | `10m` | Read timeout |
 | `response_header_timeout` | duration | `30s` | Max wait for the backend's first response header. Raise it for backends that load models on demand (e.g. Lemonade), where the first request blocks until the model is resident and the 30s default would abort the cold start. |
 | `tls_handshake_timeout` | duration | `10s` | Maximum time allowed for a TLS handshake with a backend |
 
@@ -211,7 +211,7 @@ As of v0.0.16, the retry mechanism is automatic and built-in for connection fail
 3. Continue until a successful connection is made or all endpoints have been tried
 4. Use exponential backoff for unhealthy endpoints to prevent overwhelming them
 
-**Note**: The fields `max_retries` and `retry_backoff` that may still appear in the configuration are deprecated and ignored. The retry behaviour is now automatic and cannot be configured.
+**Note**: The fields `max_retries` and `retry_backoff` that may still appear in your `proxy:` section are deprecated struct stubs. The `retry:` block (with `enabled`, `on_connection_failure`, `max_attempts`) that appears in the shipped `config.yaml` as a comment template has no corresponding struct in the config schema and is silently ignored if set. Retry behaviour is automatic and built-in; none of these fields have any effect.
 
 ### Streaming Settings
 
@@ -437,10 +437,11 @@ When `preserve_path` is `true`, Olla preserves the base path:
 
 **When to Use Path Preservation:**
 
-- Docker Model Runner endpoints with base paths
 - APIs deployed behind path-based routers
 - Services that require specific URL structures
 - Multi-service endpoints using path differentiation
+
+Docker Model Runner's shipped profile does not require `preserve_path`: use pathless endpoint URLs such as `http://localhost:12434`, and the profile forwards DMR routes such as `/engines/v1/chat/completions` and `/anthropic/v1/messages` unchanged.
 
 Example:
 
@@ -479,11 +480,10 @@ discovery:
         health_check_url: "http://monitoring.local:9090/health/ollama"
         # Absolute URL used as-is
 
-      # Docker Model Runner with base path
-      - url: "http://localhost:8080/api/models/llama"
-        name: "docker-llama"
-        type: "openai-compatible"  # or "openai" — accepted alias
-        preserve_path: true  # Keep /api/models/llama in requests
+      # Docker Model Runner - pathless base URL, profile routes handle /engines/...
+      - url: "http://localhost:12434"
+        name: "docker-model-runner"
+        type: "docker-model-runner"
 
       # Endpoint with model filtering
       - url: "http://remote:11434"
@@ -583,8 +583,8 @@ model_registry:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `unification.enabled` | bool | `true` | Enable unification |
-| `unification.stale_threshold` | duration | `24h` | Model retention time |
-| `unification.cleanup_interval` | duration | `5m` | Cleanup frequency |
+| `unification.stale_threshold` | duration | `24h` | How long to retain a model after it was last seen |
+| `unification.cleanup_interval` | duration | `10m` | How often to evict stale models |
 | `unification.cache_ttl` | duration | `10m` | Cache TTL |
 
 Example:
@@ -649,38 +649,7 @@ model_aliases:
 !!! note
     Alias names take priority over standard model routing. If no endpoints are found for the alias, Olla falls back to standard routing using the alias name as a regular model name. See [Model Aliases](../concepts/model-aliases.md) for details.
 
-## Routing Configuration
-
-Model routing strategy settings for handling requests when models aren't available on all endpoints.
-
-### Model Routing Strategy
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `routing.model_routing.type` | string | `"strict"` | Routing strategy (`strict`, `optimistic`, `discovery`) |
-| `routing.model_routing.options.fallback_behavior` | string | `"compatible_only"` | Fallback behavior (`compatible_only`, `all`, `none`) |
-| `routing.model_routing.options.discovery_refresh_on_miss` | bool | `false` | Refresh discovery when model not found |
-| `routing.model_routing.options.discovery_timeout` | duration | `2s` | Discovery refresh timeout |
-
-#### Strategy Types
-
-- **`strict`**: Only routes to endpoints known to have the model
-- **`optimistic`**: Falls back to healthy endpoints when model not found
-- **`discovery`**: Refreshes model discovery before routing decisions
-
-Example:
-
-```yaml
-routing:
-  model_routing:
-    type: strict
-    options:
-      fallback_behavior: compatible_only
-      discovery_refresh_on_miss: false
-      discovery_timeout: 2s
-```
-
-### Response Headers
+## Routing Response Headers
 
 Routing decisions are exposed via response headers:
 
@@ -689,6 +658,8 @@ Routing decisions are exposed via response headers:
 | `X-Olla-Routing-Strategy` | Strategy used (strict/optimistic/discovery) |
 | `X-Olla-Routing-Decision` | Action taken (routed/fallback/rejected) |
 | `X-Olla-Routing-Reason` | Human-readable reason for decision |
+
+The routing strategy itself is configured under `model_registry.routing_strategy`. See [Model Registry Configuration](#model-registry-configuration) above.
 
 ## Translators Configuration
 
@@ -830,29 +801,103 @@ When enabled, displays:
 
 ## Environment Variables
 
-All configuration can be overridden via environment variables.
+Only the variables listed below are recognised. They are each hand-mapped in `internal/config/config.go`; arbitrary `OLLA_*` names are **not** auto-derived from YAML paths. Anything you set that isn't in this list will be silently ignored.
 
-Pattern: `OLLA_<SECTION>_<KEY>` in uppercase with underscores.
+When set, an environment variable overrides the value loaded from the YAML config.
 
-Examples:
+### Bootstrap and Runtime (read in `main.go`)
+
+These control startup behaviour and are read before the YAML config is loaded.
+
+| Variable | Default | Description |
+|---|---|---|
+| `OLLA_CONFIG_FILE` | _(unset)_ | Path to a YAML config file. CLI flags `-c` / `--config` take precedence. |
+| `OLLA_ENABLE_PROFILER` | `false` | When `true`, starts a pprof server on `localhost:19841` (`/debug/pprof/`). Same effect as `--profile`. |
+| `OLLA_SHOW_VERSION` | `false` | When `true`, prints the full version banner and exits. Same effect as `--version`. |
+| `OLLA_LOG_LEVEL` | `info` | Logger level (`debug`, `info`, `warn`, `error`) for the bootstrap logger only. Active before the YAML config is parsed. Use `OLLA_LOGGING_LEVEL` to set the level for the runtime logger after config load. |
+| `OLLA_PRETTY_LOGS` | `true` | When `true`, renders structured logs with colour and aligned columns. Set `false` for plain JSON-friendly output in CI/containers. |
+| `OLLA_FILE_OUTPUT` | `true` | When `true`, also writes logs to rotating files under `OLLA_LOG_DIR`. |
+| `OLLA_LOG_DIR` | `./logs` | Directory for rotated log files. Created on demand. |
+| `OLLA_LOG_SIZE_MB` | `1` | Maximum size of each log file before rotation, in megabytes. |
+| `OLLA_LOG_MAX_BACKUPS` | `7` | Number of rotated log files to keep. |
+| `OLLA_LOG_MAX_AGE_DAYS` | `14` | Maximum age in days for rotated log files before they're pruned. |
+| `OLLA_THEME` | `default` | Console theme name. Affects coloured output of the styled logger. |
+
+### Server
+
+| Variable | Maps to | Notes |
+|---|---|---|
+| `OLLA_SERVER_HOST` | `server.host` | |
+| `OLLA_SERVER_PORT` | `server.port` | |
+| `OLLA_SERVER_READ_TIMEOUT` | `server.read_timeout` | Go duration string. |
+| `OLLA_SERVER_READ_HEADER_TIMEOUT` | `server.read_header_timeout` | Go duration string. Guards against Slowloris; defaults to `10s`. |
+| `OLLA_SERVER_WRITE_TIMEOUT` | `server.write_timeout` | Keep at `0s` for streaming. |
+| `OLLA_SERVER_MAX_BODY_SIZE` | `server.request_limits.max_body_size` | Bytes. |
+| `OLLA_SERVER_MAX_HEADER_SIZE` | `server.request_limits.max_header_size` | Bytes. |
+| `OLLA_SERVER_GLOBAL_RATE_LIMIT` | `server.rate_limits.global_requests_per_minute` | |
+| `OLLA_SERVER_PER_IP_RATE_LIMIT` | `server.rate_limits.per_ip_requests_per_minute` | |
+| `OLLA_SERVER_RATE_BURST_SIZE` | `server.rate_limits.burst_size` | |
+| `OLLA_SERVER_HEALTH_RATE_LIMIT` | `server.rate_limits.health_requests_per_minute` | |
+| `OLLA_SERVER_RATE_CLEANUP_INTERVAL` | `server.rate_limits.cleanup_interval` | |
+| `OLLA_SERVER_TRUST_PROXY_HEADERS` | `server.rate_limits.trust_proxy_headers` | `true`/`false`. |
+| `OLLA_SERVER_TRUSTED_PROXY_CIDRS` | `server.rate_limits.trusted_proxy_cidrs` | Comma-separated CIDRs. |
+| `OLLA_SERVER_CORS_ENABLED` | `server.cors.enabled` | `true`/`false`. |
+| `OLLA_SERVER_CORS_ALLOWED_ORIGINS` | `server.cors.allowed_origins` | Comma-separated origin URLs. No surrounding spaces. |
+| `OLLA_SERVER_CORS_ALLOWED_METHODS` | `server.cors.allowed_methods` | Comma-separated HTTP methods. |
+| `OLLA_SERVER_CORS_ALLOWED_HEADERS` | `server.cors.allowed_headers` | Comma-separated header names. |
+| `OLLA_SERVER_CORS_EXPOSED_HEADERS` | `server.cors.exposed_headers` | Comma-separated header names. Empty = auto-expose `X-Olla-*` set. |
+| `OLLA_SERVER_CORS_ALLOW_CREDENTIALS` | `server.cors.allow_credentials` | `true`/`false`. Incompatible with `allowed_origins: ["*"]`. |
+| `OLLA_SERVER_CORS_MAX_AGE` | `server.cors.max_age` | Preflight cache seconds (int). |
+
+### Proxy
+
+| Variable | Maps to | Notes |
+|---|---|---|
+| `OLLA_PROXY_ENGINE` | `proxy.engine` | `olla` (default) or `sherpa`. |
+| `OLLA_PROXY_PROFILE` | `proxy.profile` | `auto`, `streaming`, `standard`. |
+| `OLLA_PROXY_LOAD_BALANCER` | `proxy.load_balancer` | `least-connections` (default), `priority`, `round-robin`. |
+| `OLLA_PROXY_RESPONSE_TIMEOUT` | `proxy.response_timeout` | Go duration string. |
+| `OLLA_PROXY_READ_TIMEOUT` | `proxy.read_timeout` | Go duration string. |
+| `OLLA_PROXY_RESPONSE_HEADER_TIMEOUT` | `proxy.response_header_timeout` | Go duration string. Max wait for a backend's first response header. |
+| `OLLA_PROXY_TLS_HANDSHAKE_TIMEOUT` | `proxy.tls_handshake_timeout` | Go duration string. Max time for a TLS handshake with a backend. |
+| `OLLA_PROXY_CONNECTION_KEEP_ALIVE` | `proxy.connection_keep_alive` | Go duration string. TCP keep-alive interval for backend connections. |
+| `OLLA_PROXY_STICKY_SESSIONS_ENABLED` | `proxy.sticky_sessions.enabled` | Only the master switch is exposed. Other sticky-session fields are YAML-only. |
+
+### Logging and Diagnostics
+
+The variables below override the `logging:` config section and take effect **after** the YAML config is parsed. For the bootstrap logger (before config load), use `OLLA_LOG_LEVEL` and the `OLLA_LOG_*` file-rotation vars in the [Bootstrap and Runtime](#bootstrap-and-runtime-read-in-maingo) table above.
+
+| Variable | Maps to | Notes |
+|---|---|---|
+| `OLLA_LOGGING_LEVEL` | `logging.level` | Runtime log level. Overrides `logging.level` in YAML. |
+| `OLLA_LOGGING_FORMAT` | `logging.format` | `json` or `text`. Overrides `logging.format` in YAML. |
+| `OLLA_SHOW_NERD_STATS` | `engineering.show_nerdstats` | `true`/`false`. Prints memory/GC/goroutine stats on shutdown. |
+
+### Model Registry
+
+| Variable | Maps to | Notes |
+|---|---|---|
+| `OLLA_MODEL_REGISTRY_TYPE` | `model_registry.type` | Currently only `memory`. |
+| `OLLA_MODEL_UNIFIER_ENABLED` | `model_registry.enable_unifier` | `true`/`false`. |
+| `OLLA_MODEL_UNIFIER_CACHE_TTL` | `model_registry.unification.cache_ttl` | Go duration string. |
+
+### Translators
+
+| Variable | Maps to | Notes |
+|---|---|---|
+| `OLLA_TRANSLATORS_ANTHROPIC_ENABLED` | `translators.anthropic.enabled` | Master switch for the Anthropic Messages API translator. |
+| `OLLA_TRANSLATORS_ANTHROPIC_PASSTHROUGH_ENABLED` | `translators.anthropic.passthrough_enabled` | Set `false` to force every request through the translation pipeline regardless of backend capability. |
+| `OLLA_TRANSLATORS_ANTHROPIC_MAX_MESSAGE_SIZE` | `translators.anthropic.max_message_size` | Bytes. |
+
+### Example
 
 ```bash
-# Server settings
-OLLA_SERVER_HOST=0.0.0.0
-OLLA_SERVER_PORT=8080
-OLLA_SERVER_REQUEST_LOGGING=true
-
-# Proxy settings
-OLLA_PROXY_ENGINE=olla
-OLLA_PROXY_LOAD_BALANCER=round-robin
-OLLA_PROXY_PROFILE=auto
-
-# Logging
-OLLA_LOGGING_LEVEL=debug
-OLLA_LOGGING_FORMAT=text
-
-# Rate limits
-OLLA_SERVER_RATE_LIMITS_GLOBAL_REQUESTS_PER_MINUTE=1000
+# Run on port 8080 with the Olla engine, profiling enabled, plain text logs for CI.
+OLLA_SERVER_PORT=8080 \
+OLLA_PROXY_ENGINE=olla \
+OLLA_ENABLE_PROFILER=true \
+OLLA_PRETTY_LOGS=false \
+./olla
 ```
 
 ## Duration Format
@@ -888,7 +933,7 @@ server:
   request_logging: true
   request_limits:
     max_body_size: 104857600   # 100MB
-    max_header_size: 1048576    # 1MB
+    max_header_size: 1048576   # 1MB
   rate_limits:
     global_requests_per_minute: 1000
     per_ip_requests_per_minute: 100
@@ -903,12 +948,12 @@ server:
       - "192.168.0.0/16"
 
 proxy:
-  engine: "sherpa"
+  engine: "olla"
   profile: "auto"
-  load_balancer: "priority"
-  connection_timeout: 30s
-  response_timeout: 10m
-  read_timeout: 120s
+  load_balancer: "least-connections"
+  connection_timeout: 60s
+  response_timeout: 15m
+  read_timeout: 10m
   response_header_timeout: 30s
   connection_keep_alive: 30s
   tls_handshake_timeout: 10s
@@ -942,7 +987,7 @@ model_registry:
   unification:
     enabled: true
     stale_threshold: 24h
-    cleanup_interval: 5m
+    cleanup_interval: 10m
     cache_ttl: 10m
     custom_rules: []
 
