@@ -89,8 +89,6 @@ type StatusResponse struct {
 	System    SystemSummary      `json:"system"`
 }
 
-var issuesPool = make([]string, 0, 4)
-
 func (a *Application) statusHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	now := time.Now()
@@ -255,30 +253,30 @@ func (a *Application) buildSecuritySummary(stats ports.SecurityStats) SecuritySu
 }
 
 func (a *Application) getEndpointIssues(endpoint *domain.Endpoint, stats ports.EndpointStats, hasStats bool, successRate float64) string {
-	issuesPool = issuesPool[:0]
+	issues := make([]string, 0, 4)
 
 	if endpoint.ConsecutiveFailures > 3 {
-		issuesPool = append(issuesPool, "consecutive failures")
+		issues = append(issues, "consecutive failures")
 	}
 
 	if hasStats {
 		if successRate < 90.0 && stats.TotalRequests > 10 {
-			issuesPool = append(issuesPool, "low success rate")
+			issues = append(issues, "low success rate")
 		}
 		if stats.AverageLatency > 5000 {
-			issuesPool = append(issuesPool, "high latency")
+			issues = append(issues, "high latency")
 		}
 	}
 
 	if endpoint.Status == domain.StatusOffline || endpoint.Status == domain.StatusUnhealthy {
-		issuesPool = append(issuesPool, "unavailable")
+		issues = append(issues, "unavailable")
 	}
 
-	if len(issuesPool) == 0 {
+	if len(issues) == 0 {
 		return emptyString
 	}
 
-	return strings.Join(issuesPool, ", ")
+	return strings.Join(issues, ", ")
 }
 
 func (a *Application) getEndpointCounts(ctx context.Context) (all, healthy, routable []*domain.Endpoint, err error) {

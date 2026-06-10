@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/thushan/olla/internal/adapter/proxy/common"
 	"github.com/thushan/olla/internal/adapter/proxy/config"
 	"github.com/thushan/olla/internal/core/domain"
 )
@@ -195,7 +196,7 @@ func TestService_buildTargetURL_PreservePath(t *testing.T) {
 			require.NoError(t, err)
 
 			// Build the target URL
-			targetURL := s.buildTargetURL(req, tt.endpoint)
+			targetURL := common.BuildTargetURL(req, tt.endpoint, s.configuration.GetProxyPrefix())
 
 			// Assert the path is as expected
 			assert.Equal(t, tt.expectedPath, targetURL.Path, tt.description)
@@ -394,7 +395,7 @@ func TestService_buildTargetURL_EdgeCases(t *testing.T) {
 			require.NoError(t, err)
 
 			// Build the target URL
-			targetURL := s.buildTargetURL(req, tt.endpoint)
+			targetURL := common.BuildTargetURL(req, tt.endpoint, s.configuration.GetProxyPrefix())
 
 			// Assert the path is as expected
 			assert.Equal(t, tt.expectedPath, targetURL.Path, tt.description)
@@ -508,7 +509,7 @@ func TestService_buildTargetURL_QueryString(t *testing.T) {
 			req, err := http.NewRequest("GET", tt.requestPath, nil)
 			require.NoError(t, err)
 
-			targetURL := s.buildTargetURL(req, tt.endpoint)
+			targetURL := common.BuildTargetURL(req, tt.endpoint, s.configuration.GetProxyPrefix())
 
 			assert.Equal(t, tt.expectedPath, targetURL.Path, tt.description)
 			assert.Equal(t, tt.expectedQuery, targetURL.RawQuery, "Query string: "+tt.description)
@@ -660,7 +661,7 @@ func TestService_buildTargetURL_RealWorldScenarios(t *testing.T) {
 			req, err := http.NewRequest("POST", tt.requestPath, nil)
 			require.NoError(t, err)
 
-			targetURL := s.buildTargetURL(req, tt.endpoint)
+			targetURL := common.BuildTargetURL(req, tt.endpoint, s.configuration.GetProxyPrefix())
 
 			assert.Equal(t, tt.expectedPath, targetURL.Path,
 				"Provider: %s - %s", tt.provider, tt.description)
@@ -732,7 +733,7 @@ func BenchmarkService_buildTargetURL(b *testing.B) {
 			b.ReportAllocs()
 
 			for range b.N {
-				_ = s.buildTargetURL(req, scenario.endpoint)
+				_ = common.BuildTargetURL(req, scenario.endpoint, s.configuration.GetProxyPrefix())
 			}
 		})
 	}

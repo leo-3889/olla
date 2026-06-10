@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thushan/olla/internal/adapter/proxy/common"
 	"github.com/thushan/olla/internal/core/domain"
 )
 
@@ -39,7 +40,7 @@ func BenchmarkBuildTargetURL(b *testing.B) {
 		b.ReportAllocs()
 
 		for range b.N {
-			targetURL := service.buildTargetURL(req, endpoint)
+			targetURL := common.BuildTargetURL(req, endpoint, service.configuration.GetProxyPrefix())
 			if targetURL.Path != "/v1/chat/completions" {
 				b.Fatalf("unexpected path: %s", targetURL.Path)
 			}
@@ -63,7 +64,7 @@ func BenchmarkBuildTargetURL(b *testing.B) {
 		b.ReportAllocs()
 
 		for range b.N {
-			targetURL := service.buildTargetURL(req, endpoint)
+			targetURL := common.BuildTargetURL(req, endpoint, service.configuration.GetProxyPrefix())
 			if targetURL.Path != "/v1/completions" {
 				b.Fatalf("unexpected path: %s", targetURL.Path)
 			}
@@ -84,7 +85,7 @@ func BenchmarkBuildTargetURL(b *testing.B) {
 		b.ReportAllocs()
 
 		for range b.N {
-			targetURL := service.buildTargetURL(req, endpoint)
+			targetURL := common.BuildTargetURL(req, endpoint, service.configuration.GetProxyPrefix())
 			if targetURL.Path != "/api/tags" {
 				b.Fatalf("unexpected path: %s", targetURL.Path)
 			}
@@ -108,7 +109,7 @@ func BenchmarkBuildTargetURL(b *testing.B) {
 		b.ReportAllocs()
 
 		for range b.N {
-			targetURL := service.buildTargetURL(req, endpoint)
+			targetURL := common.BuildTargetURL(req, endpoint, service.configuration.GetProxyPrefix())
 			// ResolveReference should join paths correctly
 			if targetURL.Host != "localhost:8000" {
 				b.Fatalf("unexpected host: %s", targetURL.Host)

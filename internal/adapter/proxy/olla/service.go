@@ -29,8 +29,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"runtime"
-	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -40,10 +38,8 @@ import (
 	"github.com/puzpuzpuz/xsync/v4"
 
 	"github.com/thushan/olla/internal/adapter/health"
-	"github.com/thushan/olla/internal/adapter/proxy/common"
 	proxyconfig "github.com/thushan/olla/internal/adapter/proxy/config"
 	"github.com/thushan/olla/internal/adapter/proxy/core"
-	"github.com/thushan/olla/internal/app/middleware"
 	"github.com/thushan/olla/internal/core/domain"
 	"github.com/thushan/olla/internal/core/ports"
 	"github.com/thushan/olla/internal/logger"
@@ -66,10 +62,8 @@ const (
 type Service struct {
 	*core.BaseProxyComponents
 
-	// Object pools for zero-allocation operations
-	bufferPool  *pool.Pool[*[]byte]
-	requestPool *pool.Pool[*requestContext]
-	errorPool   *pool.Pool[*errorContext]
+	// Buffer pool for streaming
+	bufferPool *pool.Pool[*[]byte]
 
 	transport     *http.Transport
 	configuration *Configuration
@@ -99,38 +93,6 @@ type circuitBreaker struct {
 	lastFailure int64 // atomic
 	state       int64 // atomic: 0=closed, 1=open, 2=half-open
 	threshold   int64
-}
-
-// requestContext contains per-request data from our object pool
-type requestContext struct {
-	requestID string
-	startTime time.Time
-	endpoint  string
-	targetURL string
-}
-
-func (r *requestContext) Reset() {
-	r.requestID = ""
-	r.startTime = time.Time{}
-	r.endpoint = ""
-	r.targetURL = ""
-}
-
-// errorContext provides rich error information without allocations
-type errorContext struct {
-	err       error
-	context   string
-	duration  time.Duration
-	code      int
-	allocated bool
-}
-
-func (e *errorContext) Reset() {
-	e.err = nil
-	e.context = ""
-	e.duration = 0
-	e.code = 0
-	e.allocated = false
 }
 
 // NewService creates a new Olla proxy service
@@ -172,27 +134,11 @@ func NewService(
 		return nil, fmt.Errorf("failed to create buffer pool: %w", err)
 	}
 
-	requestPool, err := pool.NewLitePool(func() *requestContext {
-		return &requestContext{}
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request pool: %w", err)
-	}
-
-	errorPool, err := pool.NewLitePool(func() *errorContext {
-		return &errorContext{}
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create error pool: %w", err)
-	}
-
 	transport := createOptimisedTransport(configuration)
 
 	service := &Service{
 		BaseProxyComponents: base,
 		bufferPool:          bufferPool,
-		requestPool:         requestPool,
-		errorPool:           errorPool,
 		transport:           transport,
 		configuration:       configuration,
 		retryHandler:        core.NewRetryHandler(discoveryService, logger),
@@ -327,50 +273,6 @@ func (s *Service) ProxyRequestToEndpoints(ctx context.Context, w http.ResponseWr
 	return s.ProxyRequestToEndpointsWithRetry(ctx, w, r, endpoints, stats, rlog)
 }
 
-// handlePanic handles panic recovery in proxy requests
-func (s *Service) handlePanic(ctx context.Context, w http.ResponseWriter, r *http.Request, stats *ports.RequestStats, rlog logger.StyledLogger, rec interface{}, err *error) {
-	s.RecordFailure(ctx, nil, time.Since(stats.StartTime), fmt.Errorf("panic: %v", rec))
-
-	*err = fmt.Errorf("proxy panic recovered after %.1fs: %v", time.Since(stats.StartTime).Seconds(), rec)
-	rlog.Error("proxy request panic recovered",
-		"panic", rec,
-		"method", r.Method,
-		"path", r.URL.Path,
-		"stack", string(debug.Stack()))
-
-	if w.Header().Get(constants.HeaderContentType) == "" {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-	}
-}
-
-// selectEndpointWithCircuitBreaker selects an endpoint that has a healthy circuit breaker
-func (s *Service) selectEndpointWithCircuitBreaker(endpoints []*domain.Endpoint, rlog logger.StyledLogger) (*domain.Endpoint, *circuitBreaker) {
-	for _, ep := range endpoints {
-		cb := s.GetCircuitBreaker(ep.Name)
-		stateBefore := atomic.LoadInt64(&cb.state)
-		if !cb.IsOpen() {
-			stateAfter := atomic.LoadInt64(&cb.state)
-			// Log state transition if it changed (Open -> Half-open)
-			if stateBefore == 1 && stateAfter == 2 {
-				rlog.Info("Circuit breaker entering half-open state",
-					"endpoint", ep.Name,
-					"timeout", health.DefaultCircuitBreakerTimeout)
-			}
-			return ep, cb
-		}
-		// Log when skipping endpoint due to open circuit breaker
-		rlog.Debug("Skipping endpoint due to open circuit breaker",
-			"endpoint", ep.Name,
-			"failures", atomic.LoadInt64(&cb.failures))
-	}
-	return nil, nil
-}
-
-// buildTargetURL builds the target URL for the proxy request
-func (s *Service) buildTargetURL(r *http.Request, endpoint *domain.Endpoint) *url.URL {
-	return common.BuildTargetURL(r, endpoint, s.configuration.GetProxyPrefix())
-}
-
 // prepareProxyRequest creates and prepares the proxy request with headers.
 // endpoint is passed through so CopyHeaders can apply per-endpoint auth and custom headers.
 func (s *Service) prepareProxyRequest(ctx context.Context, r *http.Request, targetURL *url.URL, endpoint *domain.Endpoint, stats *ports.RequestStats) (*http.Request, error) {
@@ -394,147 +296,6 @@ func (s *Service) prepareProxyRequest(ctx context.Context, r *http.Request, targ
 	stats.RequestProcessingMs = time.Since(stats.StartTime).Milliseconds()
 
 	return proxyReq, nil
-}
-
-// executeBackendRequest executes the request to the backend
-func (s *Service) executeBackendRequest(ctx context.Context, endpoint *domain.Endpoint, proxyReq *http.Request, cb *circuitBreaker, stats *ports.RequestStats, rlog logger.StyledLogger) (*http.Response, error) {
-	// Get connection pool for this endpoint
-	pool := s.getOrCreateEndpointPool(endpoint.Name)
-
-	// Execute request
-	rlog.Debug("making round-trip request", "target", proxyReq.URL.String())
-	backendStart := time.Now()
-	resp, err := pool.transport.RoundTrip(proxyReq)
-	stats.BackendResponseMs = time.Since(backendStart).Milliseconds()
-
-	if err != nil {
-		// Record failure and check if circuit breaker opened
-		failuresBefore := atomic.LoadInt64(&cb.failures)
-		cb.RecordFailure()
-		failuresAfter := atomic.LoadInt64(&cb.failures)
-
-		// Log if circuit breaker just opened (critical for monitoring)
-		if failuresBefore < cb.threshold && failuresAfter >= cb.threshold {
-			rlog.Warn("Circuit breaker opened",
-				"endpoint", endpoint.Name,
-				"failures", failuresAfter,
-				"threshold", cb.threshold,
-				"error", err)
-		}
-
-		rlog.Error("round-trip failed", "error", err)
-		s.RecordFailure(ctx, endpoint, time.Since(stats.StartTime), err)
-
-		// Publish circuit breaker event if opened
-		if cb.IsOpen() {
-			s.PublishEvent(core.ProxyEvent{
-				Type:      core.EventTypeCircuitBreaker,
-				RequestID: stats.RequestID,
-				Endpoint:  endpoint.Name,
-				Error:     err,
-				Duration:  time.Since(stats.StartTime),
-			})
-		}
-
-		duration := time.Since(stats.StartTime)
-		return nil, common.MakeUserFriendlyError(err, duration, "backend", s.configuration.GetResponseTimeout())
-	}
-
-	return resp, nil
-}
-
-// handleSuccessfulResponse handles the successful response from the backend
-func (s *Service) handleSuccessfulResponse(ctx context.Context, w http.ResponseWriter, r *http.Request, resp *http.Response, endpoint *domain.Endpoint, cb *circuitBreaker, stats *ports.RequestStats, rlog logger.StyledLogger) error {
-	// Get context logger for this function scope
-	ctxLogger := middleware.GetLogger(ctx)
-	// Circuit breaker success
-	stateBefore := atomic.LoadInt64(&cb.state)
-	cb.RecordSuccess()
-	stateAfter := atomic.LoadInt64(&cb.state)
-
-	// Log state transition if circuit breaker closed
-	if stateBefore != 0 && stateAfter == 0 {
-		rlog.Info("Circuit breaker closed after successful request",
-			"endpoint", endpoint.Name,
-			"previous_state", map[int64]string{1: "open", 2: "half-open"}[stateBefore])
-	}
-
-	rlog.Debug("round-trip success", "status", resp.StatusCode)
-
-	core.SetResponseHeaders(w, stats, endpoint)
-	core.SetStickySessionHeaders(w, r)
-
-	// Copy response headers, stripping any sensitive headers the upstream may reflect
-	core.CopyResponseHeaders(w.Header(), resp.Header, endpoint)
-
-	w.WriteHeader(resp.StatusCode)
-
-	// start streaming the response body
-	rlog.Debug("starting response stream")
-	streamStart := time.Now()
-	stats.FirstDataMs = time.Since(stats.StartTime).Milliseconds()
-
-	buffer := s.bufferPool.Get()
-	defer s.bufferPool.Put(buffer)
-
-	// Separate client and upstream contexts for proper cancellation handling
-	// Only create a different context if needed to avoid allocations
-	upstreamCtx := ctx
-	if resp != nil && resp.Request != nil {
-		upstreamCtx = resp.Request.Context()
-	}
-
-	// Use r.Context() for client context and upstreamCtx for upstream context
-	bytesWritten, lastChunk, streamErr := s.streamResponse(r.Context(), upstreamCtx, w, resp, *buffer, rlog)
-	stats.StreamingMs = time.Since(streamStart).Milliseconds()
-	stats.TotalBytes = bytesWritten
-
-	if streamErr != nil && !errors.Is(streamErr, context.Canceled) {
-		rlog.Debug("streaming error", "error", streamErr, "bytes_written", bytesWritten)
-		s.RecordFailure(ctx, endpoint, time.Since(stats.StartTime), streamErr)
-		return common.MakeUserFriendlyError(streamErr, time.Since(stats.StartTime), "streaming", s.configuration.GetResponseTimeout())
-	}
-
-	// Extract metrics from response if available
-	core.ExtractProviderMetrics(ctx, s.MetricsExtractor, lastChunk, endpoint, stats, rlog, "Olla")
-
-	// stats update
-	duration := time.Since(stats.StartTime)
-	s.RecordSuccess(endpoint, duration.Milliseconds(), int64(bytesWritten))
-
-	stats.EndTime = time.Now()
-	stats.Latency = duration.Milliseconds()
-
-	// Log detailed completion metrics at Debug level to reduce redundancy
-	if ctxLogger != nil {
-		ctxLogger.Debug("Olla proxy metrics",
-			"endpoint", endpoint.Name,
-			"latency_ms", stats.Latency,
-			"processing_ms", stats.RequestProcessingMs,
-			"backend_ms", stats.BackendResponseMs,
-			"first_data_ms", stats.FirstDataMs,
-			"streaming_ms", stats.StreamingMs,
-			"selection_ms", stats.SelectionMs,
-			"header_ms", stats.HeaderProcessingMs,
-			"total_bytes", stats.TotalBytes,
-			"bytes_formatted", middleware.FormatBytes(int64(stats.TotalBytes)),
-			"status", resp.StatusCode,
-			"request_id", middleware.GetRequestID(ctx))
-	} else {
-		rlog.Debug("proxy request completed",
-			"endpoint", endpoint.Name,
-			"latency_ms", stats.Latency,
-			"processing_ms", stats.RequestProcessingMs,
-			"backend_ms", stats.BackendResponseMs,
-			"first_data_ms", stats.FirstDataMs,
-			"streaming_ms", stats.StreamingMs,
-			"selection_ms", stats.SelectionMs,
-			"header_ms", stats.HeaderProcessingMs,
-			"total_bytes", stats.TotalBytes,
-			"status", resp.StatusCode)
-	}
-
-	return nil
 }
 
 // streamResponse performs buffered streaming with backpressure handling
@@ -700,9 +461,6 @@ func (s *Service) Cleanup() {
 		s.circuitBreakers.Clear()
 
 		s.BaseProxyComponents.Shutdown()
-
-		// force GC to clean up
-		runtime.GC()
 
 		s.Logger.Debug("Olla proxy service cleaned up")
 	})

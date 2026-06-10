@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thushan/olla/internal/adapter/proxy/common"
 	"github.com/thushan/olla/internal/core/domain"
 )
 
@@ -126,7 +127,7 @@ func TestBuildTargetURL(t *testing.T) {
 				t.Fatalf("failed to create request: %v", err)
 			}
 
-			targetURL := service.buildTargetURL(req, endpoint)
+			targetURL := common.BuildTargetURL(req, endpoint, service.configuration.GetProxyPrefix())
 
 			// Verify path
 			if targetURL.Path != tt.expectedPath {
@@ -193,7 +194,7 @@ func TestBuildTargetURL_PathHandling(t *testing.T) {
 
 	for _, path := range testPaths {
 		req, _ := http.NewRequest("GET", path+"?test=true", nil)
-		targetURL := service.buildTargetURL(req, endpoint)
+		targetURL := common.BuildTargetURL(req, endpoint, service.configuration.GetProxyPrefix())
 
 		// Verify URL is valid
 		if targetURL.Host == "" {

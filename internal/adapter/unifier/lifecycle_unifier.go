@@ -208,21 +208,6 @@ func (u *LifecycleUnifier) stateTransitionLogger() {
 	}
 }
 
-func (u *LifecycleUnifier) recordStateTransition(from, to, reason string, err error) {
-	transition := domain.StateTransition{
-		From:      from,
-		To:        to,
-		Timestamp: time.Now(),
-		Reason:    reason,
-		Error:     err,
-	}
-
-	select {
-	case u.stateTransitions <- transition:
-	default:
-	}
-}
-
 func (u *LifecycleUnifier) UnifyModel(ctx context.Context, sourceModel *domain.ModelInfo, endpoint *domain.Endpoint) (*domain.UnifiedModel, error) {
 	models := []*domain.ModelInfo{sourceModel}
 	unified, err := u.UnifyModels(ctx, models, endpoint)
