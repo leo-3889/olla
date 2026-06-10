@@ -142,6 +142,15 @@ func (s *HTTPService) Start(ctx context.Context) error {
 		s.application.SetStickyStatsFn(s.proxySvc.StickyStats)
 	}
 
+	// Wire real security adapters so non-proxy routes get size validation.
+	// This is separate from the security chain (which handles proxy routes) so
+	// non-proxy routes are protected without requiring full chain enforcement.
+	if s.securitySvc != nil {
+		if realAdapters, err := s.securitySvc.GetAdapters(); err == nil && realAdapters != nil {
+			s.application.SetSecurityAdapters(realAdapters)
+		}
+	}
+
 	s.application.RegisterRoutes()
 
 	// Wire routes with security middleware

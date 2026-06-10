@@ -667,8 +667,13 @@ func (a *Application) handleStreamingBackendError(
 		"status_code", streamRecorder.status,
 		"translator", trans.Name())
 
-	// Read error response from pipe
-	errorBody, _ := io.ReadAll(pipeReader)
+	// Cap the error-body read so a misbehaving backend cannot exhaust the heap.
+	// Anything beyond MaxUpstreamErrorBodyBytes is silently discarded; legitimate
+	// error messages are far smaller than this limit.
+	// After the limited read, close the reader with an error so the proxy goroutine's
+	// blocked pipe write is unblocked rather than hanging forever.
+	errorBody, _ := io.ReadAll(io.LimitReader(pipeReader, constants.MaxUpstreamErrorBodyBytes))
+	pipeReader.CloseWithError(io.ErrClosedPipe)
 
 	// try to parse OpenAI error format and extract message
 	errorMsg := a.parseStreamingErrorMessage(errorBody)

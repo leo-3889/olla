@@ -11,6 +11,7 @@ import (
 	"github.com/thushan/olla/internal/adapter/inspector"
 	"github.com/thushan/olla/internal/adapter/registry"
 	"github.com/thushan/olla/internal/adapter/registry/profile"
+	"github.com/thushan/olla/internal/adapter/security"
 	"github.com/thushan/olla/internal/adapter/translator"
 	"github.com/thushan/olla/internal/adapter/translator/anthropic"
 	"github.com/thushan/olla/internal/app/middleware"
@@ -23,8 +24,9 @@ import (
 
 // SecurityAdapters provides middleware for security chain
 type SecurityAdapters struct {
-	securityChain *ports.SecurityChain
-	logger        logger.StyledLogger
+	securityChain    *ports.SecurityChain
+	securityAdapters *security.Adapters // nil when security is not configured
+	logger           logger.StyledLogger
 }
 
 // CreateChainMiddleware creates middleware that applies the full security chain with enhanced logging
@@ -67,6 +69,16 @@ func (s *SecurityAdapters) CreateRateLimitMiddleware() func(http.Handler) http.H
 		withAccessLogging := middleware.AccessLoggingMiddleware(s.logger)(withLogging)
 		return withAccessLogging
 	}
+}
+
+// CreateSizeMiddleware returns a middleware that enforces request-size limits on
+// non-proxy routes. Delegates to the real security adapter when available; returns
+// a pass-through when security is not configured (e.g. in tests).
+func (s *SecurityAdapters) CreateSizeMiddleware() func(http.Handler) http.Handler {
+	if s.securityAdapters != nil {
+		return s.securityAdapters.CreateSizeMiddleware()
+	}
+	return func(next http.Handler) http.Handler { return next }
 }
 
 // Application holds all the dependencies needed for the HTTP handlers
@@ -227,6 +239,15 @@ func (a *Application) GetProfileLookup() translator.ProfileLookup {
 // Called by HTTPService when sticky sessions are enabled.
 func (a *Application) SetStickyStatsFn(fn func() *balancer.StickyStats) {
 	a.stickyStatsFn = fn
+}
+
+// SetSecurityAdapters wires the real security.Adapters into the handlers-layer
+// SecurityAdapters so non-proxy routes gain size validation. Called by HTTPService
+// after the SecurityService has finished initialising.
+func (a *Application) SetSecurityAdapters(adapters *security.Adapters) {
+	if a.securityAdapters != nil {
+		a.securityAdapters.securityAdapters = adapters
+	}
 }
 
 func (a *Application) RegisterRoutes() {

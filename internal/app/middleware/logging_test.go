@@ -258,6 +258,152 @@ func TestRedactQuery(t *testing.T) {
 	}
 }
 
+// TestSanitiseRequestID verifies that inbound X-Request-ID values containing
+// log-injection characters or exceeding the length cap are rejected, while
+// well-formed IDs pass through unchanged.
+func TestSanitiseRequestID(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		input   string
+		wantOut string // empty means a fresh ID should be generated (input rejected)
+	}{
+		{
+			name:    "valid alphanumeric ID passes through",
+			input:   "abc-def-1234",
+			wantOut: "abc-def-1234",
+		},
+		{
+			name:    "valid ID with printable ASCII passes through",
+			input:   "req_!@#$%^&*()_+[]{}|;:,.<>?",
+			wantOut: "req_!@#$%^&*()_+[]{}|;:,.<>?",
+		},
+		{
+			name:    "CR injection rejected",
+			input:   "valid\rmalicious",
+			wantOut: "",
+		},
+		{
+			name:    "LF injection rejected",
+			input:   "valid\nmalicious",
+			wantOut: "",
+		},
+		{
+			name:    "CRLF injection rejected",
+			input:   "valid\r\nX-Injected-Header: evil",
+			wantOut: "",
+		},
+		{
+			name:    "NUL byte rejected",
+			input:   "valid\x00nul",
+			wantOut: "",
+		},
+		{
+			name:    "tab rejected",
+			input:   "valid\tvalue",
+			wantOut: "",
+		},
+		{
+			name:    "space rejected",
+			input:   "valid value",
+			wantOut: "",
+		},
+		{
+			name:    "DEL (0x7F) rejected",
+			input:   "valid\x7Fvalue",
+			wantOut: "",
+		},
+		{
+			name:    "exactly maxRequestIDLength accepted",
+			input:   strings.Repeat("a", maxRequestIDLength),
+			wantOut: strings.Repeat("a", maxRequestIDLength),
+		},
+		{
+			name:    "maxRequestIDLength+1 rejected",
+			input:   strings.Repeat("a", maxRequestIDLength+1),
+			wantOut: "",
+		},
+		{
+			name:    "empty string returned as-is (caller generates fresh ID)",
+			input:   "",
+			wantOut: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := sanitiseRequestID(tt.input)
+			if got != tt.wantOut {
+				t.Errorf("sanitiseRequestID(%q) = %q, want %q", tt.input, got, tt.wantOut)
+			}
+		})
+	}
+}
+
+// TestEnhancedLoggingMiddleware_InvalidRequestIDReplacedWithGenerated verifies
+// that a request carrying an X-Request-ID containing CRLF does not propagate the
+// injected value into the response or context; instead a fresh ID is generated.
+func TestEnhancedLoggingMiddleware_InvalidRequestIDReplacedWithGenerated(t *testing.T) {
+	t.Parallel()
+
+	mockLogger := &mockStyledLogger{}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The context request ID must not contain the injected header value.
+		ctxID := GetRequestID(r.Context())
+		if strings.Contains(ctxID, "injected") {
+			t.Errorf("log-injection payload leaked into context request ID: %q", ctxID)
+		}
+		if strings.ContainsAny(ctxID, "\r\n") {
+			t.Errorf("context request ID contains CRLF: %q", ctxID)
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mw := EnhancedLoggingMiddleware(mockLogger)(handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/internal/health", nil)
+	req.Header.Set("X-Request-ID", "ok\r\nX-Injected: evil")
+
+	rr := httptest.NewRecorder()
+	mw.ServeHTTP(rr, req)
+
+	responseID := rr.Header().Get("X-Olla-Request-ID")
+	if strings.ContainsAny(responseID, "\r\n") {
+		t.Errorf("response X-Olla-Request-ID contains CRLF: %q", responseID)
+	}
+	if responseID == "" {
+		t.Error("response X-Olla-Request-ID must be non-empty even when the inbound ID is rejected")
+	}
+}
+
+// TestEnhancedLoggingMiddleware_ValidRequestIDPreserved verifies that a clean
+// inbound X-Request-ID is echoed in the response header unchanged.
+func TestEnhancedLoggingMiddleware_ValidRequestIDPreserved(t *testing.T) {
+	t.Parallel()
+
+	mockLogger := &mockStyledLogger{}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mw := EnhancedLoggingMiddleware(mockLogger)(handler)
+
+	const cleanID = "my-clean-request-id-abc123"
+	req := httptest.NewRequest(http.MethodGet, "/internal/health", nil)
+	req.Header.Set("X-Request-ID", cleanID)
+
+	rr := httptest.NewRecorder()
+	mw.ServeHTTP(rr, req)
+
+	if got := rr.Header().Get("X-Olla-Request-ID"); got != cleanID {
+		t.Errorf("X-Olla-Request-ID = %q, want %q", got, cleanID)
+	}
+}
+
 // Mock styled logger for testing
 type mockStyledLogger struct{}
 

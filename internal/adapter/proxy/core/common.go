@@ -221,7 +221,14 @@ func CopyResponseHeaders(dst http.Header, src http.Header, endpoint *domain.Endp
 	}
 
 	for key, values := range src {
-		if _, blocked := deny[http.CanonicalHeaderKey(key)]; blocked {
+		canonical := http.CanonicalHeaderKey(key)
+		if _, blocked := deny[canonical]; blocked {
+			continue
+		}
+		// Strip any X-Olla-* header the backend tries to inject. Olla is the sole
+		// authority for these headers; a spoofed value from a compromised backend
+		// would confuse clients relying on them for routing or session affinity.
+		if strings.HasPrefix(canonical, constants.HeaderXOllaPrefix) {
 			continue
 		}
 		for _, v := range values {

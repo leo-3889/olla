@@ -24,6 +24,32 @@ const (
 	LoggerKey    contextKey = "logger"
 )
 
+const (
+	// maxRequestIDLength caps the inbound X-Request-ID length. Values beyond this
+	// are most likely probing attempts or misconfigured clients; generating a fresh
+	// ID is cheaper than propagating an unbounded string into every log line.
+	maxRequestIDLength = 128
+)
+
+// sanitiseRequestID validates a client-supplied request ID and returns it
+// unchanged if it passes. An empty string signals the caller to generate a
+// fresh ID instead. Rejected when: longer than maxRequestIDLength, or contains
+// any character that is not a printable ASCII non-space (CR, LF, NUL, tabs and
+// other control characters are log-injection vectors).
+func sanitiseRequestID(id string) string {
+	if len(id) > maxRequestIDLength {
+		return ""
+	}
+	for _, c := range id {
+		// Only allow printable ASCII (0x21–0x7E). Space (0x20) is technically
+		// printable but rarely intentional in IDs and trips some log parsers.
+		if c < 0x21 || c > 0x7E {
+			return ""
+		}
+	}
+	return id
+}
+
 // IsProxyRequest determines if a request is for the proxy endpoints
 // Used to decide logging levels to avoid redundancy with proxy handler logging
 func IsProxyRequest(path string) bool {
@@ -84,8 +110,10 @@ func EnhancedLoggingMiddleware(styledLogger logger.StyledLogger) func(http.Handl
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 
-			// Get or create request ID
-			requestID := r.Header.Get(constants.HeaderXRequestID)
+			// Get or create request ID. Validate the inbound value to prevent
+			// log injection via CR/LF or non-printable characters, and to cap
+			// the length so structured log fields stay bounded.
+			requestID := sanitiseRequestID(r.Header.Get(constants.HeaderXRequestID))
 			if requestID == "" {
 				requestID = util.GenerateRequestID()
 			}

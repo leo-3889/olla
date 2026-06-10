@@ -39,7 +39,9 @@ type Endpoint struct {
 	ModelURLString        string
 	// AuthHeaderName is the resolved header name for outbound auth (e.g. "Authorization", "X-Api-Key").
 	// Precomputed at load time so the hot path pays no allocation cost.
-	AuthHeaderName string
+	// Never serialised: exposing the header name through status endpoints would reveal the
+	// auth scheme in use, making credential-guessing attacks cheaper.
+	AuthHeaderName string `json:"-"`
 	// AuthHeaderValue is the fully composed header value (e.g. "Bearer tok", "Basic base64(...)").
 	// Never serialised; leaking credentials through logs or status endpoints would be a security issue.
 	AuthHeaderValue     string `json:"-"`

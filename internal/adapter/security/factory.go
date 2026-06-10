@@ -72,3 +72,15 @@ func (sa *Adapters) CreateRateLimitMiddleware() func(http.Handler) http.Handler 
 		return next
 	}
 }
+
+// CreateSizeMiddleware returns a middleware that enforces request-size limits.
+// Exposed separately so non-proxy routes (status, health, etc.) get body-size
+// validation even though they intentionally bypass the full security chain.
+func (sa *Adapters) CreateSizeMiddleware() func(http.Handler) http.Handler {
+	if sa.SizeValidation != nil {
+		return sa.SizeValidation.CreateMiddleware()
+	}
+	return func(next http.Handler) http.Handler {
+		return next
+	}
+}
