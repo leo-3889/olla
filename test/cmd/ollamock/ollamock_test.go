@@ -419,7 +419,7 @@ func TestFailHealth(t *testing.T) {
 		t.Errorf("want 503 on /health with fail_health, got %d", healthResp.StatusCode)
 	}
 
-	// Non-health routes must be unaffected — fail_health is health-path only.
+	// Non-health routes must be unaffected - fail_health is health-path only.
 	modelsResp := getURL(t, ts.URL+"/v1/models")
 	modelsResp.Body.Close()
 	if modelsResp.StatusCode != http.StatusOK {

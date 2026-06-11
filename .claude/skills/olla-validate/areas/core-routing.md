@@ -2,7 +2,7 @@
 
 Validates the proxy core: provider-scoped routes, model routing, response
 headers, load balancing and sticky sessions. Target: olla-main on
-`http://127.0.0.1:41141`. **Read-only — never call `/_mock/behaviour`.**
+`http://127.0.0.1:41141`. **Read-only - never call `/_mock/behaviour`.**
 
 Expected backend ownership (assert via `X-Olla-Endpoint` header and the
 `BACKEND:<name>` marker in response content):
@@ -51,7 +51,7 @@ Ollama route body (`/olla/ollama/api/chat`):
 ## Nightly additions
 
 9. Repeat check 2 with `"stream":true` on every route (ollama native streams
-   NDJSON; others SSE) — each stream completes with its terminator and carries
+   NDJSON; others SSE) - each stream completes with its terminator and carries
    the right backend marker.
 10. Model `shared-model` 15× on `/olla/proxy/` → only ever served by
     mock-a / mock-c / mock-d / mock-e / mock-g (never mock-b or mock-f,
@@ -68,6 +68,6 @@ Ollama route body (`/olla/ollama/api/chat`):
     unique `X-Olla-Request-ID` values.
 15. `GET /olla/proxy/v1/models` → 200, contains `test-model`, `shared-model`,
     `beta-model`, `llama3.1:8b`, `phi-4`.
-16. Cross-check `/_mock/stats` on each mock (`GET` only — allowed) against
+16. Cross-check `/_mock/stats` on each mock (`GET` only - allowed) against
     where you sent traffic: every mock you observed in markers shows non-zero
     counts on the paths you exercised.

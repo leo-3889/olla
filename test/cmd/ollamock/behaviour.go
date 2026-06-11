@@ -12,7 +12,7 @@ import (
 type Mode string
 
 const (
-	// ModeOK is normal operation — all requests succeed.
+	// ModeOK is normal operation - all requests succeed.
 	ModeOK Mode = "ok"
 	// ModeError causes all requests to return a fixed error status.
 	ModeError Mode = "error"
@@ -57,7 +57,7 @@ func defaultBehaviour() Behaviour {
 
 // behaviourState holds the mutable behaviour alongside a seeded RNG for flaky
 // mode. Both are protected by the same mutex so reads and writes are always
-// consistent — the rand source is not goroutine-safe on its own.
+// consistent - the rand source is not goroutine-safe on its own.
 type behaviourState struct {
 	rng  *rand.Rand
 	b    Behaviour
@@ -238,7 +238,7 @@ func (s *statsStore) reset() {
 }
 
 // controlHandlers registers the /_mock/* control plane routes onto mux.
-// Control routes are immune to behaviour — they always respond normally.
+// Control routes are immune to behaviour - they always respond normally.
 func (srv *mockServer) controlHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("GET /_mock/behaviour", srv.handleGetBehaviour)
 	mux.HandleFunc("POST /_mock/behaviour", srv.handlePostBehaviour)

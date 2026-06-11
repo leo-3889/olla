@@ -75,7 +75,7 @@ go run ./test/cmd/ollamock \
 
 ## Control Plane
 
-All `/_mock/*` routes are immune to behaviour — they always respond normally.
+All `/_mock/*` routes are immune to behaviour - they always respond normally.
 
 ### Get current behaviour
 

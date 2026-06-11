@@ -47,21 +47,21 @@ func newServer(cfg serverConfig) *mockServer {
 func (srv *mockServer) handler() http.Handler {
 	mux := http.NewServeMux()
 
-	// Control plane — always healthy, immune to behaviour.
+	// Control plane - always healthy, immune to behaviour.
 	srv.controlHandlers(mux)
 
 	// LLM protocol routes.
 	mux.HandleFunc("GET /health", srv.wrap(srv.handleHealth))
 	mux.HandleFunc("GET /", srv.wrap(srv.handleRoot))
 
-	// Model listing endpoints — one per protocol.
+	// Model listing endpoints - one per protocol.
 	mux.HandleFunc("GET /v1/models", srv.wrap(srv.handleOpenAIModels))
 	mux.HandleFunc("GET /api/tags", srv.wrap(srv.handleOllamaTags))
 	mux.HandleFunc("GET /api/version", srv.wrap(srv.handleOllamaVersion))
 	mux.HandleFunc("GET /api/v0/models", srv.wrap(srv.handleLMStudioModels))
 	mux.HandleFunc("GET /api/v1/models", srv.wrap(srv.handleLemonadeModels))
 
-	// Inference endpoints — streaming handled in streaming.go.
+	// Inference endpoints - streaming handled in streaming.go.
 	mux.HandleFunc("POST /api/chat", srv.wrap(srv.handleOllamaChat))
 	mux.HandleFunc("POST /api/generate", srv.wrap(srv.handleOllamaGenerate))
 	mux.HandleFunc("POST /v1/chat/completions", srv.wrap(srv.handleOpenAIChat))
@@ -92,7 +92,7 @@ func (srv *mockServer) applyBehaviour(w http.ResponseWriter, r *http.Request) bo
 
 	isHealthPath := r.URL.Path == "/health" || r.URL.Path == "/"
 
-	// fail_health only gates the health endpoints — all other routes are unaffected.
+	// fail_health only gates the health endpoints - all other routes are unaffected.
 	if b.FailHealth && isHealthPath {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = fmt.Fprintf(w, `{"status":"unhealthy"}`)
@@ -101,7 +101,7 @@ func (srv *mockServer) applyBehaviour(w http.ResponseWriter, r *http.Request) bo
 
 	switch b.Mode {
 	case ModeOK:
-		// No-op — proceed to handler.
+		// No-op - proceed to handler.
 
 	case ModeHang:
 		// Block until the client disconnects or context is cancelled.

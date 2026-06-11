@@ -2,7 +2,7 @@
 name: olla-validate
 description: >
   Full automated validation of Olla via parallel agents against mock backends
-  (no Docker, no real LLMs — CI/CD safe). Gates on make ready first, then boots
+  (no Docker, no real LLMs - CI/CD safe). Gates on make ready first, then boots
   an ollamock fleet + Olla and fans out per-area validation agents covering
   core routing, OpenAI/Anthropic surfaces, observability, health/recovery and
   failure handling. Use as the pre-release gate or after major changes.
@@ -14,7 +14,7 @@ argument-hint: "[--quick|--nightly] [--soak-minutes=N]"
 model: sonnet
 ---
 
-# /olla-validate — Olla Validation Harness
+# /olla-validate - Olla Validation Harness
 
 One reusable suite, two depths:
 
@@ -23,7 +23,7 @@ One reusable suite, two depths:
 | `--quick` | 5–10 min | `make ready` gate + live smoke of every area (trimmed checklists) |
 | `--nightly` | 2–4 h | full test suite + stress + exhaustive checklists + chaos + soak + sherpa pass + translation-forced pass + bench snapshot |
 
-**If neither flag is given, ask** with AskUserQuestion: "Which validation depth?" — options **Quick (Recommended after major changes)** (5–10 min smoke gate) and **Nightly** (multi-hour exhaustive pre-release gate). `--soak-minutes=N` overrides the nightly soak duration (default 30).
+**If neither flag is given, ask** with AskUserQuestion: "Which validation depth?" - options **Quick (Recommended after major changes)** (5–10 min smoke gate) and **Nightly** (multi-hour exhaustive pre-release gate). `--soak-minutes=N` overrides the nightly soak duration (default 30).
 
 The harness never touches real backends. All traffic goes to `test/cmd/ollamock`
 instances (stdlib Go mock speaking OpenAI, Ollama-native, LM Studio, Lemonade
@@ -31,17 +31,17 @@ and Anthropic protocols, with a `/_mock/` fault-injection control plane).
 
 ## Model assignment (token efficiency)
 
-The orchestration runs on Sonnet (`model: sonnet` above) — it makes the
+The orchestration runs on Sonnet (`model: sonnet` above) - it makes the
 judgement calls, sequences nightly passes and writes the report. Subagents
 cannot spawn subagents, so orchestration must stay here; never try to
 delegate the whole run to a single agent.
 
 Spawned area agents get an explicit `model` on every Agent call:
 
-- **haiku** — mechanical curl-and-assert checklists that never mutate state:
+- **haiku** - mechanical curl-and-assert checklists that never mutate state:
   core-routing, openai-api, observability, limits-failures (client section).
-- **sonnet** — anything that mutates mock/Olla state or needs protocol-
-  sequence judgement: resilience, anthropic (both sections — SSE event-order
+- **sonnet** - anything that mutates mock/Olla state or needs protocol-
+  sequence judgement: resilience, anthropic (both sections - SSE event-order
   and translation validation), limits-failures (upstream section).
 
 Escalation rule: if a Haiku agent returns malformed report JSON, dies, or its
@@ -51,7 +51,7 @@ a FAIL. Record the escalation in the report.
 
 ## Topology (fixed ports)
 
-One ollamock instance per endpoint — Olla keys endpoint identity on the URL,
+One ollamock instance per endpoint - Olla keys endpoint identity on the URL,
 so endpoints sharing a URL silently collapse to one (last declared wins).
 
 | Port | Process | Endpoint (type) | Models |
@@ -60,18 +60,18 @@ so endpoints sharing a URL silently collapse to one (last declared wins).
 | 19432 | ollamock `mock-b` | mock-openai-b (openai-compatible) | test-model, beta-model |
 | 19433 | ollamock `mock-c` | mock-ollama-c (ollama, native `/api/*`) | llama3.1:8b, shared-model |
 | 19434 | ollamock `mock-d` | mock-lmstudio-d (lm-studio) | phi-4, shared-model |
-| 19435 | ollamock `mock-e` | mock-vllm-e (vllm — anthropic passthrough target) | test-model, shared-model |
-| 19436 | ollamock `mock-f` | mock-litellm-f (litellm — anthropic translation target) | test-model, beta-model |
+| 19435 | ollamock `mock-e` | mock-vllm-e (vllm - anthropic passthrough target) | test-model, shared-model |
+| 19436 | ollamock `mock-f` | mock-litellm-f (litellm - anthropic translation target) | test-model, beta-model |
 | 19437 | ollamock `mock-g` | mock-llamacpp-g (llamacpp) | phi-4, shared-model |
-| 41141 | olla (main) | `test/validate/config.validate.yaml` — 7 endpoints, unifier, sticky, anthropic translator | |
-| 41142 | olla (limits) | `test/validate/config.validate.limits.yaml` — 256KB body cap, 30 req/min per-IP, backed by mock-a | |
+| 41141 | olla (main) | `test/validate/config.validate.yaml` - 7 endpoints, unifier, sticky, anthropic translator | |
+| 41142 | olla (limits) | `test/validate/config.validate.limits.yaml` - 256KB body cap, 30 req/min per-IP, backed by mock-a | |
 
 Mock fault injection: `POST http://127.0.0.1:194NN/_mock/behaviour` with
 `{"mode":"ok|error|flaky|hang|slow","error_status":503,"error_rate":0.5,"latency_ms":0,"fail_health":false,"drop_mid_stream":false,"malformed_json":false}`;
 `POST /_mock/reset` restores defaults; `GET /_mock/stats` gives per-path request
 counts. See `test/cmd/ollamock/README.md`.
 
-## Phase 0 — Setup
+## Phase 0 - Setup
 
 ```bash
 MODE=quick|nightly                  # from args or AskUserQuestion
@@ -91,7 +91,7 @@ previous run, otherwise abort with a clear message.
 Track every PID you start. **Teardown (Phase 7) must always run**, including on
 abort.
 
-## Phase 1 — Static gate (fail fast)
+## Phase 1 - Static gate (fail fast)
 
 Both modes:
 
@@ -107,10 +107,10 @@ make test-stress 2>&1 | tee "$LOGDIR/make-test-stress.log"
 ```
 
 Any failure here → **abort**: skip the live phases, go straight to Phase 8 and
-write a FAILED report quoting the failing output. Do not "fix and continue" —
+write a FAILED report quoting the failing output. Do not "fix and continue" -
 this skill is a gate, not a repair loop. Report failures; the user decides.
 
-## Phase 2 — Build
+## Phase 2 - Build
 
 ```bash
 EXE=$(go env GOEXE)
@@ -118,7 +118,7 @@ go build -o "build/validate/olla$EXE" .
 go build -o "build/validate/ollamock$EXE" ./test/cmd/ollamock
 ```
 
-## Phase 3 — Boot the fleet
+## Phase 3 - Boot the fleet
 
 Start each process with the Bash tool in background mode, logging to `$LOGDIR`:
 
@@ -145,19 +145,19 @@ Readiness gates (poll up to 60s, 1s interval; abort to teardown on timeout):
 Record boot time in the report. If any process dies during boot, capture the
 tail of its log into the report.
 
-## Phase 4 — Wave 1: parallel happy-path agents
+## Phase 4 - Wave 1: parallel happy-path agents
 
 Spawn **five agents in parallel** (single message, multiple Agent calls,
 `subagent_type: general-purpose`, `model` per the table below). Each agent
 prompt must contain:
 
 - The mode (`quick` or `nightly`) and instruction to execute the matching
-  checklist in its area file (path below) — read the file first.
+  checklist in its area file (path below) - read the file first.
 - The topology table above (URLs, ports, which mock backs which endpoint).
 - The reporting contract: *"Return ONLY a JSON object:
   `{"area":"<name>","pass":N,"fail":N,"warn":N,"skip":N,"failures":[{"check":"","expected":"","actual":"","evidence":""}],"warnings":[...],"notes":""}`.
   Every checklist item is exactly one of pass/fail/warn/skip. Use warn for
-  behaviour that works but looks off; never silently skip — record skips with a
+  behaviour that works but looks off; never silently skip - record skips with a
   reason in notes. Do not modify any repo files. Do not kill or restart any
   process. Do not call any `/_mock/behaviour` endpoint unless your area file
   explicitly says to."*
@@ -168,33 +168,33 @@ prompt must contain:
 | openai-api | `.claude/skills/olla-validate/areas/openai-api.md` | haiku |
 | anthropic (passthrough section) | `.claude/skills/olla-validate/areas/anthropic.md` | sonnet |
 | observability | `.claude/skills/olla-validate/areas/observability.md` | haiku |
-| limits-failures (client section — 41142 only) | `.claude/skills/olla-validate/areas/limits-failures.md` | haiku |
+| limits-failures (client section - 41142 only) | `.claude/skills/olla-validate/areas/limits-failures.md` | haiku |
 
 Wave 1 agents are read-only against the mocks: **no fault injection**, so they
 can run concurrently without poisoning each other's assertions.
 
-## Phase 5 — Wave 2: resilience agent (solo)
+## Phase 5 - Wave 2: resilience agent (solo)
 
-After wave 1 completes, `POST /_mock/reset` to all four mocks, confirm all
+After wave 1 completes, `POST /_mock/reset` to all seven mocks (ports 19431-19437), confirm all
 endpoints healthy again, then spawn **one** agent (`model: sonnet`) for
 `.claude/skills/olla-validate/areas/resilience.md` (mode-appropriate
 checklist). This agent **is** allowed to inject faults via `/_mock/behaviour`
-and (nightly) to ask you to kill/restart a mock — for process kill/restart
+and (nightly) to ask you to kill/restart a mock - for process kill/restart
 steps the agent reports back what it needs and you perform the kill/restart
 yourself, or simpler: give the agent the PID table and let it use taskkill/kill
-itself, then verify afterwards that all four mocks are running again (restart
+itself, then verify afterwards that all seven mocks are running again (restart
 any that are not, from the same command lines as Phase 3).
 
 After wave 2: reset all mock behaviours, re-confirm all endpoints return to
-healthy within 60s (this is itself a recovery assertion — record it; health
+healthy within 60s (this is itself a recovery assertion - record it; health
 probes tick globally every 30s regardless of per-endpoint check_interval).
 
-## Phase 6 — Nightly-only extended passes (sequential)
+## Phase 6 - Nightly-only extended passes (sequential)
 
 Skip this phase entirely in quick mode.
 
 ### 6a. Upstream-failure section of limits-failures
-Spawn the limits-failures agent again (`model: sonnet` — it mutates mock-a
+Spawn the limits-failures agent again (`model: sonnet` - it mutates mock-a
 behaviour), pointing it at the **upstream section** of its area file (runs
 solo). Reset mocks after.
 
@@ -214,7 +214,7 @@ sed 's/engine: "olla"/engine: "sherpa"/' \
   test/validate/config.validate.yaml > "$LOGDIR/config.sherpa.yaml"
 ```
 Restart olla-main on it, wait for readiness, then run **quick** checklists of
-core-routing, openai-api and anthropic (passthrough) — three parallel agents
+core-routing, openai-api and anthropic (passthrough) - three parallel agents
 (haiku, haiku, sonnet respectively, as in wave 1).
 Sherpa is maintenance-mode: quick depth is deliberate. Restore the original
 config and readiness afterwards.
@@ -224,7 +224,7 @@ Run for `$SOAK_MINUTES` minutes against olla-main (olla engine, original
 config):
 
 - Background load: a loop issuing ~5 req/s mixed traffic (non-stream chat,
-  streaming chat, anthropic messages, /olla/models) — a small bash loop is
+  streaming chat, anthropic messages, /olla/models) - a small bash loop is
   fine; log status-code counts.
 - Every 60s sample `/internal/process` (goroutines, heap) to
   `$LOGDIR/soak-samples.jsonl`.
@@ -244,23 +244,23 @@ the final third of samples. Anything outside → FAIL with the samples quoted.
 ```bash
 make bench-balancer 2>&1 | tee "$LOGDIR/bench-balancer.log"
 ```
-Record results in the report (informational — WARN if any benchmark fails to
+Record results in the report (informational - WARN if any benchmark fails to
 run, never FAIL on numbers).
 
-## Phase 7 — Teardown (always)
+## Phase 7 - Teardown (always)
 
 Kill every started PID (olla instances first, then mocks). On Windows Git
 Bash, `kill <pid>` works for processes you started; fall back to
 `taskkill //F //PID <pid>` if needed. Verify ports are released. Remove
 `build/validate/` binaries only if the user's tree was clean of them before.
 
-## Phase 8 — Report & verdict
+## Phase 8 - Report & verdict
 
 Aggregate every agent JSON plus the phase-level checks you performed yourself
 (gates, boot, recovery-after-reset, soak) into `$REPORT`:
 
 ```markdown
-# Olla Validation — <mode> — <RUN_TS>
+# Olla Validation - <mode> - <RUN_TS>
 - Commit: <GIT_SHA>  Branch: <branch>  Engine passes: olla[, sherpa]
 - Verdict: PASS | FAIL
 - Totals: P/F/W/S

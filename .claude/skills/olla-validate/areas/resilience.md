@@ -7,7 +7,7 @@ inject faults via `POST /_mock/behaviour` and `POST /_mock/reset`.**
 
 Rules of engagement:
 - Fault at most ONE mock at a time. Never fault mock-a and mock-b together
-  (they are the only openai-compatible pair — faulting both removes all
+  (they are the only openai-compatible pair - faulting both removes all
   failover headroom).
 - After EVERY scenario: `POST /_mock/reset` on the faulted mock, then poll
   `/internal/status/endpoints` until all 7 endpoints are healthy again before
@@ -17,7 +17,7 @@ Rules of engagement:
   checker runs on a global 30s ticker (`DefaultHealthCheckInterval` in
   `internal/adapter/health/checker.go`), so allow up to **40s** for any
   health transition driven by probes. Request-path connection failures mark
-  an endpoint unhealthy immediately — those are fast.
+  an endpoint unhealthy immediately - those are fast.
 - `/olla/openai/` and `/olla/openai-compatible/` routes are inclusive by
   design: any OpenAI-compatible endpoint may serve them. Failover assertions
   on those routes must check "not the faulted endpoint", not a specific
@@ -51,7 +51,7 @@ Documented current behaviour (do not "fix" expectations to taste):
 
 ## Nightly additions
 
-6. Connection-refused failover: ask the orchestrator's PID table — kill the
+6. Connection-refused failover: ask the orchestrator's PID table - kill the
    mock-b process outright. Immediately issue 20 requests to
    `/olla/openai-compatible/` → all 200, none from mock-b (retry-on-
    connection-failure must hide the dead backend; brief first-request latency
@@ -61,7 +61,7 @@ Documented current behaviour (do not "fix" expectations to taste):
 7. Sticky repin: pin session `validate-repin-1` (two turns, note the
    endpoint). Fault that endpoint's mock with `fail_health`. Wait for
    non-routable, then send turn 3 with the same session → 200 from a
-   different endpoint and `X-Olla-Sticky-Session` is `repin` (or `miss` —
+   different endpoint and `X-Olla-Sticky-Session` is `repin` (or `miss` -
    record which; a 5xx or routing to the dead backend = FAIL). Reset.
 8. Rate-limit semantics: set `{"mode":"error","error_status":429}` on mock-d
    → requests to `/olla/lmstudio/` surface 429; the endpoint must NOT be
@@ -69,7 +69,7 @@ Documented current behaviour (do not "fix" expectations to taste):
    not a health failure). Reset. Same check with 401 (ConfigError class).
 9. Hang/timeout: set `{"mode":"hang","latency_ms":30000}` on mock-c → a
    request to `/olla/ollama/api/chat` fails within the proxy response
-   timeout (60s config; expect an error well before 70s — record actual) and
+   timeout (60s config; expect an error well before 70s - record actual) and
    olla-main remains responsive to other routes throughout (probe every 2s
    while waiting). Reset.
 10. Mid-stream drop: set `{"drop_mid_stream":true}` on mock-e (19435) → a
@@ -83,9 +83,9 @@ Documented current behaviour (do not "fix" expectations to taste):
     runaway (`/internal/process` before/after within 25%). Reset.
 12. Repeated kill/restore cycling (mini-chaos): 5 cycles of
     fail_health(mock-b) → wait down → reset → wait up (each cycle can take
-    ~2 min given the 30s probe tick — budget ~10 min). After the 5th cycle,
+    ~2 min given the 30s probe tick - budget ~10 min). After the 5th cycle,
     all endpoints healthy, sticky stats endpoint still serves, goroutines
     within 25% of your baseline from check 1.
-13. Final state assertion: all four mocks report default behaviour
+13. Final state assertion: all seven mocks report default behaviour
     (`GET /_mock/behaviour`), all 7 endpoints healthy, `/internal/status`
-    200. This is mandatory — you must leave the fleet clean.
+    200. This is mandatory - you must leave the fleet clean.

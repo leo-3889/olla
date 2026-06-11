@@ -1,7 +1,7 @@
 # Area: openai-api
 
 Validates the OpenAI-compatible API surface and streaming behaviour through
-olla-main on `http://127.0.0.1:41141`. **Read-only — never call
+olla-main on `http://127.0.0.1:41141`. **Read-only - never call
 `/_mock/behaviour`** (the slow-stream check below uses ollamock's startup
 pacing only in nightly via instructions to the orchestrator; if you cannot do
 a check without mutating mock state, mark it skip with a note).
@@ -50,4 +50,4 @@ a check without mutating mock state, mark it skip with a note).
     acceptable; 5xx = FAIL).
 14. Response-time sanity: median of 20 sequential non-stream requests
     < 250ms (mocks are instant; this catches gross proxy regressions).
-    WARN, not FAIL, if exceeded — machines vary.
+    WARN, not FAIL, if exceeded - machines vary.

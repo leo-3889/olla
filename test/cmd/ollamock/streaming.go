@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,7 +10,7 @@ import (
 )
 
 // inferenceRequest is the minimal request shape shared across all protocols.
-// Stream nil means "use protocol default" — true for Ollama, false for OpenAI.
+// Stream nil means "use protocol default" - true for Ollama, false for OpenAI.
 type inferenceRequest struct {
 	Stream *bool  `json:"stream"`
 	Model  string `json:"model"`
@@ -17,15 +18,6 @@ type inferenceRequest struct {
 
 func parseInferenceRequest(r *http.Request) (inferenceRequest, error) {
 	var req inferenceRequest
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-
-	// We only need the two top-level fields; unknown fields come from real
-	// clients that send messages, tools, temperature etc. Allow them silently.
-	dec2 := json.NewDecoder(r.Body)
-	_ = dec2
-	// Re-parse permissively — DisallowUnknownFields was too strict for real
-	// client payloads. Use a map-based approach instead.
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
 		return inferenceRequest{}, err
 	}
@@ -131,7 +123,7 @@ func (srv *mockServer) streamOllamaChat(w http.ResponseWriter, r *http.Request, 
 
 	for i := range n {
 		if b.DropMidStream && i == dropAt {
-			// Truncate mid-stream — client gets EOF without a done:true final line.
+			// Truncate mid-stream - client gets EOF without a done:true final line.
 			tryHijackClose(w)
 			return
 		}
@@ -337,7 +329,7 @@ func (srv *mockServer) handleOpenAICompletion(w http.ResponseWriter, r *http.Req
 	stream := resolveStream(req.Stream, false)
 
 	if stream {
-		// Stream legacy completions using SSE — same shape as chat but with
+		// Stream legacy completions using SSE - same shape as chat but with
 		// text field instead of delta.content.
 		srv.streamOpenAICompletion(w, r, model)
 		return
@@ -481,7 +473,7 @@ func (srv *mockServer) streamAnthropic(w http.ResponseWriter, r *http.Request, m
 	_ = rc.Flush()
 
 	if b.DropMidStream {
-		// Stop after content_block_start + ceil(n/2) deltas — no closing events.
+		// Stop after content_block_start + ceil(n/2) deltas - no closing events.
 		for i := range dropAt {
 			chunk := fmt.Sprintf("The answer is 42. BACKEND:%s model:%s chunk:%d", srv.cfg.name, model, i)
 			writeSSEEvent(w, "content_block_delta", map[string]any{
@@ -562,7 +554,7 @@ func writeNDJSON(w http.ResponseWriter, v any) {
 
 // applyTTFT sleeps for ttftMS milliseconds before the first token.
 // The sleep is context-aware so a cancelled request doesn't block.
-func applyTTFT(ctx interface{ Done() <-chan struct{} }, ttftMS int) {
+func applyTTFT(ctx context.Context, ttftMS int) {
 	if ttftMS <= 0 {
 		return
 	}
@@ -574,7 +566,7 @@ func applyTTFT(ctx interface{ Done() <-chan struct{} }, ttftMS int) {
 
 // applyTPS paces token emission. When tps > 0 it sleeps for 1000/tps ms
 // between chunks to simulate realistic streaming throughput.
-func applyTPS(ctx interface{ Done() <-chan struct{} }, tps int) {
+func applyTPS(ctx context.Context, tps int) {
 	if tps <= 0 {
 		return
 	}
@@ -587,7 +579,7 @@ func applyTPS(ctx interface{ Done() <-chan struct{} }, tps int) {
 
 // tryHijackClose attempts to abruptly close the TCP connection to simulate a
 // mid-stream backend failure. When hijack is unavailable (e.g. httptest with
-// HTTP/2), it silently falls through — the truncated write still achieves the
+// HTTP/2), it silently falls through - the truncated write still achieves the
 // test goal of presenting an incomplete response.
 func tryHijackClose(w http.ResponseWriter) {
 	hj, ok := w.(http.Hijacker)
@@ -603,7 +595,7 @@ func tryHijackClose(w http.ResponseWriter) {
 
 // readBody reads the entire request body, returning an empty slice on error.
 // Errors are intentionally swallowed because missing bodies are treated as
-// empty requests in the mock — we still want to return a valid response.
+// empty requests in the mock - we still want to return a valid response.
 func readBody(r *http.Request) []byte {
 	if r.Body == nil {
 		return nil

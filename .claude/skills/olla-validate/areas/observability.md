@@ -1,7 +1,7 @@
 # Area: observability
 
 Validates internal/status/stats endpoints, the unified model registry and
-version info. Target: olla-main on `http://127.0.0.1:41141`. **Read-only —
+version info. Target: olla-main on `http://127.0.0.1:41141`. **Read-only -
 never call `/_mock/behaviour`.** Other wave-1 agents are generating traffic
 concurrently, so assert structure and plausibility, not exact counts.
 
@@ -9,10 +9,10 @@ concurrently, so assert structure and plausibility, not exact counts.
 
 1. `GET /internal/health` → 200, valid JSON.
 2. `GET /internal/status` → 200, valid JSON; FAIL on any 5xx (this endpoint
-   has a known history of panics — treat errors here as serious).
+   has a known history of panics - treat errors here as serious).
 3. `GET /internal/status/endpoints` → 200; exactly 7 endpoints
-   (mock-openai-a/b, mock-vllm-a, mock-litellm-b, mock-ollama-c,
-   mock-lmstudio-d, mock-llamacpp-d); all healthy/routable.
+   (mock-openai-a, mock-openai-b, mock-ollama-c, mock-lmstudio-d,
+   mock-vllm-e, mock-litellm-f, mock-llamacpp-g); all healthy/routable.
 4. `GET /internal/status/models` → 200, non-empty.
 5. `GET /internal/stats/models` → 200, valid JSON.
 6. `GET /internal/stats/sticky` → 200 and `enabled: true` (sticky is on in

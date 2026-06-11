@@ -1,298 +1,125 @@
 # CLAUDE.md
 
+> Single source of truth for agent guidance. `AGENTS.md` is a symlink to this file - edit here only.
+
 ## Overview
-Olla is a high-performance proxy and load balancer for LLM infrastructure, written in Go. It intelligently routes requests across local inference nodes (Ollama, LM Studio, LiteLLM, vLLM, vLLM-MLX, SGLang, llama.cpp, Lemonade, LMDeploy, Docker Model Runner, and OpenAI-compatible endpoints). The Anthropic Messages API is also supported via passthrough or translation.
+Olla is a high-performance proxy and load balancer for LLM infrastructure, written in Go. It routes requests across local inference nodes (Ollama, LM Studio, LiteLLM, vLLM, vLLM-MLX, SGLang, llama.cpp, Lemonade, LMDeploy, Docker Model Runner, and OpenAI-compatible endpoints). The Anthropic Messages API is supported via passthrough or translation.
 
-The project provides two proxy engines: Sherpa (simple, maintainable) and Olla (high-performance with advanced features).
+Two proxy engines: **Sherpa** (simple, maintenance-mode) and **Olla** (high-performance, where all new engine work goes). Olla is local-only - hosted API providers (Groq, Gemini, etc.) are out of scope.
 
-Full documentation available at: https://thushan.github.io/olla/
+Full documentation: https://thushan.github.io/olla/
 
 ## Commands
 ```bash
-make ready           # Run before commit (test-short + test-race + fmt + vet + lint + align)
-make ready-tools     # Check code with tools only (fmt + vet + lint + align)
-make test            # Run all tests
-make test-race       # Run tests with race detection
-make test-stress     # Run comprehensive stress tests
-make bench           # Run all benchmarks
-make bench-balancer  # Run balancer benchmarks
-make build           # Build optimised binary with version info
-make build-local     # Build binary to ./build/ (fast, for testing)
-make run             # Run with version info
-make run-debug       # Run with debug logging
-make docker-build    # Build Docker image with goreleaser (requires goreleaser)
-make docker-build-local # Build Docker image locally for amd64 (no goreleaser required)
-make docker-build-local-arm64 # Build Docker image locally for ARM64 (no goreleaser required)
-make docker-run      # Run Docker image with local config (amd64)
-make ci              # Run full CI pipeline locally
-make help            # Show all available targets
+make ready           # Pre-commit gate: test-short + test-race + fmt + vet + lint + align
+make ready-tools     # Tools only: fmt + vet + lint + align
+make test            # All tests          make test-race   # With race detection
+make test-stress     # Stress tests       make bench        # All benchmarks
+make build           # Optimised binary   make build-local  # Fast build to ./build/
+make run             # Run                make run-debug    # Run with debug logging
+make docker-build-local        # Build amd64 image locally (no goreleaser)
+make docker-build-local-arm64  # Build ARM64 image locally (no goreleaser)
+make ci              # Full CI pipeline locally
+make help            # All targets
+```
+Always run `make ready` before reporting work complete or committing.
+
+Specific test patterns:
+```bash
+go test -v ./internal/adapter/proxy -run TestAllProxies   # or TestSherpa / TestOlla
 ```
 
 ## Project Structure
-```
-olla/
-├── main.go                    # Entry point, initialises services
-├── config.yaml               # Default configuration
-├── config/
-│   ├── profiles/            # Provider-specific profiles
-│   │   ├── ollama.yaml     # Ollama configuration
-│   │   ├── llamacpp.yaml   # llama.cpp configuration
-│   │   ├── lmstudio.yaml   # LM Studio configuration
-│   │   ├── lemonade.yaml   # Lemonade SDK configuration
-│   │   ├── litellm.yaml    # LiteLLM gateway configuration
-│   │   ├── lmdeploy.yaml   # LMDeploy configuration
-│   │   ├── vllm.yaml       # vLLM configuration
-│   │   ├── vllm-mlx.yaml   # vLLM-MLX (Apple Silicon) configuration
-│   │   ├── sglang.yaml     # SGLang configuration
-│   │   ├── dmr.yaml        # Docker Model Runner configuration
-│   │   └── openai-compatible.yaml  # OpenAI-compatible generic profile (type: "openai" is an alias)
-│   ├── models.yaml         # Model configurations
-│   └── config.local.yaml   # Local configuration overrides (user, not committed to git)
-├── internal/
-│   ├── core/               # Domain layer (business logic)
-│   │   ├── domain/         # Core entities
-│   │   ├── ports/          # Interface definitions
-│   │   └── constants/      # Application constants
-│   ├── adapter/            # Infrastructure layer
-│   │   ├── balancer/       # Load balancing strategies
-│   │   ├── converter/      # Model format converters
-│   │   ├── discovery/      # Service discovery
-│   │   ├── factory/        # Factory patterns
-│   │   ├── filter/         # Request/response filtering
-│   │   ├── health/         # Health checking & circuit breakers
-│   │   ├── inspector/      # Request inspection
-│   │   ├── metrics/        # Metrics collection
-│   │   ├── proxy/          # Proxy implementations
-│   │   │   ├── sherpa/     # Simple, maintainable proxy
-│   │   │   ├── olla/       # High-performance proxy
-│   │   │   └── core/       # Shared proxy components
-│   │   ├── registry/       # Model & profile registries
-│   │   ├── security/       # Security features (rate/size limits)
-│   │   ├── stats/          # Statistics collection
-│   │   ├── translator/     # API translation layer (OpenAI ↔ Provider)
-│   │   └── unifier/        # Model unification
-│   ├── app/                # Application layer
-│   │   ├── handlers/       # HTTP handlers
-│   │   │   ├── server.go              # HTTP server setup
-│   │   │   ├── server_routes.go       # Route registration
-│   │   │   ├── handler_proxy.go       # Main proxy handler
-│   │   │   ├── handler_provider_*.go  # Provider-specific handlers
-│   │   │   ├── handler_translation.go # Translation handler
-│   │   │   ├── handler_status*.go     # Status endpoints
-│   │   │   ├── handler_health.go      # Health endpoints
-│   │   │   └── handler_version.go     # Version information
-│   │   ├── middleware/     # HTTP middleware
-│   │   └── services/       # Application services
-│   ├── config/             # Configuration management
-│   ├── env/                # Environment handling
-│   ├── integration/        # Integration tests
-│   ├── logger/             # Logging framework
-│   ├── router/             # Routing logic
-│   ├── util/               # Utilities
-│   └── version/            # Version management
-├── pkg/                    # Reusable packages
-│   ├── container/         # Dependency injection
-│   ├── eventbus/          # Event bus (pub/sub)
-│   ├── format/            # Formatting utilities
-│   ├── nerdstats/         # Process statistics
-│   ├── pool/              # Object pooling
-│   └── profiler/          # Profiling support
-└── test/
-    ├── cmd/               # Test helper binaries
-    │   ├── mockbackend/   # Minimal OpenAI-shaped auth-test backend
-    │   └── ollamock/      # Multi-protocol mock LLM backend with fault injection
-    ├── validate/          # Configs for the /olla-validate harness
-    └── scripts/           # Test scripts
-        ├── auth/          # Authentication tests
-        ├── cases/         # Test cases
-        ├── load/          # Load testing
-        ├── logic/         # Logic & routing tests
-        ├── platform/      # Platform-specific tests
-        ├── security/      # Security tests
-        └── streaming/     # Streaming tests
-```
+Hexagonal architecture - domain (`internal/core`) → infrastructure (`internal/adapter`) → application (`internal/app`):
 
-## Key Files
-- `main.go` - Application entry point
-- `config.yaml` - Main configuration
-- `internal/app/handlers/server_routes.go` - Route registration & API setup
-- `internal/app/handlers/handler_proxy.go` - Request routing logic
-- `internal/app/handlers/handler_translation.go` - Translation handler with passthrough logic
-- `internal/adapter/proxy/sherpa/service.go` - Sherpa proxy implementation
-- `internal/adapter/proxy/olla/service.go` - Olla proxy implementation
-- `internal/adapter/translator/` - API translation layer (OpenAI ↔ Provider formats)
-- `internal/adapter/translator/types.go` - PassthroughCapable interface and translator types
-- `internal/adapter/translator/anthropic/` - Anthropic translator implementation
-- `internal/adapter/stats/translator_collector.go` - Translator metrics collector
-- `internal/adapter/balancer/sticky.go` - Sticky session wrapper
-- `internal/app/handlers/handler_stats_sticky.go` - Sticky session stats endpoint
+- `main.go` - entry point
+- `config.yaml` - default config; `config/config.local.yaml` - user overrides (gitignored)
+- `config/profiles/*.yaml` - one profile per backend type (ollama, vllm, vllm-mlx, sglang, llamacpp, lemonade, litellm, lmdeploy, dmr, openai-compatible). `type: "openai"` aliases `openai-compatible`.
+- `config/models.yaml` - model configuration
+- `internal/core/` - domain layer: `domain/` (entities), `ports/` (interfaces), `constants/`
+- `internal/adapter/` - infrastructure: `balancer/`, `health/` (+ circuit breakers), `proxy/` (`sherpa/`, `olla/`, shared `core/`), `registry/`, `translator/` (OpenAI ↔ provider), `unifier/`, `stats/`, `security/`, `discovery/`, `inspector/`, `metrics/`, `converter/`, `filter/`
+- `internal/app/` - `handlers/` (HTTP), `middleware/`, `services/`
+- `internal/` (other) - `config/`, `router/`, `logger/`, `version/`, `integration/`, `env/`, `util/`
+- `pkg/` - reusable: `container/` (DI), `eventbus/` (pub/sub), `pool/` (object pooling), `format/`, `nerdstats/`, `profiler/`
+- `test/cmd/ollamock/` - multi-protocol mock backend with fault injection; `test/cmd/mockbackend/` - minimal auth-test backend
+- `test/validate/` - `/olla-validate` harness configs; `test/scripts/` - e2e scenarios (auth, load, logic, platform, security, streaming)
+
+### Key Files
+- `internal/app/handlers/server_routes.go` - route registration & API setup
+- `internal/app/handlers/handler_proxy.go` - request routing logic
+- `internal/app/handlers/handler_translation.go` - translation handler with passthrough logic
+- `internal/adapter/proxy/{sherpa,olla}/service.go` - proxy engine implementations
+- `internal/adapter/translator/` - translation layer; `types.go` (PassthroughCapable interface), `anthropic/` (impl)
+- `internal/adapter/stats/translator_collector.go` - translator metrics collector
+- `internal/adapter/balancer/sticky.go` - sticky session wrapper
 - `internal/core/constants/translator.go` - TranslatorMode and FallbackReason constants
-- `internal/core/ports/stats.go` - StatsCollector interface with translator tracking
+- `internal/core/ports/stats.go` - StatsCollector interface (incl. translator tracking)
 - `internal/core/domain/profile_config.go` - AnthropicSupportConfig for backend profiles
-- `config/profiles/*.yaml` - Backend profiles with `anthropic_support` sections
-- `internal/version/version.go` - Version information embedded at build time
-- `/test/scripts/logic/test-model-routing.sh` - Test routing & headers
+- `internal/version/version.go` - build-time version info
+- `test/scripts/logic/test-model-routing.sh` - routing & header tests
 
 ## API Endpoints
+**Internal** (`/internal/...`): `health`, `status`, `status/endpoints`, `status/models`, `stats/models`, `stats/translators`, `stats/sticky` (`{"enabled":false}` when off), `process`. Plus `/version`.
 
-### Internal Endpoints
-- `/internal/health` - Health check endpoint
-- `/internal/status` - Endpoint status
-- `/internal/status/endpoints` - Endpoints status details
-- `/internal/status/models` - Models status details
-- `/internal/stats/models` - Model statistics
-- `/internal/stats/translators` - Translator statistics
-- `/internal/stats/sticky` - Sticky session statistics (returns `{"enabled":false}` when disabled)
-- `/internal/process` - Process statistics
-- `/version` - Version information
+**Unified models**: `/olla/models` (listing with filtering), `/olla/models/{id}` (by ID or alias).
 
-### Unified Model Endpoints
-- `/olla/models` - Unified models listing with filtering
-- `/olla/models/{id}` - Get unified model by ID or alias
+**Proxy**: `/olla/proxy/` (POST), `/olla/proxy/v1/models` (GET, OpenAI-compatible).
 
-### Proxy Endpoints
-- `/olla/proxy/` - Olla API proxy endpoint (POST)
-- `/olla/proxy/v1/models` - OpenAI-compatible models listing (GET)
+**Provider prefixes** (profile-driven, see `server_routes.go`): `/olla/{ollama,vllm,vllm-mlx,sglang,lmdeploy,llamacpp,lemonade,litellm,dmr}/`, `/olla/lmstudio/` (+ `lm-studio`, `lm_studio` aliases), `/olla/openai/` and `/olla/openai-compatible/` (both served by `openai-compatible.yaml`).
 
-### Provider Proxy Prefixes
-Profile-driven per-backend namespaces (see `internal/app/handlers/server_routes.go`):
-- `/olla/ollama/`
-- `/olla/lmstudio/` (also `/olla/lm-studio/`, `/olla/lm_studio/`)
-- `/olla/vllm/`
-- `/olla/vllm-mlx/`
-- `/olla/sglang/`
-- `/olla/lmdeploy/`
-- `/olla/llamacpp/`
-- `/olla/lemonade/`
-- `/olla/litellm/`
-- `/olla/dmr/`
-- `/olla/openai/` and `/olla/openai-compatible/` (both served by `openai-compatible.yaml`)
-
-### Translator Endpoints
-Dynamically registered based on configured translators (e.g., Anthropic Messages API)
-
-- `/olla/anthropic/v1/messages` - Anthropic Messages API (POST) - supports passthrough and translation modes
-- `/olla/anthropic/v1/models` - List models in Anthropic format (GET)
-- `/olla/anthropic/v1/messages/count_tokens` - Token count estimation (POST)
+**Translator** (dynamically registered): `/olla/anthropic/v1/messages` (POST, passthrough + translation), `/olla/anthropic/v1/models` (GET), `/olla/anthropic/v1/messages/count_tokens` (POST).
 
 ## Response Headers
-- `X-Olla-Endpoint`: Backend name
-- `X-Olla-Model`: Model used
-- `X-Olla-Backend-Type`: ollama, lm-studio, litellm, vllm, vllm-mlx, sglang, llamacpp, lmdeploy, lemonade, openai, openai-compatible, docker-model-runner, omlx
-- `X-Olla-Request-ID`: Request ID
-- `X-Olla-Response-Time`: Total processing time
-- `X-Olla-Mode`: Translator mode used (`passthrough` or absent for translation) - set on Anthropic translator requests
-- `X-Olla-Routing-Strategy`: Routing strategy used (when model routing is active)
-- `X-Olla-Routing-Decision`: Routing decision made (routed/fallback/rejected)
-- `X-Olla-Routing-Reason`: Human-readable reason for routing decision
-- `X-Olla-Sticky-Session`: Sticky session status (hit/miss/repin/disabled)
-- `X-Olla-Sticky-Key-Source`: Key source used (session_header/prefix_hash/auth_header/ip/none)
-- `X-Olla-Session-ID`: Echoed session ID when client supplies one
-
-## Testing
-
-### Testing Strategy
-1. **Unit Tests**: Components in isolation
-2. **Integration Tests**: Full request flow through proxy engines
-3. **Benchmark Tests**: Performance comparison (balancers, proxy engines, repositories)
-4. **Security Tests**: Rate limiting and size restrictions (see `/test/scripts/security/`)
-5. **Stress Tests**: Comprehensive testing under load
-6. **Script Tests**: End-to-end scenarios in `/test/scripts/`
-
-### Testing Commands
-```bash
-# Core test commands
-make test              # Run all tests
-make test-race         # Run with race detection
-make test-stress       # Run stress tests
-make test-cover-html   # Generate coverage HTML report
-
-# Benchmark commands
-make bench             # Run all benchmarks
-make bench-balancer    # Run balancer benchmarks
-make bench-repo        # Run repository benchmarks
-
-# Specific test patterns
-go test -v ./internal/adapter/proxy -run TestAllProxies
-go test -v ./internal/adapter/proxy -run TestSherpa
-go test -v ./internal/adapter/proxy -run TestOlla
-```
-
-Always run `make ready` before committing changes.
-
-### Validation Harness (`/olla-validate`)
-Agent-driven end-to-end validation against mock backends — no Docker, no real
-inference infrastructure, CI-safe. Defined in `.claude/skills/olla-validate/`.
-
-- `/olla-validate --quick` — 5–10 min gate after major changes
-- `/olla-validate --nightly` — multi-hour pre-release gate (chaos, soak, Sherpa pass, forced-translation pass, benchmarks)
-- No flag — prompts for the depth
-
-It gates on `make ready` first, then boots seven `test/cmd/ollamock` instances
-(ports 19431–19437) plus two Olla instances (`test/validate/config.validate*.yaml`,
-ports 41141/41142) and fans out parallel agents per area checklist. Reports land
-in `test/results/`. ollamock speaks OpenAI, Ollama-native, LM Studio, Lemonade
-and Anthropic wire formats with runtime fault injection via `/_mock/behaviour`
-(see `test/cmd/ollamock/README.md`). Full docs: `docs/content/development/validation.md`.
+`X-Olla-Endpoint` (backend name), `X-Olla-Model`, `X-Olla-Backend-Type` (ollama, lm-studio, litellm, vllm, vllm-mlx, sglang, llamacpp, lmdeploy, lemonade, openai, openai-compatible, docker-model-runner, omlx), `X-Olla-Request-ID`, `X-Olla-Response-Time`, `X-Olla-Mode` (`passthrough` or absent for translation), `X-Olla-Routing-{Strategy,Decision,Reason}`, `X-Olla-Sticky-Session` (hit/miss/repin/disabled), `X-Olla-Sticky-Key-Source`, `X-Olla-Session-ID`.
 
 ## Architecture Notes
+- **Translator layer** - API format translation (e.g. OpenAI ↔ Anthropic) with passthrough optimisation. **Passthrough mode**: when a backend natively supports the Anthropic Messages API (vLLM, llama.cpp, LM Studio, Ollama), requests bypass translation entirely.
+- **Translator metrics** - thread-safe per-translator stats (passthrough/translation rates, fallback reasons, latency, streaming breakdown) in `stats/translator_collector.go`.
+- **Sticky sessions** - optional decorator on the endpoint selector that pins multi-turn conversations to the backend that handled the first turn, maximising KV-cache reuse. 64-bit FNV-1a hashed keys, TTL + LRU bounded, purged on routable→non-routable health transitions (`balancer/sticky.go`).
+- **Load balancing** - priority-based recommended for production.
+- **Version management** - build-time injection via `internal/version`.
 
-### Hexagonal Architecture
-- **Domain Layer** (`internal/core`): Business logic, entities, and interfaces
-- **Infrastructure Layer** (`internal/adapter`): Implementations (proxies, balancers, registries)
-- **Application Layer** (`internal/app`): HTTP handlers, middleware, and services
+## Testing Strategy
+Unit (isolation) · integration (full request flow through engines) · benchmark (balancers, engines, repos) · security (rate/size limits, `test/scripts/security/`) · stress (under load) · script (e2e, `test/scripts/`).
 
-### Key Components
-- **Translator Layer**: Enables API format translation (e.g., OpenAI ↔ Anthropic) with passthrough optimisation for backends with native support
-- **Passthrough Mode**: When a backend natively supports the Anthropic Messages API (vLLM, llama.cpp, LM Studio, Ollama), requests bypass translation entirely
-- **Translator Metrics**: Thread-safe per-translator statistics tracking passthrough/translation rates, fallback reasons, latency, and streaming breakdown (`internal/adapter/stats/translator_collector.go`)
-- **Sticky Sessions**: Optional decorator on the endpoint selector that pins multi-turn LLM conversations to the backend that handled the first turn, maximising KV-cache reuse. 64-bit FNV-1a hashed keys, TTL + LRU bounded, purged on routable→non-routable health transitions (`internal/adapter/balancer/sticky.go`)
-- **Proxy Engines**: Choose Sherpa (simple) or Olla (high-performance)
-- **Load Balancing**: Priority-based recommended for production
-- **Version Management**: Build-time version injection via `internal/version`
+### Validation Harness (`/olla-validate`)
+Agent-driven end-to-end validation against mock backends - no Docker, no real inference, CI-safe. Defined in `.claude/skills/olla-validate/`.
 
-### Development Guidelines
-- Go 1.24 (do not bump to 1.25; see Dependencies for held-back packages)
-- Australian English for comments and documentation
-- Comment on **why** rather than **what**
-- Always run `make ready` before committing
-- Use `make help` to see all available commands
+- `/olla-validate --quick` - 5–10 min gate after major changes
+- `/olla-validate --nightly` - multi-hour pre-release gate (chaos, soak, Sherpa pass, forced-translation pass, benchmarks)
+- No flag - prompts for depth
+
+Gates on `make ready` first, then boots seven `test/cmd/ollamock` instances (ports 19431–19437) plus two Olla instances (`test/validate/config.validate*.yaml`, ports 41141/41142) and fans out parallel agents per area. Reports land in `test/results/`. ollamock speaks OpenAI, Ollama-native, LM Studio, Lemonade and Anthropic wire formats with runtime fault injection via `/_mock/behaviour` (see `test/cmd/ollamock/README.md`). Full docs: `docs/content/development/validation.md`.
+
+## Development Guidelines
+- **Go 1.24** - do not bump to 1.25 (see pins below).
+- Australian English for comments and documentation. No em-dashes.
+- Comment on **why**, not **what**. Concise and direct.
+- Production code must not panic - guard closes with CAS or `sync.Once`.
+- Always run `make ready` before committing.
 
 ## Dependencies (Endorsed)
-
+Do not add dependencies unless explicitly asked.
 ```go
 "github.com/docker/go-units"     // Human-readable sizes
-"github.com/json-iterator/go"    // High-performance JSON encoding/decoding
+"github.com/json-iterator/go"    // High-performance JSON
 "github.com/puzpuzpuz/xsync/v4"  // Concurrent maps/counters
 "github.com/tidwall/gjson"       // Fast JSON parsing
-"github.com/jellydator/ttlcache" // Time-to-live cache
-"github.com/rs/cors"             // CORS middleware for browser clients
+"github.com/jellydator/ttlcache" // TTL cache
+"github.com/rs/cors"             // CORS middleware (off by default)
 "golang.org/x/sync"              // errgroup
 "golang.org/x/time"              // rate limiting
 ```
 
-Do not add additional dependencies unless explicitly asked.
-
 ### Go 1.24 Compatibility Pins
+From the versions below onward the upstream `go` directive moves to 1.25, so these are held back. `go get -u ./...` silently bumps the toolchain by pulling them - afterwards re-pin in `go.mod`, or use `go get -u=patch ./...`.
 
-Olla targets Go 1.24. From the versions listed below onward, the upstream `go` directive moves to 1.25, so these packages are held back:
+- `golang.org/x/sys` v0.41.0 · `golang.org/x/term` v0.40.0 · `golang.org/x/text` v0.34.0
+- `golang.org/x/sync` v0.19.0 · `golang.org/x/time` v0.14.0 · `atomicgo.dev/keyboard` v0.2.9
 
-- `golang.org/x/sys` at v0.41.0 (v0.42.0+ requires Go 1.25)
-- `golang.org/x/term` at v0.40.0
-- `golang.org/x/text` at v0.34.0
-- `golang.org/x/sync` at v0.19.0
-- `golang.org/x/time` at v0.14.0
-- `atomicgo.dev/keyboard` at v0.2.9
+## Sub-Agent Delegation
+CRITICAL: delegate work to the appropriate subagent; use the main context only for orchestration and task decomposition.
 
-`go get -u ./...` will silently bump the toolchain to 1.25 by pulling these. After running it, check `go.mod` and pin the affected packages back to the versions above, or use `go get -u=patch ./...` to limit upgrades to patch releases only.
-
-## SUB-AGENT DELEGATION
-
-CRITICAL: Always delegate tasks to the appropriate subagent. Do NOT perform work directly in the main context.
-
-- Code Review → Use the appropriate language subagent (Eg. Go Architect) or reviewer subagent
-- Code changes → Use the appropriate language subagent (Eg. Go Architect) or implementer subagent
-- Research/exploration → Use the explore subagent
-- Testing → Use the test subagent
-
-Only use the main context for orchestration and task decomposition.
+- Code review / code changes → language subagent (e.g. Go Architect) or reviewer/implementer
+- Research / exploration → explore subagent
+- Testing → test subagent

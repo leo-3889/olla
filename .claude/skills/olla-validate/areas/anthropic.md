@@ -2,7 +2,7 @@
 
 Validates the Anthropic Messages API surface: passthrough to natively capable
 backends and (nightly) the forced translation path. Target: olla-main on
-`http://127.0.0.1:41141`. **Read-only — never call `POST /_mock/behaviour`.**
+`http://127.0.0.1:41141`. **Read-only - never call `POST /_mock/behaviour`.**
 `GET /_mock/stats` is allowed.
 
 The orchestrator tells you which section to run: **passthrough** (default
@@ -34,7 +34,7 @@ Headers: `Content-Type: application/json`, `x-api-key: validate`,
    (non-empty `data[]`).
 5. `POST /olla/anthropic/v1/messages/count_tokens` with the standard body →
    200 with `input_tokens > 0`.
-6. Invalid body (`{"model":"test-model"}` — no messages/max_tokens) → 4xx
+6. Invalid body (`{"model":"test-model"}` - no messages/max_tokens) → 4xx
    with an Anthropic-style error object (`type:"error"` or similar); FAIL on
    5xx or hang.
 7. Sticky on the translator route: two requests with
@@ -43,7 +43,7 @@ Headers: `Content-Type: application/json`, `x-api-key: validate`,
 ### Nightly additions
 
 8. Confirm wire-level passthrough via mock stats: note `/_mock/stats` before
-   and after a burst of 5 messages — the serving mock's `/v1/messages` count
+   and after a burst of 5 messages - the serving mock's `/v1/messages` count
    rises and its `/v1/chat/completions` count does not (for those requests).
 9. 20 parallel non-stream messages → all 200, all passthrough.
 10. Streaming with a multi-block conversation (system + 3 user/assistant
