@@ -372,8 +372,11 @@ func (s *Service) UpdateConfig(config ports.ProxyConfiguration) {
 		newConfig.MaxIdleConnsPerHost = ollaConfig.MaxIdleConnsPerHost
 		newConfig.ResponseHeaderTimeout = ollaConfig.ResponseHeaderTimeout
 		newConfig.TLSHandshakeTimeout = ollaConfig.TLSHandshakeTimeout
-	} else {
-		// fallback: preserve current Olla-specific settings for non-Olla configs
+	} else if current != nil {
+		// fallback: preserve current Olla-specific settings for non-Olla configs.
+		// Guard against a nil current pointer — only reachable if UpdateConfig is
+		// called on a zero-value Service (e.g. in tests) before NewService stores
+		// the initial configuration.
 		newConfig.MaxIdleConns = current.MaxIdleConns
 		newConfig.IdleConnTimeout = current.IdleConnTimeout
 		newConfig.MaxConnsPerHost = current.MaxConnsPerHost
@@ -385,11 +388,12 @@ func (s *Service) UpdateConfig(config ports.ProxyConfiguration) {
 	s.configuration.Store(newConfig)
 }
 
-// cleanupLoop periodically cleans up unused endpoint pools and circuit breakers
+// cleanupLoop periodically cleans up unused endpoint pools and circuit breakers.
 func (s *Service) cleanupLoop() {
+	// Function-level safety net in case something escapes the per-tick recover.
 	defer func() {
 		if r := recover(); r != nil {
-			s.Logger.Error("cleanupLoop panic recovered", "panic", r)
+			s.Logger.Error("cleanupLoop exited unexpectedly", "panic", r)
 		}
 	}()
 
@@ -398,7 +402,17 @@ func (s *Service) cleanupLoop() {
 		case <-s.cleanupStop:
 			return
 		case <-s.cleanupTicker.C:
-			s.cleanupUnusedResources()
+			// Wrap per-tick work so a panic in cleanupUnusedResources does not
+			// kill the goroutine — the loop continues and cleans up next tick.
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						s.Logger.Error("cleanupLoop tick panic recovered, loop continues",
+							"panic", r)
+					}
+				}()
+				s.cleanupUnusedResources()
+			}()
 		}
 	}
 }

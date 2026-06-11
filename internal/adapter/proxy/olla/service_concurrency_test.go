@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/puzpuzpuz/xsync/v4"
+	"github.com/thushan/olla/internal/adapter/proxy/config"
 	"github.com/thushan/olla/internal/adapter/proxy/core"
 )
 
@@ -155,5 +156,39 @@ func TestGetCircuitBreaker_ComputeOnce(t *testing.T) {
 		if cb != first {
 			t.Errorf("goroutine %d received a different *circuitBreaker (%p vs %p) — compute-once violated", i, cb, first)
 		}
+	}
+}
+
+// TestUpdateConfig_NilGuard verifies that calling UpdateConfig on a Service whose
+// configuration pointer has never been stored (nil atomic) does not panic.
+// This covers the else-branch nil guard added in T0-2: if current is nil we fall
+// through without dereferencing it, and the new config is stored correctly.
+func TestUpdateConfig_NilGuard(t *testing.T) {
+	t.Parallel()
+
+	// Construct a Service without going through NewService so the atomic is nil.
+	s := &Service{
+		BaseProxyComponents: &core.BaseProxyComponents{
+			Logger: createTestLogger(),
+		},
+		endpointPools:   *xsync.NewMap[string, *connectionPool](),
+		circuitBreakers: *xsync.NewMap[string, *circuitBreaker](),
+	}
+	// configuration atomic is zero-value — Load() returns nil.
+
+	// Use a non-*Configuration to trigger the else-branch (which used to dereference nil).
+	nonOlla := &config.SherpaConfig{}
+	nonOlla.ReadTimeout = 5 * time.Second
+
+	// Must not panic.
+	s.UpdateConfig(nonOlla)
+
+	// Config should now be stored.
+	stored := s.configuration.Load()
+	if stored == nil {
+		t.Fatal("expected configuration to be stored after UpdateConfig, got nil")
+	}
+	if stored.ReadTimeout != 5*time.Second {
+		t.Errorf("ReadTimeout: want 5s, got %v", stored.ReadTimeout)
 	}
 }
