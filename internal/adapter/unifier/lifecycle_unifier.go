@@ -24,9 +24,8 @@ type LifecycleUnifier struct {
 	discoveryClient DiscoveryClient
 	logger          logger.StyledLogger
 
-	cleanupCtx       context.Context
-	endpointManager  *EndpointManager
-	stateTransitions chan domain.StateTransition
+	cleanupCtx      context.Context
+	endpointManager *EndpointManager
 
 	cleanupCancel context.CancelFunc
 	config        Config
@@ -40,11 +39,10 @@ func NewLifecycleUnifier(config Config, logger logger.StyledLogger) ports.ModelU
 	}
 
 	return &LifecycleUnifier{
-		unifier:          NewDefaultUnifier(),
-		endpointManager:  NewEndpointManager(config, logger),
-		config:           config,
-		logger:           logger,
-		stateTransitions: make(chan domain.StateTransition, 100),
+		unifier:         NewDefaultUnifier(),
+		endpointManager: NewEndpointManager(config, logger),
+		config:          config,
+		logger:          logger,
 	}
 }
 
@@ -62,11 +60,6 @@ func (u *LifecycleUnifier) Start(ctx context.Context) error {
 	if u.config.EnableBackgroundCleanup {
 		u.cleanupWg.Add(1)
 		go u.cleanupRoutine()
-	}
-
-	if u.config.EnableStateTransitionLogging {
-		u.cleanupWg.Add(1)
-		go u.stateTransitionLogger()
 	}
 
 	u.logger.Info("Lifecycle unifier started",
@@ -102,7 +95,6 @@ func (u *LifecycleUnifier) Stop(ctx context.Context) error {
 		return ctx.Err()
 	}
 
-	close(u.stateTransitions)
 	return nil
 }
 
@@ -179,33 +171,6 @@ func (u *LifecycleUnifier) performCleanup() {
 	}
 
 	u.endpointManager.CleanupOrphaned(activeEndpoints)
-}
-
-func (u *LifecycleUnifier) stateTransitionLogger() {
-	defer u.cleanupWg.Done()
-
-	for {
-		select {
-		case <-u.cleanupCtx.Done():
-			return
-		case transition, ok := <-u.stateTransitions:
-			if !ok {
-				return
-			}
-			if transition.Error != nil {
-				u.logger.Warn("State transition",
-					"from", transition.From,
-					"to", transition.To,
-					"reason", transition.Reason,
-					"error", transition.Error)
-			} else {
-				u.logger.Debug("State transition",
-					"from", transition.From,
-					"to", transition.To,
-					"reason", transition.Reason)
-			}
-		}
-	}
 }
 
 func (u *LifecycleUnifier) UnifyModel(ctx context.Context, sourceModel *domain.ModelInfo, endpoint *domain.Endpoint) (*domain.UnifiedModel, error) {
