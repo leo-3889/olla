@@ -3,6 +3,7 @@ package stats
 import (
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -389,5 +390,90 @@ func TestCollector_EmptyStats(t *testing.T) {
 	securityStats := collector.GetSecurityStats()
 	if securityStats.RateLimitViolations != 0 {
 		t.Errorf("Expected 0 rate limit violations, got %d", securityStats.RateLimitViolations)
+	}
+}
+
+// TestRecordRateLimitedIP_CapBounded verifies that inserting more than
+// MaxUniqueRateLimitedIPs distinct IPs does not grow the map beyond the cap.
+// A flood attack must not cause unbounded memory growth.
+func TestRecordRateLimitedIP_CapBounded(t *testing.T) {
+	t.Parallel()
+
+	collector := NewCollector(createTestLogger())
+
+	// Flood with twice the cap to prove the ceiling holds.
+	for i := range MaxUniqueRateLimitedIPs * 2 {
+		collector.recordRateLimitedIP(string(rune('A'+i%26)) + "-" + string(rune('0'+i%10)))
+	}
+
+	collector.securityMu.RLock()
+	size := len(collector.uniqueRateLimitedIPs)
+	collector.securityMu.RUnlock()
+
+	if size > MaxUniqueRateLimitedIPs {
+		t.Errorf("map size %d exceeds cap %d", size, MaxUniqueRateLimitedIPs)
+	}
+}
+
+// TestRecordRateLimitedIP_AgeEviction verifies that entries older than one hour
+// are removed by the periodic cleanup and GetSecurityStats reports an updated count.
+func TestRecordRateLimitedIP_AgeEviction(t *testing.T) {
+	t.Parallel()
+
+	collector := NewCollector(createTestLogger())
+
+	// Manually insert an expired entry directly.
+	collector.securityMu.Lock()
+	old := time.Now().Add(-2 * time.Hour).UnixNano()
+	collector.uniqueRateLimitedIPs["expired-ip"] = old
+	collector.securityMu.Unlock()
+
+	// Force cleanup by resetting lastIPCleanup to zero so the threshold is exceeded.
+	atomic.StoreInt64(&collector.lastIPCleanup, 0)
+	collector.cleanupOldRateLimitedIPs(time.Now().UnixNano())
+
+	stats := collector.GetSecurityStats()
+	if stats.UniqueRateLimitedIPs != 0 {
+		t.Errorf("expected 0 unique IPs after eviction, got %d", stats.UniqueRateLimitedIPs)
+	}
+}
+
+// TestRecordRateLimitedIP_ConcurrentRace exercises concurrent inserts and reads
+// under the -race detector to prove no data races on the map.
+func TestRecordRateLimitedIP_ConcurrentRace(t *testing.T) {
+	t.Parallel()
+
+	collector := NewCollector(createTestLogger())
+	const goroutines = 20
+	const iters = 500
+
+	var wg sync.WaitGroup
+	for g := range goroutines {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for i := range iters {
+				collector.RecordSecurityViolation(ports.SecurityViolation{
+					ViolationType: constants.ViolationRateLimit,
+					ClientID:      string(rune('A'+id)) + string(rune('0'+i%10)),
+				})
+			}
+		}(g)
+	}
+	// Concurrent readers.
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range iters {
+				_ = collector.GetSecurityStats()
+			}
+		}()
+	}
+	wg.Wait()
+
+	stats := collector.GetSecurityStats()
+	if stats.UniqueRateLimitedIPs > MaxUniqueRateLimitedIPs {
+		t.Errorf("map size %d exceeds cap %d under concurrent load", stats.UniqueRateLimitedIPs, MaxUniqueRateLimitedIPs)
 	}
 }

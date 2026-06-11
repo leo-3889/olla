@@ -43,6 +43,15 @@ const (
 	MaxTrackedEndpoints = 50
 	EndpointTTL         = 1 * time.Hour
 	CleanupInterval     = 5 * time.Minute
+
+	// MaxUniqueRateLimitedIPs caps the in-memory set of rate-limited client IPs.
+	// Under an active flood attack the map would otherwise grow without bound.
+	// At cap, new entries are refused until the periodic age-eviction frees space.
+	MaxUniqueRateLimitedIPs = 10_000
+
+	// ipCleanupInterval is how often the age-based eviction scan runs. Keeping
+	// it off the per-violation hot path avoids an O(N) scan under high load.
+	ipCleanupInterval = 5 * time.Minute
 )
 
 type Collector struct {
@@ -67,6 +76,7 @@ type Collector struct {
 	rateLimitViolations *xsync.Counter
 	sizeLimitViolations *xsync.Counter
 	lastCleanup         int64
+	lastIPCleanup       int64 // atomic: tracks when the age-eviction scan last ran
 	securityMu          sync.RWMutex
 
 	cleanupMu sync.Mutex
@@ -265,16 +275,47 @@ func (c *Collector) RecordSecurityViolation(violation ports.SecurityViolation) {
 
 func (c *Collector) recordRateLimitedIP(clientIP string) {
 	now := time.Now().UnixNano()
+
+	// Age-eviction scan runs at most once per ipCleanupInterval, not on every
+	// violation. The pre-check outside the lock avoids contention when the
+	// interval has not yet elapsed (the common case under a flood).
+	lastClean := atomic.LoadInt64(&c.lastIPCleanup)
+	if now-lastClean >= int64(ipCleanupInterval) {
+		c.cleanupOldRateLimitedIPs(now)
+	}
+
+	c.securityMu.Lock()
+	// Refuse new entries once the hard cap is reached. At cap, the periodic
+	// eviction will free space for the next cleanup cycle.
+	if len(c.uniqueRateLimitedIPs) < MaxUniqueRateLimitedIPs {
+		c.uniqueRateLimitedIPs[clientIP] = now
+	}
+	c.securityMu.Unlock()
+}
+
+// cleanupOldRateLimitedIPs removes IPs whose last-seen timestamp is older than
+// one hour. Uses a double-checked lock to avoid redundant scans when multiple
+// goroutines arrive at the interval boundary concurrently.
+func (c *Collector) cleanupOldRateLimitedIPs(now int64) {
+	c.cleanupMu.Lock()
+	defer c.cleanupMu.Unlock()
+
+	// Second check after acquiring the cleanup lock.
+	if now-atomic.LoadInt64(&c.lastIPCleanup) < int64(ipCleanupInterval) {
+		return
+	}
+
 	cutoff := now - int64(time.Hour)
 
 	c.securityMu.Lock()
-	c.uniqueRateLimitedIPs[clientIP] = now
 	for ip, ts := range c.uniqueRateLimitedIPs {
 		if ts < cutoff {
 			delete(c.uniqueRateLimitedIPs, ip)
 		}
 	}
 	c.securityMu.Unlock()
+
+	atomic.StoreInt64(&c.lastIPCleanup, now)
 }
 
 func (c *Collector) updateEndpointStats(endpoint *domain.Endpoint, status string, latencyMs, bytes int64, now int64) {
