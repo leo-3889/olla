@@ -27,6 +27,12 @@ The harness is driven by a Claude Code skill at
 
 Without a flag it asks which depth to run.
 
+The skill pins itself to Sonnet (`model: sonnet` in its frontmatter), so it
+costs the same regardless of which model the session is using. Area agents
+are balanced for token efficiency: mechanical curl-and-assert checklists run
+on Haiku, while anything that mutates mock state or validates protocol
+sequences (resilience, the Anthropic areas) runs on Sonnet.
+
 Every run starts with `make ready` as a hard gate, then boots the mock fleet
 and two Olla instances, fans out parallel validation agents (one per area
 checklist in `.claude/skills/olla-validate/areas/`), and writes a report to

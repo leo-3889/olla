@@ -8,7 +8,10 @@ description: >
   failure handling. Use as the pre-release gate or after major changes.
   Trigger when the user asks to validate Olla, run the validation suite,
   run regression/nightly validation, or gate a release.
+  Runs on Sonnet regardless of the session model; area agents are balanced
+  between Sonnet and Haiku for token efficiency.
 argument-hint: "[--quick|--nightly] [--soak-minutes=N]"
+model: sonnet
 ---
 
 # /olla-validate — Olla Validation Harness
@@ -25,6 +28,26 @@ One reusable suite, two depths:
 The harness never touches real backends. All traffic goes to `test/cmd/ollamock`
 instances (stdlib Go mock speaking OpenAI, Ollama-native, LM Studio, Lemonade
 and Anthropic protocols, with a `/_mock/` fault-injection control plane).
+
+## Model assignment (token efficiency)
+
+The orchestration runs on Sonnet (`model: sonnet` above) — it makes the
+judgement calls, sequences nightly passes and writes the report. Subagents
+cannot spawn subagents, so orchestration must stay here; never try to
+delegate the whole run to a single agent.
+
+Spawned area agents get an explicit `model` on every Agent call:
+
+- **haiku** — mechanical curl-and-assert checklists that never mutate state:
+  core-routing, openai-api, observability, limits-failures (client section).
+- **sonnet** — anything that mutates mock/Olla state or needs protocol-
+  sequence judgement: resilience, anthropic (both sections — SSE event-order
+  and translation validation), limits-failures (upstream section).
+
+Escalation rule: if a Haiku agent returns malformed report JSON, dies, or its
+failures look like agent error rather than product error (e.g. it asserted
+the wrong endpoint set), re-run that one area once on Sonnet before trusting
+a FAIL. Record the escalation in the report.
 
 ## Topology (fixed ports)
 
@@ -125,7 +148,8 @@ tail of its log into the report.
 ## Phase 4 — Wave 1: parallel happy-path agents
 
 Spawn **five agents in parallel** (single message, multiple Agent calls,
-`subagent_type: general-purpose`). Each agent prompt must contain:
+`subagent_type: general-purpose`, `model` per the table below). Each agent
+prompt must contain:
 
 - The mode (`quick` or `nightly`) and instruction to execute the matching
   checklist in its area file (path below) — read the file first.
@@ -138,13 +162,13 @@ Spawn **five agents in parallel** (single message, multiple Agent calls,
   process. Do not call any `/_mock/behaviour` endpoint unless your area file
   explicitly says to."*
 
-| Agent | Area file |
-|---|---|
-| core-routing | `.claude/skills/olla-validate/areas/core-routing.md` |
-| openai-api | `.claude/skills/olla-validate/areas/openai-api.md` |
-| anthropic (passthrough section) | `.claude/skills/olla-validate/areas/anthropic.md` |
-| observability | `.claude/skills/olla-validate/areas/observability.md` |
-| limits-failures (client section — 41142 only) | `.claude/skills/olla-validate/areas/limits-failures.md` |
+| Agent | Area file | Model |
+|---|---|---|
+| core-routing | `.claude/skills/olla-validate/areas/core-routing.md` | haiku |
+| openai-api | `.claude/skills/olla-validate/areas/openai-api.md` | haiku |
+| anthropic (passthrough section) | `.claude/skills/olla-validate/areas/anthropic.md` | sonnet |
+| observability | `.claude/skills/olla-validate/areas/observability.md` | haiku |
+| limits-failures (client section — 41142 only) | `.claude/skills/olla-validate/areas/limits-failures.md` | haiku |
 
 Wave 1 agents are read-only against the mocks: **no fault injection**, so they
 can run concurrently without poisoning each other's assertions.
@@ -152,7 +176,7 @@ can run concurrently without poisoning each other's assertions.
 ## Phase 5 — Wave 2: resilience agent (solo)
 
 After wave 1 completes, `POST /_mock/reset` to all four mocks, confirm all
-endpoints healthy again, then spawn **one** agent for
+endpoints healthy again, then spawn **one** agent (`model: sonnet`) for
 `.claude/skills/olla-validate/areas/resilience.md` (mode-appropriate
 checklist). This agent **is** allowed to inject faults via `/_mock/behaviour`
 and (nightly) to ask you to kill/restart a mock — for process kill/restart
@@ -170,8 +194,9 @@ probes tick globally every 30s regardless of per-endpoint check_interval).
 Skip this phase entirely in quick mode.
 
 ### 6a. Upstream-failure section of limits-failures
-Spawn the limits-failures agent again, pointing it at the **upstream section**
-of its area file (mutates mock-a behaviour; runs solo). Reset mocks after.
+Spawn the limits-failures agent again (`model: sonnet` — it mutates mock-a
+behaviour), pointing it at the **upstream section** of its area file (runs
+solo). Reset mocks after.
 
 ### 6b. Translation-forced Anthropic pass
 ```bash
@@ -180,7 +205,7 @@ sed 's/passthrough_enabled: true/passthrough_enabled: false/' \
 ```
 Restart olla-main with that config, wait for readiness (Phase 3 gates 2/4/5),
 zero mock stats (`POST /_mock/reset` on all), then spawn the anthropic agent
-against the **translation-forced section** of its area file. Restart olla-main
+(`model: sonnet`) against the **translation-forced section** of its area file. Restart olla-main
 on the original config afterwards and re-confirm readiness.
 
 ### 6c. Sherpa engine pass
@@ -189,7 +214,8 @@ sed 's/engine: "olla"/engine: "sherpa"/' \
   test/validate/config.validate.yaml > "$LOGDIR/config.sherpa.yaml"
 ```
 Restart olla-main on it, wait for readiness, then run **quick** checklists of
-core-routing, openai-api and anthropic (passthrough) — three parallel agents.
+core-routing, openai-api and anthropic (passthrough) — three parallel agents
+(haiku, haiku, sonnet respectively, as in wave 1).
 Sherpa is maintenance-mode: quick depth is deliberate. Restore the original
 config and readiness afterwards.
 
