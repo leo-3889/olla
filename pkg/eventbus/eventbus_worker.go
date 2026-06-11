@@ -70,12 +70,16 @@ func (wp *WorkerPool[T]) worker() {
 	}
 }
 
-// Shutdown stops all workers
+// Shutdown stops all workers.
 func (wp *WorkerPool[T]) Shutdown() {
-	// Cancel context to signal workers to stop
+	// Cancel the context so workers exit their select loops.
 	wp.cancel()
-	// Wait for all workers to finish processing
+	// Wait for all workers to drain and exit before returning.
 	wp.wg.Wait()
-	// Now safe to close the channel after all workers have stopped
-	close(wp.eventChan)
+	// Do NOT close eventChan. Workers exit via ctx cancellation, not via a
+	// range-over-channel, so the close is unnecessary. More importantly,
+	// PublishAsync checks ctx.Done() and then sends in two separate selects —
+	// a goroutine that passes the ctx check before Shutdown runs can still
+	// attempt a send on a closed channel, causing a panic. Leaving the channel
+	// open is safe: it is GC'd once the WorkerPool itself goes out of scope.
 }

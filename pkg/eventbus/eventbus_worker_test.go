@@ -121,6 +121,41 @@ func TestWorkerPool_HandlesBackpressure(t *testing.T) {
 	}
 }
 
+// TestWorkerPool_PublishAsyncShutdownRace exercises the TOCTOU window that existed
+// between PublishAsync's ctx check and its eventChan send when Shutdown closed the
+// channel concurrently. The fix removes close(eventChan) from Shutdown; workers
+// exit via ctx cancellation so the close was never necessary.
+// Run with -race to verify no data race or send-on-closed-channel panic.
+func TestWorkerPool_PublishAsyncShutdownRace(t *testing.T) {
+	t.Parallel()
+
+	const goroutines = 50
+	const iterations = 200
+
+	for trial := range 5 {
+		_ = trial
+		eb := New[int]()
+
+		var wg sync.WaitGroup
+
+		// Hammer PublishAsync from many goroutines.
+		for g := range goroutines {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				for i := range iterations {
+					eb.PublishAsync(id*iterations + i)
+				}
+			}(g)
+		}
+
+		// Shutdown concurrently with the senders. This used to race and could
+		// panic on close(eventChan) being observed by a concurrent sender.
+		eb.Shutdown()
+		wg.Wait()
+	}
+}
+
 // TestWorkerPool_ConcurrentPublishing verifies concurrent publishing works correctly
 func TestWorkerPool_ConcurrentPublishing(t *testing.T) {
 	eb := New[string]()
