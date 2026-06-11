@@ -24,7 +24,11 @@ func newTestTranslator() *Translator {
 	loggerCfg := &logger.Config{Level: "error", Theme: "default"}
 	log, _, _ := logger.New(loggerCfg)
 	styledLog := logger.NewPlainStyledLogger(log)
-	return NewTranslator(styledLog, createStreamingTestConfig())
+	tr, err := NewTranslator(styledLog, createStreamingTestConfig())
+	if err != nil {
+		panic("newTestTranslator: " + err.Error())
+	}
+	return tr
 }
 
 // createStreamingTestConfig creates a minimal config for streaming tests.

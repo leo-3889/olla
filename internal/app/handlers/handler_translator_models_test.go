@@ -49,7 +49,10 @@ func TestTranslatorModelsHandler_Success(t *testing.T) {
 		Enabled:        true,
 		MaxMessageSize: 10 << 20, // 10MB
 	}
-	trans := anthropic.NewTranslator(app.logger, testConfig)
+	trans, err := anthropic.NewTranslator(app.logger, testConfig)
+	if err != nil {
+		t.Fatalf("failed to create translator: %v", err)
+	}
 
 	// Create request
 	req := httptest.NewRequest(http.MethodGet, "/olla/anthropic/v1/models", nil)
@@ -109,7 +112,10 @@ func TestTranslatorModelsHandler_EmptyRegistry(t *testing.T) {
 		Enabled:        true,
 		MaxMessageSize: 10 << 20, // 10MB
 	}
-	trans := anthropic.NewTranslator(app.logger, testConfig)
+	trans, err := anthropic.NewTranslator(app.logger, testConfig)
+	if err != nil {
+		t.Fatalf("failed to create translator: %v", err)
+	}
 
 	// Create request
 	req := httptest.NewRequest(http.MethodGet, "/olla/anthropic/v1/models", nil)
@@ -169,7 +175,10 @@ func TestTranslatorModelsHandler_ResponseFormat(t *testing.T) {
 		Enabled:        true,
 		MaxMessageSize: 10 << 20, // 10MB
 	}
-	trans := anthropic.NewTranslator(app.logger, testConfig)
+	trans, err := anthropic.NewTranslator(app.logger, testConfig)
+	if err != nil {
+		t.Fatalf("failed to create translator: %v", err)
+	}
 
 	// Create request
 	req := httptest.NewRequest(http.MethodGet, "/olla/anthropic/v1/models", nil)

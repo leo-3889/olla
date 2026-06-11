@@ -188,7 +188,7 @@ func TestCanPassthrough(t *testing.T) {
 				PassthroughEnabled: tt.passthroughEnabled,
 			}
 
-			translator := NewTranslator(createTestLogger(), cfg)
+			translator := mustNewTranslator(createTestLogger(), cfg)
 			result := translator.CanPassthrough(tt.endpoints, tt.profileLookup)
 
 			assert.Equal(t, tt.want, result, tt.description)
@@ -471,7 +471,7 @@ func TestPreparePassthrough(t *testing.T) {
 				PassthroughEnabled: true,
 			}
 
-			translator := NewTranslator(createTestLogger(), cfg)
+			translator := mustNewTranslator(createTestLogger(), cfg)
 
 			// Pre-buffer the body bytes (as the handler does in production)
 			bodyBytes := []byte(tt.requestBody)
@@ -515,7 +515,7 @@ func TestPreparePassthrough_OversizedBody(t *testing.T) {
 		PassthroughEnabled: true,
 	}
 
-	translator := NewTranslator(createTestLogger(), cfg)
+	translator := mustNewTranslator(createTestLogger(), cfg)
 
 	// Build a body that exceeds maxSize
 	oversizedBody := make([]byte, maxSize+1)
@@ -551,7 +551,7 @@ func TestPreparePassthrough_WithInspector(t *testing.T) {
 		},
 	}
 
-	translator := NewTranslator(createTestLogger(), cfg)
+	translator := mustNewTranslator(createTestLogger(), cfg)
 
 	bodyBytes := []byte(`{
 		"model": "claude-3-5-sonnet-20241022",
@@ -601,7 +601,7 @@ func TestCanPassthrough_Integration(t *testing.T) {
 			PassthroughEnabled: true,
 		}
 
-		translator := NewTranslator(createTestLogger(), cfg)
+		translator := mustNewTranslator(createTestLogger(), cfg)
 		result := translator.CanPassthrough(endpoints, profileLookup)
 
 		assert.True(t, result, "should support passthrough for vLLM+SGLang deployment")
@@ -627,7 +627,7 @@ func TestCanPassthrough_Integration(t *testing.T) {
 			PassthroughEnabled: true,
 		}
 
-		translator := NewTranslator(createTestLogger(), cfg)
+		translator := mustNewTranslator(createTestLogger(), cfg)
 		result := translator.CanPassthrough(endpoints, profileLookup)
 
 		assert.True(t, result, "should support passthrough when handler pre-filtered to only capable backends")

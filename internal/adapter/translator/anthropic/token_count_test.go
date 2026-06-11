@@ -10,7 +10,7 @@ import (
 )
 
 func TestCountTokens(t *testing.T) {
-	trans := NewTranslator(createTestLogger(), createTestConfig())
+	trans := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	tests := []struct {
 		name          string
@@ -252,7 +252,7 @@ func TestCountTokens(t *testing.T) {
 }
 
 func TestCountTokensWithRawJSON(t *testing.T) {
-	trans := NewTranslator(createTestLogger(), createTestConfig())
+	trans := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	tests := []struct {
 		name          string
@@ -322,7 +322,7 @@ func TestCountTokensWithRawJSON(t *testing.T) {
 }
 
 func TestCountTokensErrors(t *testing.T) {
-	trans := NewTranslator(createTestLogger(), createTestConfig())
+	trans := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	tests := []struct {
 		name        string
@@ -380,7 +380,7 @@ func TestCountTokensErrors(t *testing.T) {
 // TestCountTokensMatchesPythonReference verifies our implementation matches
 // the Python reference from anthropic-proxy.py
 func TestCountTokensMatchesPythonReference(t *testing.T) {
-	trans := NewTranslator(createTestLogger(), createTestConfig())
+	trans := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	// This test case directly mirrors the Python implementation logic
 	testCase := AnthropicRequest{
@@ -430,7 +430,7 @@ func TestCountTokensMatchesPythonReference(t *testing.T) {
 	}
 }
 func BenchmarkCountTokens(b *testing.B) {
-	trans := NewTranslator(createTestLogger(), createTestConfig())
+	trans := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	reqBody := []byte(`{
 		"model": "claude-3-5-sonnet-20241022",
@@ -448,7 +448,7 @@ func BenchmarkCountTokens(b *testing.B) {
 }
 
 func BenchmarkCountTokensLargeRequest(b *testing.B) {
-	trans := NewTranslator(createTestLogger(), createTestConfig())
+	trans := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	// Large request with multiple messages and content blocks
 	messages := make([]map[string]interface{}, 50)

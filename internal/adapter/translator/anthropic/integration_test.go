@@ -36,6 +36,17 @@ func createTestConfig() config.AnthropicTranslatorConfig {
 	}
 }
 
+// mustNewTranslator wraps NewTranslator for test use. NewTranslator now returns
+// an error so the no-panic policy is satisfied in production code; tests use
+// this helper to keep call-sites terse and fatal on unexpected failures.
+func mustNewTranslator(log logger.StyledLogger, cfg config.AnthropicTranslatorConfig) *Translator {
+	tr, err := NewTranslator(log, cfg)
+	if err != nil {
+		panic("mustNewTranslator: " + err.Error())
+	}
+	return tr
+}
+
 // setup test http request
 func createHTTPRequest(t *testing.T, anthropicReq AnthropicRequest) *http.Request {
 	t.Helper()
@@ -90,7 +101,7 @@ func simulateBackendResponse(content string, toolCalls []map[string]interface{},
 }
 
 func TestAnthropicToOpenAIToAnthropic_RoundTrip(t *testing.T) {
-	translator := NewTranslator(createIntegrationTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createIntegrationTestLogger(), createTestConfig())
 	ctx := context.Background()
 
 	t.Run("simple_text_conversation", func(t *testing.T) {
@@ -372,7 +383,7 @@ func TestAnthropicToOpenAIToAnthropic_RoundTrip(t *testing.T) {
 }
 
 func TestAnthropicToolCalling_RoundTrip(t *testing.T) {
-	translator := NewTranslator(createIntegrationTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createIntegrationTestLogger(), createTestConfig())
 	ctx := context.Background()
 
 	t.Run("single_tool_definition", func(t *testing.T) {
@@ -825,7 +836,7 @@ func TestAnthropicToolCalling_RoundTrip(t *testing.T) {
 }
 
 func TestAnthropicEdgeCases_RoundTrip(t *testing.T) {
-	translator := NewTranslator(createIntegrationTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createIntegrationTestLogger(), createTestConfig())
 	ctx := context.Background()
 
 	t.Run("empty_messages_array", func(t *testing.T) {
@@ -1031,7 +1042,7 @@ func TestAnthropicEdgeCases_RoundTrip(t *testing.T) {
 }
 
 func TestAnthropicModelPreservation(t *testing.T) {
-	translator := NewTranslator(createIntegrationTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createIntegrationTestLogger(), createTestConfig())
 	ctx := context.Background()
 
 	models := []string{
@@ -1072,7 +1083,7 @@ func TestAnthropicModelPreservation(t *testing.T) {
 }
 
 func TestAnthropicUsageTracking(t *testing.T) {
-	translator := NewTranslator(createIntegrationTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createIntegrationTestLogger(), createTestConfig())
 	ctx := context.Background()
 
 	anthropicReq := AnthropicRequest{
@@ -1149,7 +1160,7 @@ func TestAnthropicUsageTracking(t *testing.T) {
 
 // BenchmarkTransformRequest measures the performance of transforming Anthropic requests to OpenAI format.
 func BenchmarkTransformRequest(b *testing.B) {
-	translator := NewTranslator(createIntegrationTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createIntegrationTestLogger(), createTestConfig())
 	ctx := context.Background()
 
 	b.Run("simple_text_request", func(b *testing.B) {
@@ -1340,7 +1351,7 @@ func BenchmarkTransformRequest(b *testing.B) {
 
 // BenchmarkTransformResponse measures the performance of transforming OpenAI responses to Anthropic format.
 func BenchmarkTransformResponse(b *testing.B) {
-	translator := NewTranslator(createIntegrationTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createIntegrationTestLogger(), createTestConfig())
 	ctx := context.Background()
 
 	b.Run("simple_text_response", func(b *testing.B) {

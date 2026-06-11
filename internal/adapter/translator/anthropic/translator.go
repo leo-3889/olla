@@ -25,19 +25,20 @@ type Translator struct {
 	maxMessageSize int64 // derived from config
 }
 
-// NewTranslator creates a new Anthropic translator instance
-// Uses a buffer pool to reduce GC pressure during high-throughput operations
-// Accepts configuration for request size limits and streaming behaviour
-func NewTranslator(log logger.StyledLogger, cfg config.AnthropicTranslatorConfig) *Translator {
-	// Create buffer pool with 4KB initial capacity
-	// This size fits most chat completions without reallocation
+// NewTranslator creates a new Anthropic translator instance.
+// Uses a buffer pool to reduce GC pressure during high-throughput operations.
+// Accepts configuration for request size limits and streaming behaviour.
+// Returns an error if the buffer pool cannot be constructed (unreachable in
+// production because bytes.NewBuffer never returns nil, but exposed here to
+// honour the no-panic policy).
+func NewTranslator(log logger.StyledLogger, cfg config.AnthropicTranslatorConfig) (*Translator, error) {
+	// Create buffer pool with 4KB initial capacity.
+	// This size fits most chat completions without reallocation.
 	bufferPool, err := pool.NewLitePool(func() *bytes.Buffer {
 		return bytes.NewBuffer(make([]byte, 0, 4096))
 	})
 	if err != nil {
-		// This should never happen as the constructor is validated
-		log.Error("Failed to create buffer pool", "error", err)
-		panic("translator: failed to initialise buffer pool")
+		return nil, fmt.Errorf("translator: failed to initialise buffer pool: %w", err)
 	}
 
 	// Apply defaults if needed
@@ -61,7 +62,7 @@ func NewTranslator(log logger.StyledLogger, cfg config.AnthropicTranslatorConfig
 		config:         cfg,
 		maxMessageSize: maxSize,
 		inspector:      insp,
-	}
+	}, nil
 }
 
 // Name returns the translator identifier

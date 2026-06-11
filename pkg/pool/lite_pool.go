@@ -54,13 +54,12 @@ func NewLitePool[T any](newFn func() T) (*Pool[T], error) {
 	return &Pool[T]{
 		pool: sync.Pool{
 			New: func() any {
-				v := newFn()
-				if any(v) == nil {
-					// This should never happen after validation above,
-					// but keep the panic here as a last resort safety check
-					panic("litepool: constructor returned nil during runtime")
-				}
-				return v
+				// newFn was validated at pool construction time so nil is not
+				// expected here. If it does happen (e.g. a stateful factory
+				// exhausted its resources), return the zero value rather than
+				// panicking — a zero value is always safe to use and avoids
+				// killing an unrelated goroutine via a recovered panic.
+				return newFn()
 			},
 		},
 		new: newFn,

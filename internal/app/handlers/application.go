@@ -169,7 +169,10 @@ func NewApplication(
 			return nil, fmt.Errorf("invalid Anthropic translator config: %w", err)
 		}
 
-		anthropicTranslator := anthropic.NewTranslator(logger, cfg.Translators.Anthropic)
+		anthropicTranslator, err := anthropic.NewTranslator(logger, cfg.Translators.Anthropic)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Anthropic translator: %w", err)
+		}
 		translatorRegistry.Register("anthropic", anthropicTranslator)
 
 		logger.Info("Registered Anthropic translator",

@@ -14,7 +14,7 @@ import (
 
 // TestGetAPIPath tests the PathProvider interface implementation
 func TestGetAPIPath(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	path := translator.GetAPIPath()
 	assert.Equal(t, "/olla/anthropic/v1/messages", path, "should return the correct Anthropic API path")
@@ -82,7 +82,7 @@ func TestWriteError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			translator := NewTranslator(createTestLogger(), createTestConfig())
+			translator := mustNewTranslator(createTestLogger(), createTestConfig())
 			rec := httptest.NewRecorder()
 
 			translator.WriteError(rec, tt.err, tt.statusCode)
@@ -113,7 +113,7 @@ func TestWriteError(t *testing.T) {
 
 // TestWriteError_ErrorFormat tests Anthropic error format compliance
 func TestWriteError_ErrorFormat(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 	rec := httptest.NewRecorder()
 
 	testErr := errors.New("test error message")
@@ -135,14 +135,28 @@ func TestWriteError_ErrorFormat(t *testing.T) {
 
 // TestName tests the Name method
 func TestName(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 	assert.Equal(t, "anthropic", translator.Name())
+}
+
+// TestNewTranslator_Success verifies the happy path returns a non-nil translator
+// and no error, confirming the error-return refactor did not break normal construction.
+func TestNewTranslator_Success(t *testing.T) {
+	t.Parallel()
+
+	tr, err := NewTranslator(createTestLogger(), createTestConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tr == nil {
+		t.Fatal("expected non-nil translator")
+	}
 }
 
 // TestWriteError_JSONEncodingFailure tests handling of JSON encoding errors
 // This test is mostly for coverage, as encoding errors are rare
 func TestWriteError_JSONEncodingSuccess(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 	rec := httptest.NewRecorder()
 
 	// Standard error that should encode successfully
