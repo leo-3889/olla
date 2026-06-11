@@ -1,0 +1,184 @@
+# Olla validation harness configuration (/olla-validate skill).
+#
+# Points at seven ollamock instances (test/cmd/ollamock) so every provider
+# route, the unifier, sticky sessions and the Anthropic translator have live
+# mock backends. The model lists deliberately overlap (shared-model) and
+# diverge (per-instance uniques) so unification and model routing decisions
+# are both observable.
+#
+# One instance per endpoint: Olla keys endpoint identity on the URL, so two
+# endpoints sharing a URL silently collapse to one (last declared wins).
+#
+# Topology (one ollamock process per port, started by the skill):
+#   19431  mock-a  openai-compatible  models: test-model,shared-model
+#   19432  mock-b  openai-compatible  models: test-model,beta-model
+#   19433  mock-c  ollama             models: llama3.1:8b,shared-model
+#   19434  mock-d  lm-studio          models: phi-4,shared-model
+#   19435  mock-e  vllm               models: test-model,shared-model
+#   19436  mock-f  litellm            models: test-model,beta-model
+#   19437  mock-g  llamacpp           models: phi-4,shared-model
+
+server:
+  host: "127.0.0.1"
+  port: 41141
+  read_timeout: 20s
+  read_header_timeout: 10s
+  write_timeout: 0s
+  shutdown_timeout: 5s
+  request_logging: true
+  request_limits:
+    # 5MB so the limits agent can trip 413 with a ~6MB body without the
+    # harness paying for huge uploads elsewhere.
+    max_body_size: 5242880
+    max_header_size: 524288
+  rate_limits:
+    # Generous on purpose: rate-limit behaviour is exercised against the
+    # separate config.validate.limits.yaml instance, not this one.
+    global_requests_per_minute: 100000
+    per_ip_requests_per_minute: 50000
+    health_requests_per_minute: 100000
+    burst_size: 1000
+    cleanup_interval: 5m
+    trust_proxy_headers: false
+    trusted_proxy_cidrs: ["127.0.0.0/8"]
+
+proxy:
+  # The skill runs the full suite against the olla engine; the nightly pass
+  # swaps this to sherpa (maintenance mode) for a trimmed second run.
+  engine: "olla"
+  profile: "auto"
+  # least-connections spreads traffic across instances, which gives the
+  # affinity and diversity assertions something real to observe.
+  load_balancer: "least-connections"
+  stream_buffer_size: 8192
+  connection_timeout: 10s
+  response_timeout: 60s
+  read_timeout: 60s
+  response_header_timeout: 10s
+  retry:
+    enabled: true
+    on_connection_failure: true
+    max_attempts: 0
+  sticky_sessions:
+    enabled: true
+    idle_ttl_seconds: 600
+    max_sessions: 1000
+    key_sources: [session_header, prefix_hash]
+    prefix_hash_bytes: 512
+
+discovery:
+  type: "static"
+  refresh_interval: 10s
+  health_check:
+    initial_delay: 1s
+  static:
+    endpoints:
+      # ── openai-compatible pair: failover + balancing target ─────────────
+      - url: "http://127.0.0.1:19431"
+        name: "mock-openai-a"
+        type: "openai-compatible"
+        priority: 100
+        model_url: "/v1/models"
+        health_check_url: "/health"
+        check_interval: 2s
+        check_timeout: 1s
+      - url: "http://127.0.0.1:19432"
+        name: "mock-openai-b"
+        type: "openai-compatible"
+        priority: 100
+        model_url: "/v1/models"
+        health_check_url: "/health"
+        check_interval: 2s
+        check_timeout: 1s
+
+      # ── ollama: native /api/* protocol ───────────────────────────────────
+      - url: "http://127.0.0.1:19433"
+        name: "mock-ollama-c"
+        type: "ollama"
+        priority: 100
+        model_url: "/api/tags"
+        health_check_url: "/health"
+        check_interval: 2s
+        check_timeout: 1s
+
+      # ── lm-studio ─────────────────────────────────────────────────────────
+      - url: "http://127.0.0.1:19434"
+        name: "mock-lmstudio-d"
+        type: "lm-studio"
+        priority: 100
+        model_url: "/v1/models"
+        health_check_url: "/health"
+        check_interval: 2s
+        check_timeout: 1s
+
+      # ── vllm: Anthropic passthrough target ──────────────────────────────
+      - url: "http://127.0.0.1:19435"
+        name: "mock-vllm-e"
+        type: "vllm"
+        priority: 100
+        model_url: "/v1/models"
+        health_check_url: "/health"
+        check_interval: 2s
+        check_timeout: 1s
+
+      # ── litellm: Anthropic translation target ───────────────────────────
+      - url: "http://127.0.0.1:19436"
+        name: "mock-litellm-f"
+        type: "litellm"
+        priority: 100
+        model_url: "/v1/models"
+        health_check_url: "/health"
+        check_interval: 2s
+        check_timeout: 1s
+
+      # ── llamacpp ──────────────────────────────────────────────────────────
+      - url: "http://127.0.0.1:19437"
+        name: "mock-llamacpp-g"
+        type: "llamacpp"
+        priority: 100
+        model_url: "/v1/models"
+        health_check_url: "/health"
+        check_interval: 2s
+        check_timeout: 1s
+
+  model_discovery:
+    enabled: true
+    interval: 30s
+    timeout: 5s
+    concurrent_workers: 4
+    retry_attempts: 2
+    retry_backoff: 1s
+
+model_registry:
+  type: "memory"
+  enable_unifier: true
+  unification:
+    enabled: true
+    stale_threshold: 24h
+    cleanup_interval: 10m
+  routing_strategy:
+    # optimistic + all keeps the harness resilient to discovery timing while
+    # still emitting X-Olla-Routing-* headers for routing assertions.
+    type: "optimistic"
+    options:
+      fallback_behavior: "all"
+      discovery_timeout: 2s
+      discovery_refresh_on_miss: false
+
+translators:
+  anthropic:
+    enabled: true
+    # The nightly translation-forced pass swaps this to false to drive the
+    # full Anthropic <-> OpenAI translation path.
+    passthrough_enabled: true
+    max_message_size: 10485760
+    inspector:
+      enabled: false
+
+logging:
+  level: "info"
+  format: "text"
+  output: "stdout"
+
+engineering:
+  show_nerdstats: false

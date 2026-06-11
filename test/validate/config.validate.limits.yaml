@@ -1,0 +1,88 @@
+# Tight-limits Olla instance for the /olla-validate limits & failure agent.
+#
+# Deliberately small body cap and aggressive per-IP rate limit so 413 and 429
+# behaviour can be asserted in seconds without disturbing the main harness
+# instance on 41141. Single backend keeps routing out of the picture.
+
+server:
+  host: "127.0.0.1"
+  port: 41142
+  read_timeout: 20s
+  read_header_timeout: 5s
+  write_timeout: 0s
+  shutdown_timeout: 5s
+  request_logging: true
+  request_limits:
+    max_body_size: 262144   # 256KB: a ~300KB payload trips 413 cheaply
+    max_header_size: 65536
+  rate_limits:
+    global_requests_per_minute: 600
+    per_ip_requests_per_minute: 30   # ~burst+30 requests trip 429 in seconds
+    health_requests_per_minute: 600
+    burst_size: 5
+    cleanup_interval: 5m
+    trust_proxy_headers: false
+    trusted_proxy_cidrs: ["127.0.0.0/8"]
+
+proxy:
+  engine: "olla"
+  profile: "auto"
+  load_balancer: "least-connections"
+  stream_buffer_size: 8192
+  connection_timeout: 5s
+  # Short response timeouts so hang-mode upstream tests resolve quickly.
+  response_timeout: 10s
+  read_timeout: 10s
+  response_header_timeout: 5s
+  retry:
+    enabled: true
+    on_connection_failure: true
+    max_attempts: 0
+  sticky_sessions:
+    enabled: false
+
+discovery:
+  type: "static"
+  refresh_interval: 10s
+  health_check:
+    initial_delay: 1s
+  static:
+    endpoints:
+      - url: "http://127.0.0.1:19431"
+        name: "mock-limits-a"
+        type: "openai-compatible"
+        priority: 100
+        model_url: "/v1/models"
+        health_check_url: "/health"
+        check_interval: 2s
+        check_timeout: 1s
+  model_discovery:
+    enabled: false
+
+model_registry:
+  type: "memory"
+  enable_unifier: false
+  unification:
+    enabled: false
+  routing_strategy:
+    type: "optimistic"
+    options:
+      fallback_behavior: "all"
+      discovery_timeout: 2s
+      discovery_refresh_on_miss: false
+
+translators:
+  anthropic:
+    enabled: true
+    passthrough_enabled: true
+    max_message_size: 1048576
+    inspector:
+      enabled: false
+
+logging:
+  level: "info"
+  format: "text"
+  output: "stdout"
+
+engineering:
+  show_nerdstats: false
