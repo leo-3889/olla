@@ -4,10 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"time"
-
-	"github.com/thushan/olla/internal/util"
 
 	"github.com/thushan/olla/internal/app/handlers"
 	"github.com/thushan/olla/internal/app/middleware"
@@ -66,10 +65,6 @@ func (s *HTTPService) Name() string {
 // Start initialises and starts the HTTP server
 func (s *HTTPService) Start(ctx context.Context) error {
 	s.logger.Info("Initialising HTTP service")
-
-	if !util.IsPortAvailable(s.config.Host, s.config.Port) {
-		return fmt.Errorf("port %d is already in use on host %s", s.config.Port, s.config.Host)
-	}
 
 	// Resolve service dependencies now that all services are started
 	if s.statsService != nil {
@@ -146,8 +141,8 @@ func (s *HTTPService) Start(ctx context.Context) error {
 	// This is separate from the security chain (which handles proxy routes) so
 	// non-proxy routes are protected without requiring full chain enforcement.
 	if s.securitySvc != nil {
-		if realAdapters, err := s.securitySvc.GetAdapters(); err == nil && realAdapters != nil {
-			s.application.SetSecurityAdapters(realAdapters)
+		if adapters, adapterErr := s.securitySvc.GetAdapters(); adapterErr == nil && adapters != nil {
+			s.application.SetSecurityAdapters(adapters)
 		}
 	}
 
@@ -168,8 +163,20 @@ func (s *HTTPService) Start(ctx context.Context) error {
 			"allow_credentials", s.fullConfig.Server.Cors.AllowCredentials)
 	}
 
+	addr := s.config.GetAddress()
+
+	// Bind synchronously so that a port-already-in-use error is returned
+	// immediately to the caller rather than being silently swallowed in a
+	// goroutine behind a fixed sleep. The previous probe-bind approach had a
+	// TOCTOU window between the probe closing and ListenAndServe re-binding.
+	// Use ListenConfig so the listener respects context cancellation.
+	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
+	if err != nil {
+		return fmt.Errorf("failed to bind %s: %w", addr, err)
+	}
+
 	s.server = &http.Server{
-		Addr:              s.config.GetAddress(),
+		Addr:              addr,
 		Handler:           root,
 		ReadTimeout:       readTimeout,
 		ReadHeaderTimeout: readHeaderTimeout,
@@ -177,22 +184,20 @@ func (s *HTTPService) Start(ctx context.Context) error {
 		IdleTimeout:       idleTimeout,
 	}
 
-	go func() {
-		s.logger.Info("HTTP server listening",
-			"address", s.server.Addr,
-			"readTimeout", readTimeout,
-			"readHeaderTimeout", readHeaderTimeout,
-			"writeTimeout", writeTimeout,
-			"idleTimeout", idleTimeout)
+	s.logger.Info("HTTP server listening",
+		"address", addr,
+		"readTimeout", readTimeout,
+		"readHeaderTimeout", readHeaderTimeout,
+		"writeTimeout", writeTimeout,
+		"idleTimeout", idleTimeout)
 
-		if serr := s.server.ListenAndServe(); serr != nil && !errors.Is(serr, http.ErrServerClosed) {
+	go func() {
+		if serr := s.server.Serve(ln); serr != nil && !errors.Is(serr, http.ErrServerClosed) {
 			s.logger.Error("HTTP server error", "error", serr)
 		}
 	}()
 
-	time.Sleep(100 * time.Millisecond)
-
-	s.logger.Info("Olla started, waiting for requests...", "bind", s.server.Addr)
+	s.logger.Info("Olla started, waiting for requests...", "bind", addr)
 
 	s.printWarnings()
 	return nil
