@@ -98,6 +98,10 @@ olla/
 │   ├── pool/              # Object pooling
 │   └── profiler/          # Profiling support
 └── test/
+    ├── cmd/               # Test helper binaries
+    │   ├── mockbackend/   # Minimal OpenAI-shaped auth-test backend
+    │   └── ollamock/      # Multi-protocol mock LLM backend with fault injection
+    ├── validate/          # Configs for the /olla-validate harness
     └── scripts/           # Test scripts
         ├── auth/          # Authentication tests
         ├── cases/         # Test cases
@@ -215,6 +219,21 @@ go test -v ./internal/adapter/proxy -run TestOlla
 ```
 
 Always run `make ready` before committing changes.
+
+### Validation Harness (`/olla-validate`)
+Agent-driven end-to-end validation against mock backends — no Docker, no real
+inference infrastructure, CI-safe. Defined in `.claude/skills/olla-validate/`.
+
+- `/olla-validate --quick` — 5–10 min gate after major changes
+- `/olla-validate --nightly` — multi-hour pre-release gate (chaos, soak, Sherpa pass, forced-translation pass, benchmarks)
+- No flag — prompts for the depth
+
+It gates on `make ready` first, then boots seven `test/cmd/ollamock` instances
+(ports 19431–19437) plus two Olla instances (`test/validate/config.validate*.yaml`,
+ports 41141/41142) and fans out parallel agents per area checklist. Reports land
+in `test/results/`. ollamock speaks OpenAI, Ollama-native, LM Studio, Lemonade
+and Anthropic wire formats with runtime fault injection via `/_mock/behaviour`
+(see `test/cmd/ollamock/README.md`). Full docs: `docs/content/development/validation.md`.
 
 ## Architecture Notes
 

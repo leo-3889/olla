@@ -30,7 +30,8 @@ This guide covers testing patterns and strategies used in Olla.
 │   │   ├── logic/          # Routing logic tests
 │   │   ├── security/       # Security tests
 │   │   └── streaming/      # Streaming tests
-│   └── cmd/                # Helper programs for testing (e.g. mock backend)
+│   ├── cmd/                # Helper binaries (mockbackend, ollamock)
+│   └── validate/           # Validation harness configs (see Validation Harness)
 └── (benchmarks live alongside code as *_bench_test.go files in internal/)
 ```
 
