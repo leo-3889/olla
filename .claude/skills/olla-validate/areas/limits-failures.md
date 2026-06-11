@@ -22,19 +22,24 @@ long" on Git Bash/Windows.
 1. Baseline: `POST http://127.0.0.1:41142/olla/proxy/v1/chat/completions`
    with the standard small body → 200.
 2. Body cap, declared length: same route with a ~300KB body (pad one message
-   with filler) → rejected. Current contract: the security chain rejects a
-   declared oversized Content-Length with a blanket **403** ("Security
-   validation failed", `internal/app/handlers/application.go`); 413 is also
-   acceptable. Any 2xx or 5xx = FAIL.
+   with filler) → rejected with **413** (Content Too Large, RFC 9110 §15.5.14).
+   A 403 is a FAIL (it was the pre-fix bug). Any 2xx or 5xx = FAIL.
 3. Just-under cap (~200KB) → 200.
-4. 429 rate limit: fire 45 rapid sequential requests → at least one 429;
-   record at which request it first appears (expect after roughly
-   burst+window allowance) and whether a Retry-After or rate-limit header is
-   present (note, don't fail on header absence).
+4. 429 rate limit: fire 45 rapid sequential requests → at least one 429
+   (RFC 6585 §4); record at which request it first appears (expect after roughly
+   burst+window allowance). The 429 response must carry at least one of
+   `Retry-After` or an `X-RateLimit-*` header — FAIL if neither is present.
+   A 403 in place of 429 is a FAIL (it was the pre-fix masking bug).
 5. Health exemption: while rate-limited, `GET /internal/health` on 41142
    still 200 (health has its own generous limit).
-6. Malformed JSON (`{"model":`) → 4xx, not 5xx.
-7. Empty body POST → 4xx, not 5xx.
+6. Malformed JSON (`{"model":`) → must not 5xx and must not hang; record the
+   observed status (2xx or 4xx are both acceptable). Olla is a transparent
+   proxy and delegates body validation to the backend by design — it
+   opportunistically extracts the model field and, on failure, forwards to a
+   fallback backend. Only a 5xx or a hang is a FAIL.
+7. Empty body POST → must not 5xx and must not hang; record the observed
+   status (2xx or 4xx are both acceptable, same delegation rationale as
+   check 6). Only a 5xx or a hang is a FAIL.
 8. Wrong method: `DELETE /olla/proxy/v1/chat/completions` → 404/405, no 5xx.
 
 ### Nightly additions
