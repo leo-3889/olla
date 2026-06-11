@@ -704,6 +704,8 @@ func (m *mockTranslatorWithoutErrorWriter) TransformStreamingResponse(ctx contex
 }
 
 func TestTranslationHandler_StreamingPanicRecovery(t *testing.T) {
+	t.Parallel()
+
 	mockLogger := &mockStyledLogger{}
 
 	panicTrans := &mockTranslator{
@@ -712,7 +714,7 @@ func TestTranslationHandler_StreamingPanicRecovery(t *testing.T) {
 		writeErrorFunc: func(w http.ResponseWriter, err error, statusCode int) {
 			w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 			w.WriteHeader(statusCode)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": err.Error(),
 			})
 		},
@@ -781,18 +783,13 @@ func TestTranslationHandler_StreamingPanicRecovery(t *testing.T) {
 	req := httptest.NewRequest("POST", "/test", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatal("Expected panic to be propagated after cleanup")
-		}
-
-		panicMsg := fmt.Sprintf("%v", r)
-		assert.Contains(t, panicMsg, "simulated panic during stream transformation",
-			"Panic message should contain original panic text")
-	}()
-
+	// The handler must NOT re-panic. A re-panic resets the TCP connection,
+	// giving the client no indication of what went wrong. The correct behaviour
+	// is a 502 response so the client can handle the error gracefully.
 	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadGateway, rec.Code,
+		"streaming panic must produce 502 not a connection reset")
 }
 
 // Verifies that:
@@ -1755,4 +1752,44 @@ func TestExecuteTranslatedStreamingRequest_SuccessfulFlow(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "Hello", "SSE payload should be forwarded")
 	assert.NotEmpty(t, rec.Header().Get(constants.HeaderXOllaRequestID),
 		"X-Olla-Request-ID should be copied to the client response")
+}
+
+// TestHandleStreamingPanic_Writes502 verifies that a panic inside the streaming
+// path produces a 502 response to the client rather than re-panicking (which
+// would close the connection without sending any error).
+func TestHandleStreamingPanic_Writes502(t *testing.T) {
+	t.Parallel()
+
+	mockLogger := &mockStyledLogger{}
+	app := &Application{logger: mockLogger}
+
+	trans := &mockTranslator{
+		name:                  "panicking-translator",
+		implementsErrorWriter: true,
+		writeErrorFunc: func(w http.ResponseWriter, err error, statusCode int) {
+			w.WriteHeader(statusCode)
+		},
+	}
+
+	// Set up a pipe and a buffered error channel as the real code does.
+	pipeReader, pipeWriter := io.Pipe()
+	proxyErrChan := make(chan error, 1)
+
+	// Pre-fill the error channel so the drain in handleStreamingPanic does not block.
+	proxyErrChan <- nil
+
+	rec := httptest.NewRecorder()
+
+	// Call handleStreamingPanic directly, simulating the deferred call after a panic.
+	// We wrap in a function that sets up a panic so recover() fires.
+	func() {
+		defer app.handleStreamingPanic(rec, pipeReader, pipeWriter, proxyErrChan, &proxyRequest{
+			requestLogger: mockLogger,
+		}, trans)
+		panic("simulated streaming panic")
+	}()
+
+	// The panic must NOT propagate — if it did, the test would fail here.
+	assert.Equal(t, http.StatusBadGateway, rec.Code,
+		"streaming panic must produce 502 not a connection reset")
 }

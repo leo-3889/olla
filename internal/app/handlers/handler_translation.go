@@ -552,8 +552,9 @@ func (a *Application) executeTranslatedStreamingRequest(
 	// run proxy in background while translation processes
 	proxyErrChan := a.startProxyGoroutine(ctx, r, endpoints, pr, streamRecorder, pipeWriter)
 
-	// panic recovery prevents goroutine leak, cleanup before re-panic
-	defer a.handleStreamingPanic(pipeReader, pipeWriter, proxyErrChan, pr, trans)
+	// panic recovery prevents goroutine leak; sends a 502 to the client rather
+	// than re-panicking, which would produce a connection reset.
+	defer a.handleStreamingPanic(w, pipeReader, pipeWriter, proxyErrChan, pr, trans)
 
 	// Wait for headers before inspecting status. The select also handles context
 	// cancellation so we don't block forever if the proxy errors without writing.
@@ -627,8 +628,12 @@ func (a *Application) startProxyGoroutine(
 	return proxyErrChan
 }
 
-// handleStreamingPanic recovers from panic during streaming to prevent goroutine leak
+// handleStreamingPanic recovers from panic during streaming to prevent goroutine
+// leak and connection resets. Instead of re-panicking (which terminates the
+// connection abruptly and gives the client no useful error), it closes the pipe,
+// drains the error channel, and writes a 502 to the client.
 func (a *Application) handleStreamingPanic(
+	w http.ResponseWriter,
 	pipeReader *io.PipeReader,
 	pipeWriter *io.PipeWriter,
 	proxyErrChan chan error,
@@ -636,11 +641,11 @@ func (a *Application) handleStreamingPanic(
 	trans translator.RequestTranslator,
 ) {
 	if r := recover(); r != nil {
-		// Close both ends of the pipe to unblock the goroutine
+		// Close both ends of the pipe to unblock the proxy goroutine.
 		pipeReader.Close()
 		pipeWriter.Close()
 
-		// Drain the error channel to prevent goroutine leak
+		// Drain the buffered error channel to release the proxy goroutine.
 		<-proxyErrChan
 
 		a.logger.Error("Panic during stream transformation",
@@ -648,8 +653,14 @@ func (a *Application) handleStreamingPanic(
 			"translator", trans.Name(),
 			"model", pr.model)
 
-		// Re-panic after cleanup to preserve the panic behavior
-		panic(r)
+		// Respond with 502 rather than re-panicking. Re-panicking would reset
+		// the TCP connection, giving the client no indication of what went wrong.
+		// A 502 is the appropriate "gateway failed" response here.
+		if ew, ok := trans.(translator.ErrorWriter); ok {
+			ew.WriteError(w, errors.New("internal error during stream transformation"), http.StatusBadGateway)
+		} else {
+			http.Error(w, "internal error during stream transformation", http.StatusBadGateway)
+		}
 	}
 }
 
