@@ -184,6 +184,7 @@ nav:
       - Circuit Breaker: development/circuit-breaker.md
       - Contributing: development/contributing.md
       - Testing: development/testing.md
+      - Validation Harness: development/validation.md
       - Benchmarking: development/benchmarking.md
       - Notes:
           - Anthropic Inspector: notes/anthropic-inspector.md
