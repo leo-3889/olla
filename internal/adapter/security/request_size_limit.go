@@ -183,12 +183,21 @@ func (sv *SizeValidator) CreateNonProxyMiddleware() func(http.Handler) http.Hand
 				limited := http.MaxBytesReader(w, r.Body, sv.maxBodySize)
 				buf, readErr := io.ReadAll(limited)
 				if readErr != nil {
-					// MaxBytesReader returns an error (and writes a 413 header via the
-					// ResponseWriter) when the body exceeds the limit.
-					sv.logger.Warn("Chunked request body too large",
-						"method", r.Method,
-						"path", r.URL.Path,
-						"remote_addr", r.RemoteAddr)
+					// Treat chunked overflow identically to known-Content-Length overflow so
+					// security metrics capture both paths. Report size as limit+1 — the actual
+					// byte count is unknown for chunked transfers, but limit+1 conveys "exceeded".
+					overflowReq := ports.SecurityRequest{
+						Endpoint:   r.URL.Path,
+						Method:     r.Method,
+						BodySize:   sv.maxBodySize + 1,
+						HeaderSize: req.HeaderSize,
+						Headers:    r.Header,
+					}
+					overflowResult := ports.SecurityResult{
+						Allowed: false,
+						Reason:  fmt.Sprintf("Request body too large: chunked body exceeds limit %d", sv.maxBodySize),
+					}
+					sv.recordViolation(r, overflowReq, overflowResult)
 					http.Error(w, "Request body too large", http.StatusRequestEntityTooLarge)
 					return
 				}

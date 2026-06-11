@@ -1023,7 +1023,7 @@ func TestCopyResponseHeaders_OllaSetsThenCopiesAreNotDoubled(t *testing.T) {
 
 	vals := dst.Values("X-Olla-Endpoint")
 	if len(vals) != 1 {
-		t.Errorf("expected exactly 1 X-Olla-Endpoint value, got %d: %v", len(vals), vals)
+		t.Fatalf("expected exactly 1 X-Olla-Endpoint value, got %d: %v", len(vals), vals)
 	}
 	if vals[0] != "olla-real-value" {
 		t.Errorf("X-Olla-Endpoint = %q, want %q", vals[0], "olla-real-value")

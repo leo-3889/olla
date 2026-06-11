@@ -460,6 +460,41 @@ func TestCreateNonProxyMiddleware_ChunkedOversizedBody(t *testing.T) {
 	}
 }
 
+// TestCreateNonProxyMiddleware_ChunkedOversizedBody_RecordsViolation confirms
+// that an oversized chunked body produces a security-metrics violation, matching
+// the behaviour of the known-Content-Length rejection path.
+func TestCreateNonProxyMiddleware_ChunkedOversizedBody_RecordsViolation(t *testing.T) {
+	t.Parallel()
+
+	const cap = 10
+
+	log := createTestSizeLogger()
+	statsCollector := createTestStatsCollector(log)
+	metricsAdapter := NewSecurityMetricsAdapter(statsCollector, log)
+	validator := NewSizeValidator(config.ServerRequestLimits{
+		MaxBodySize:   cap,
+		MaxHeaderSize: 0,
+	}, metricsAdapter, log)
+
+	handler := validator.CreateNonProxyMiddleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	body := strings.Repeat("x", cap+1)
+	req := httptest.NewRequest(http.MethodPost, "/internal/status", strings.NewReader(body))
+	req.ContentLength = -1
+
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	metrics, err := metricsAdapter.GetMetrics(context.Background())
+	if err != nil {
+		t.Fatalf("GetMetrics failed: %v", err)
+	}
+	if metrics.SizeLimitViolations != 1 {
+		t.Errorf("expected 1 size-limit violation recorded for chunked overflow, got %d", metrics.SizeLimitViolations)
+	}
+}
+
 // TestCreateNonProxyMiddleware_ChunkedSmallBody confirms that a small chunked
 // body passes through and the handler still receives the body content intact.
 func TestCreateNonProxyMiddleware_ChunkedSmallBody(t *testing.T) {
