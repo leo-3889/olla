@@ -43,10 +43,7 @@ func resolveStream(s *bool, defaultStream bool) bool {
 // --- Ollama chat / generate ---
 
 func (srv *mockServer) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Model  string `json:"model"`
-		Stream *bool  `json:"stream"`
-	}
+	var req inferenceRequest
 	body := readBody(r)
 	_ = json.Unmarshal(body, &req)
 
@@ -65,10 +62,7 @@ func (srv *mockServer) handleOllamaChat(w http.ResponseWriter, r *http.Request) 
 }
 
 func (srv *mockServer) handleOllamaGenerate(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Model  string `json:"model"`
-		Stream *bool  `json:"stream"`
-	}
+	var req inferenceRequest
 	body := readBody(r)
 	_ = json.Unmarshal(body, &req)
 
@@ -223,10 +217,7 @@ func (srv *mockServer) streamOllamaGenerate(w http.ResponseWriter, r *http.Reque
 // --- OpenAI chat completions ---
 
 func (srv *mockServer) handleOpenAIChat(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Model  string `json:"model"`
-		Stream *bool  `json:"stream"`
-	}
+	var req inferenceRequest
 	body := readBody(r)
 	_ = json.Unmarshal(body, &req)
 
@@ -334,10 +325,7 @@ func (srv *mockServer) streamOpenAIChat(w http.ResponseWriter, r *http.Request, 
 // --- OpenAI text completions (legacy) ---
 
 func (srv *mockServer) handleOpenAICompletion(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Model  string `json:"model"`
-		Stream *bool  `json:"stream"`
-	}
+	var req inferenceRequest
 	body := readBody(r)
 	_ = json.Unmarshal(body, &req)
 
@@ -415,10 +403,7 @@ func (srv *mockServer) streamOpenAICompletion(w http.ResponseWriter, r *http.Req
 // --- Anthropic Messages API ---
 
 func (srv *mockServer) handleAnthropicMessages(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Model  string `json:"model"`
-		Stream *bool  `json:"stream"`
-	}
+	var req inferenceRequest
 	body := readBody(r)
 	_ = json.Unmarshal(body, &req)
 
