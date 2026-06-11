@@ -242,9 +242,19 @@ func (h *RetryHandler) buildFinalError(availableEndpoints []*domain.Endpoint, ma
 	return fmt.Errorf("max attempts (%d) reached: %w", maxRetries, lastErr)
 }
 
-// IsConnectionError identifies transient network errors suitable for retry
+// IsConnectionError identifies transient network errors suitable for retry.
+// Client-side context cancellations and deadline exceeded errors are NOT
+// connection errors — the backend is not at fault and must not be penalised
+// or failed-over with an already-expired context.
 func IsConnectionError(err error) bool {
 	if err == nil {
+		return false
+	}
+
+	// Short-circuit before the net.Error check: context.DeadlineExceeded's
+	// concrete type (*url.Error wrapping it) satisfies net.Error (Timeout()==true),
+	// which would falsely mark the endpoint unhealthy for a client timeout.
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return false
 	}
 
