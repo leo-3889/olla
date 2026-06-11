@@ -745,3 +745,70 @@ func TestStopChecking_DoubleInvoke(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// panicRepository panics on GetAll after a configurable number of successful calls,
+// then returns normally — used to verify the healthCheckLoop survives a tick panic.
+type panicRepository struct {
+	*mockRepository
+	callsUntilPanic int
+	calls           int
+	mu              sync.Mutex
+}
+
+func (p *panicRepository) GetAll(ctx context.Context) ([]*domain.Endpoint, error) {
+	p.mu.Lock()
+	p.calls++
+	calls := p.calls
+	p.mu.Unlock()
+
+	if calls == p.callsUntilPanic {
+		panic("injected panic in GetAll")
+	}
+	return p.mockRepository.GetAll(ctx)
+}
+
+// TestHealthCheckLoop_SurvivesPanic verifies that a panic inside performHealthChecks
+// does not kill the healthCheckLoop goroutine. The loop must continue firing on
+// subsequent ticks and the isRunning flag must remain true after the panic.
+func TestHealthCheckLoop_SurvivesPanic(t *testing.T) {
+	t.Parallel()
+
+	loggerCfg := &logger.Config{Level: "error", Theme: "default"}
+	log, cleanup, _ := logger.New(loggerCfg)
+	defer cleanup()
+	styledLogger := logger.NewPlainStyledLogger(log)
+
+	panicRepo := &panicRepository{
+		mockRepository:  newMockRepository(),
+		callsUntilPanic: 1, // panic on the first tick
+	}
+
+	// Use a very short ticker interval so the test doesn't have to wait long.
+	checker := NewHTTPHealthChecker(panicRepo, styledLogger, &mockHTTPClient{statusCode: 200})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	checker.isRunning.Store(true)
+	checker.ticker = time.NewTicker(20 * time.Millisecond)
+	go checker.healthCheckLoop(ctx)
+
+	// Wait long enough for two ticks (the first panics, the second must succeed).
+	time.Sleep(120 * time.Millisecond)
+
+	// isRunning must still be true — the loop survived the panic.
+	if !checker.isRunning.Load() {
+		t.Error("isRunning is false after tick panic; loop likely died")
+	}
+
+	// The second GetAll call (tick 2) must have happened, proving the loop continued.
+	panicRepo.mu.Lock()
+	calls := panicRepo.calls
+	panicRepo.mu.Unlock()
+
+	if calls < 2 {
+		t.Errorf("GetAll called %d times; expected >= 2 (loop must have continued past the panic)", calls)
+	}
+
+	_ = checker.StopChecking(ctx)
+}
