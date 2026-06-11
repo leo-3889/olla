@@ -2,6 +2,9 @@ package security
 
 import (
 	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -415,5 +418,150 @@ func TestSizeValidator_Validate_MultiValueHeaders(t *testing.T) {
 	}
 	if result.Allowed {
 		t.Error("Large multi-value headers should exceed limit")
+	}
+}
+
+// TestCreateNonProxyMiddleware_ChunkedOversizedBody confirms that an oversized
+// chunked request (Content-Length == -1) to a non-proxy route is rejected with
+// 413. This is the regression guard for P1: MaxBytesReader alone never fires on
+// routes that don't read the body, so CreateNonProxyMiddleware must drain the
+// body itself.
+func TestCreateNonProxyMiddleware_ChunkedOversizedBody(t *testing.T) {
+	t.Parallel()
+
+	const cap = 10
+
+	validator := createTestSizeLimitValidator(config.ServerRequestLimits{
+		MaxBodySize:   cap,
+		MaxHeaderSize: 0,
+	})
+
+	reached := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := validator.CreateNonProxyMiddleware()(next)
+
+	body := strings.Repeat("x", cap+1)
+	req := httptest.NewRequest(http.MethodPost, "/internal/status", strings.NewReader(body))
+	// Simulate chunked: no Content-Length header
+	req.ContentLength = -1
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("expected 413 for oversized chunked body, got %d", rr.Code)
+	}
+	if reached {
+		t.Error("handler must not be reached when oversized chunked body is rejected")
+	}
+}
+
+// TestCreateNonProxyMiddleware_ChunkedOversizedBody_RecordsViolation confirms
+// that an oversized chunked body produces a security-metrics violation, matching
+// the behaviour of the known-Content-Length rejection path.
+func TestCreateNonProxyMiddleware_ChunkedOversizedBody_RecordsViolation(t *testing.T) {
+	t.Parallel()
+
+	const cap = 10
+
+	log := createTestSizeLogger()
+	statsCollector := createTestStatsCollector(log)
+	metricsAdapter := NewSecurityMetricsAdapter(statsCollector, log)
+	validator := NewSizeValidator(config.ServerRequestLimits{
+		MaxBodySize:   cap,
+		MaxHeaderSize: 0,
+	}, metricsAdapter, log)
+
+	handler := validator.CreateNonProxyMiddleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	body := strings.Repeat("x", cap+1)
+	req := httptest.NewRequest(http.MethodPost, "/internal/status", strings.NewReader(body))
+	req.ContentLength = -1
+
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	metrics, err := metricsAdapter.GetMetrics(context.Background())
+	if err != nil {
+		t.Fatalf("GetMetrics failed: %v", err)
+	}
+	if metrics.SizeLimitViolations != 1 {
+		t.Errorf("expected 1 size-limit violation recorded for chunked overflow, got %d", metrics.SizeLimitViolations)
+	}
+}
+
+// TestCreateNonProxyMiddleware_ChunkedSmallBody confirms that a small chunked
+// body passes through and the handler still receives the body content intact.
+func TestCreateNonProxyMiddleware_ChunkedSmallBody(t *testing.T) {
+	t.Parallel()
+
+	const cap = 100
+
+	validator := createTestSizeLimitValidator(config.ServerRequestLimits{
+		MaxBodySize:   cap,
+		MaxHeaderSize: 0,
+	})
+
+	var receivedBody string
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		receivedBody = string(b)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := validator.CreateNonProxyMiddleware()(next)
+
+	body := "hello"
+	req := httptest.NewRequest(http.MethodPost, "/internal/status", strings.NewReader(body))
+	req.ContentLength = -1
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200 for small chunked body, got %d", rr.Code)
+	}
+	if receivedBody != body {
+		t.Errorf("handler received wrong body: want %q, got %q", body, receivedBody)
+	}
+}
+
+// TestCreateNonProxyMiddleware_KnownLengthOversized confirms that the fast-path
+// Content-Length rejection still works in CreateNonProxyMiddleware.
+func TestCreateNonProxyMiddleware_KnownLengthOversized(t *testing.T) {
+	t.Parallel()
+
+	const cap = 10
+
+	validator := createTestSizeLimitValidator(config.ServerRequestLimits{
+		MaxBodySize:   cap,
+		MaxHeaderSize: 0,
+	})
+
+	reached := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := validator.CreateNonProxyMiddleware()(next)
+
+	body := strings.Repeat("x", cap+1)
+	req := httptest.NewRequest(http.MethodPost, "/internal/status", strings.NewReader(body))
+	req.ContentLength = int64(len(body))
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("expected 413 for known-length oversized body, got %d", rr.Code)
+	}
+	if reached {
+		t.Error("handler must not be reached when oversized known-length body is rejected")
 	}
 }

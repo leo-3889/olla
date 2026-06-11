@@ -963,6 +963,73 @@ func TestCopyResponseHeaders_PassesThroughUndeniedHeader(t *testing.T) {
 	}
 }
 
+// TestCopyResponseHeaders_StripsBackendSpoofedXOllaHeaders verifies that any
+// X-Olla-* header a backend injects into its response is stripped before it
+// reaches the client. Olla is the sole authority for X-Olla-* response headers;
+// a spoofed value from a compromised backend would mislead clients relying on
+// them for routing decisions or session affinity.
+func TestCopyResponseHeaders_StripsBackendSpoofedXOllaHeaders(t *testing.T) {
+	t.Parallel()
+
+	spoofedHeaders := []string{
+		"X-Olla-Endpoint",
+		"X-Olla-Model",
+		"X-Olla-Backend-Type",
+		"X-Olla-Request-ID",
+		"X-Olla-Response-Time",
+		"X-Olla-Routing-Strategy",
+		"X-Olla-Sticky-Session",
+		"X-Olla-Mode",
+		"X-Olla-Custom-Unknown", // unknown future header, must also be stripped
+	}
+
+	for _, header := range spoofedHeaders {
+
+		t.Run("strips_"+header, func(t *testing.T) {
+			t.Parallel()
+
+			src := http.Header{}
+			src.Set(header, "spoofed-value")
+			src.Set("Content-Type", "application/json") // safe header must pass through
+
+			dst := http.Header{}
+			CopyResponseHeaders(dst, src, nil)
+
+			if got := dst.Get(header); got != "" {
+				t.Errorf("CopyResponseHeaders forwarded spoofed %q = %q to client, want empty", header, got)
+			}
+			if got := dst.Get("Content-Type"); got == "" {
+				t.Error("CopyResponseHeaders stripped safe Content-Type header")
+			}
+		})
+	}
+}
+
+// TestCopyResponseHeaders_OllaSetsThenCopiesAreNotDoubled proves that when Olla
+// sets its own X-Olla-Endpoint on dst before calling CopyResponseHeaders, the
+// backend spoof does not create a second value (dst.Add would append; stripping
+// prevents this entirely).
+func TestCopyResponseHeaders_OllaSetsThenCopiesAreNotDoubled(t *testing.T) {
+	t.Parallel()
+
+	src := http.Header{}
+	src.Set("X-Olla-Endpoint", "spoofed-backend")
+	src.Set("Content-Type", "application/json")
+
+	dst := http.Header{}
+	dst.Set("X-Olla-Endpoint", "olla-real-value")
+
+	CopyResponseHeaders(dst, src, nil)
+
+	vals := dst.Values("X-Olla-Endpoint")
+	if len(vals) != 1 {
+		t.Fatalf("expected exactly 1 X-Olla-Endpoint value, got %d: %v", len(vals), vals)
+	}
+	if vals[0] != "olla-real-value" {
+		t.Errorf("X-Olla-Endpoint = %q, want %q", vals[0], "olla-real-value")
+	}
+}
+
 // BenchmarkSetResponseHeaders benchmarks the SetResponseHeaders function
 func BenchmarkSetResponseHeaders(b *testing.B) {
 	stats := &ports.RequestStats{

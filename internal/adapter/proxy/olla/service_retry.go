@@ -53,6 +53,10 @@ func (s *Service) ProxyRequestToEndpointsWithRetry(ctx context.Context, w http.R
 func (s *Service) proxyToSingleEndpoint(ctx context.Context, w http.ResponseWriter, r *http.Request, endpoint *domain.Endpoint, stats *ports.RequestStats, rlog logger.StyledLogger) error {
 	stats.EndpointName = endpoint.Name
 
+	// Snapshot config once for this request so all reads below are coherent even
+	// if UpdateConfig races concurrently.
+	cfg := s.configuration.Load()
+
 	// Check circuit breaker first
 	cb := s.GetCircuitBreaker(endpoint.Name)
 	if cb != nil && cb.IsOpen() {
@@ -63,7 +67,7 @@ func (s *Service) proxyToSingleEndpoint(ctx context.Context, w http.ResponseWrit
 	}
 
 	// Build target URL using common function that respects preserve_path
-	targetURL := common.BuildTargetURL(r, endpoint, s.configuration.GetProxyPrefix())
+	targetURL := common.BuildTargetURL(r, endpoint, cfg.GetProxyPrefix())
 	stats.TargetUrl = targetURL.String()
 
 	// Log request dispatch after target URL is computed
@@ -110,7 +114,7 @@ func (s *Service) proxyToSingleEndpoint(ctx context.Context, w http.ResponseWrit
 		}
 		s.RecordFailure(ctx, endpoint, time.Since(stats.StartTime), err)
 		duration := time.Since(stats.StartTime)
-		return common.MakeUserFriendlyError(err, duration, "backend", s.configuration.GetResponseTimeout())
+		return common.MakeUserFriendlyError(err, duration, "backend", cfg.GetResponseTimeout())
 	}
 	defer resp.Body.Close()
 
@@ -152,7 +156,7 @@ func (s *Service) proxyToSingleEndpoint(ctx context.Context, w http.ResponseWrit
 	if streamErr != nil && !errors.Is(streamErr, context.Canceled) {
 		rlog.Error("streaming failed", "error", streamErr)
 		s.RecordFailure(ctx, endpoint, time.Since(stats.StartTime), streamErr)
-		return common.MakeUserFriendlyError(streamErr, time.Since(stats.StartTime), "streaming", s.configuration.GetResponseTimeout())
+		return common.MakeUserFriendlyError(streamErr, time.Since(stats.StartTime), "streaming", cfg.GetResponseTimeout())
 	}
 
 	// We've successfully written the response

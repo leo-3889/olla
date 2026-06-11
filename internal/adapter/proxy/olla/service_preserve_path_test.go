@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/thushan/olla/internal/adapter/proxy/common"
 	"github.com/thushan/olla/internal/adapter/proxy/config"
 	"github.com/thushan/olla/internal/core/domain"
 )
@@ -180,22 +181,21 @@ func TestService_buildTargetURL_PreservePath(t *testing.T) {
 			t.Parallel()
 
 			// Create a minimal service with configuration
-			s := &Service{
-				configuration: &Configuration{
-					OllaConfig: config.OllaConfig{
-						BaseProxyConfig: config.BaseProxyConfig{
-							ProxyPrefix: tt.proxyPrefix,
-						},
+			s := &Service{}
+			s.configuration.Store(&Configuration{
+				OllaConfig: config.OllaConfig{
+					BaseProxyConfig: config.BaseProxyConfig{
+						ProxyPrefix: tt.proxyPrefix,
 					},
 				},
-			}
+			})
 
 			// Create a test request
 			req, err := http.NewRequest("POST", tt.requestPath, nil)
 			require.NoError(t, err)
 
 			// Build the target URL
-			targetURL := s.buildTargetURL(req, tt.endpoint)
+			targetURL := common.BuildTargetURL(req, tt.endpoint, s.configuration.Load().GetProxyPrefix())
 
 			// Assert the path is as expected
 			assert.Equal(t, tt.expectedPath, targetURL.Path, tt.description)
@@ -379,22 +379,21 @@ func TestService_buildTargetURL_EdgeCases(t *testing.T) {
 			t.Parallel()
 
 			// Create a minimal service with configuration
-			s := &Service{
-				configuration: &Configuration{
-					OllaConfig: config.OllaConfig{
-						BaseProxyConfig: config.BaseProxyConfig{
-							ProxyPrefix: tt.proxyPrefix,
-						},
+			s := &Service{}
+			s.configuration.Store(&Configuration{
+				OllaConfig: config.OllaConfig{
+					BaseProxyConfig: config.BaseProxyConfig{
+						ProxyPrefix: tt.proxyPrefix,
 					},
 				},
-			}
+			})
 
 			// Create a test request
 			req, err := http.NewRequest("POST", tt.requestPath, nil)
 			require.NoError(t, err)
 
 			// Build the target URL
-			targetURL := s.buildTargetURL(req, tt.endpoint)
+			targetURL := common.BuildTargetURL(req, tt.endpoint, s.configuration.Load().GetProxyPrefix())
 
 			// Assert the path is as expected
 			assert.Equal(t, tt.expectedPath, targetURL.Path, tt.description)
@@ -495,20 +494,19 @@ func TestService_buildTargetURL_QueryString(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			s := &Service{
-				configuration: &Configuration{
-					OllaConfig: config.OllaConfig{
-						BaseProxyConfig: config.BaseProxyConfig{
-							ProxyPrefix: "/olla/proxy",
-						},
+			s := &Service{}
+			s.configuration.Store(&Configuration{
+				OllaConfig: config.OllaConfig{
+					BaseProxyConfig: config.BaseProxyConfig{
+						ProxyPrefix: "/olla/proxy",
 					},
 				},
-			}
+			})
 
 			req, err := http.NewRequest("GET", tt.requestPath, nil)
 			require.NoError(t, err)
 
-			targetURL := s.buildTargetURL(req, tt.endpoint)
+			targetURL := common.BuildTargetURL(req, tt.endpoint, s.configuration.Load().GetProxyPrefix())
 
 			assert.Equal(t, tt.expectedPath, targetURL.Path, tt.description)
 			assert.Equal(t, tt.expectedQuery, targetURL.RawQuery, "Query string: "+tt.description)
@@ -647,20 +645,19 @@ func TestService_buildTargetURL_RealWorldScenarios(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			s := &Service{
-				configuration: &Configuration{
-					OllaConfig: config.OllaConfig{
-						BaseProxyConfig: config.BaseProxyConfig{
-							ProxyPrefix: "/olla/proxy",
-						},
+			s := &Service{}
+			s.configuration.Store(&Configuration{
+				OllaConfig: config.OllaConfig{
+					BaseProxyConfig: config.BaseProxyConfig{
+						ProxyPrefix: "/olla/proxy",
 					},
 				},
-			}
+			})
 
 			req, err := http.NewRequest("POST", tt.requestPath, nil)
 			require.NoError(t, err)
 
-			targetURL := s.buildTargetURL(req, tt.endpoint)
+			targetURL := common.BuildTargetURL(req, tt.endpoint, s.configuration.Load().GetProxyPrefix())
 
 			assert.Equal(t, tt.expectedPath, targetURL.Path,
 				"Provider: %s - %s", tt.provider, tt.description)
@@ -716,15 +713,14 @@ func BenchmarkService_buildTargetURL(b *testing.B) {
 
 	for _, scenario := range scenarios {
 		b.Run(scenario.name, func(b *testing.B) {
-			s := &Service{
-				configuration: &Configuration{
-					OllaConfig: config.OllaConfig{
-						BaseProxyConfig: config.BaseProxyConfig{
-							ProxyPrefix: "/olla/proxy",
-						},
+			s := &Service{}
+			s.configuration.Store(&Configuration{
+				OllaConfig: config.OllaConfig{
+					BaseProxyConfig: config.BaseProxyConfig{
+						ProxyPrefix: "/olla/proxy",
 					},
 				},
-			}
+			})
 
 			req, _ := http.NewRequest("POST", scenario.requestPath, nil)
 
@@ -732,7 +728,7 @@ func BenchmarkService_buildTargetURL(b *testing.B) {
 			b.ReportAllocs()
 
 			for range b.N {
-				_ = s.buildTargetURL(req, scenario.endpoint)
+				_ = common.BuildTargetURL(req, scenario.endpoint, s.configuration.Load().GetProxyPrefix())
 			}
 		})
 	}

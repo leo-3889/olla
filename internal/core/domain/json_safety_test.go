@@ -91,6 +91,41 @@ func TestEndpointAuthFieldsNotSerialised(t *testing.T) {
 	}
 }
 
+// TestEndpointAuthHeaderNameNotSerialised asserts that AuthHeaderName is never
+// emitted in JSON. The header name (e.g. "Authorization", "X-Api-Key") reveals
+// the auth scheme in use and makes credential-probing attacks cheaper; it must
+// be treated with the same confidentiality as the value itself.
+func TestEndpointAuthHeaderNameNotSerialised(t *testing.T) {
+	t.Parallel()
+
+	for _, headerName := range []string{"Authorization", "X-Api-Key", "X-Auth-Token"} {
+
+		t.Run(headerName, func(t *testing.T) {
+			t.Parallel()
+
+			ep := domain.Endpoint{
+				Name:            "secure-ep",
+				Type:            "vllm",
+				AuthHeaderName:  headerName,
+				AuthHeaderValue: "Bearer tok",
+			}
+
+			data, err := json.Marshal(ep)
+			if err != nil {
+				t.Fatalf("json.Marshal: %v", err)
+			}
+
+			if strings.Contains(string(data), headerName) {
+				t.Errorf("AuthHeaderName %q leaked into JSON output: %s", headerName, data)
+			}
+			// Sanity: public fields are still emitted.
+			if !strings.Contains(string(data), "secure-ep") {
+				t.Errorf("Endpoint name missing from JSON output: %s", data)
+			}
+		})
+	}
+}
+
 // TestEndpointHeadersNotSerialised asserts that Endpoint.Headers is not included
 // in JSON output. The map may contain API keys or other custom auth values set
 // via the headers: config block; exposing them through status endpoints would

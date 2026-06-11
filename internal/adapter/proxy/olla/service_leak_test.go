@@ -14,7 +14,6 @@ import (
 	"github.com/thushan/olla/internal/core/domain"
 	"github.com/thushan/olla/internal/core/ports"
 	"github.com/thushan/olla/internal/logger"
-	"github.com/thushan/olla/pkg/pool"
 )
 
 // TestEndpointPoolCleanup_NoMemoryLeak verifies endpoint pools are cleaned up
@@ -24,18 +23,16 @@ func TestEndpointPoolCleanup_NoMemoryLeak(t *testing.T) {
 		BaseProxyComponents: &core.BaseProxyComponents{
 			Logger: createTestLogger(),
 		},
-		configuration: func() *Configuration {
-			c := &Configuration{}
-			c.MaxIdleConns = 10
-			c.MaxConnsPerHost = 5
-			c.IdleConnTimeout = 30 * time.Second
-			return c
-		}(),
 		endpointPools:   *xsync.NewMap[string, *connectionPool](),
 		circuitBreakers: *xsync.NewMap[string, *circuitBreaker](),
 		cleanupTicker:   time.NewTicker(100 * time.Millisecond), // Fast cleanup for testing
 		cleanupStop:     make(chan struct{}),
 	}
+	cfg := &Configuration{}
+	cfg.MaxIdleConns = 10
+	cfg.MaxConnsPerHost = 5
+	cfg.IdleConnTimeout = 30 * time.Second
+	s.configuration.Store(cfg)
 
 	// Start cleanup loop
 	go s.cleanupLoop()
@@ -90,12 +87,12 @@ func TestCircuitBreakerCleanup_NoMemoryLeak(t *testing.T) {
 		BaseProxyComponents: &core.BaseProxyComponents{
 			Logger: createTestLogger(),
 		},
-		configuration:   &Configuration{},
 		endpointPools:   *xsync.NewMap[string, *connectionPool](),
 		circuitBreakers: *xsync.NewMap[string, *circuitBreaker](),
 		cleanupTicker:   time.NewTicker(100 * time.Millisecond),
 		cleanupStop:     make(chan struct{}),
 	}
+	s.configuration.Store(&Configuration{})
 
 	// Start cleanup loop
 	go s.cleanupLoop()
@@ -150,12 +147,12 @@ func TestCleanupLoop_ExitsCleanly(t *testing.T) {
 			BaseProxyComponents: &core.BaseProxyComponents{
 				Logger: createTestLogger(),
 			},
-			configuration:   &Configuration{},
 			endpointPools:   *xsync.NewMap[string, *connectionPool](),
 			circuitBreakers: *xsync.NewMap[string, *circuitBreaker](),
 			cleanupTicker:   time.NewTicker(50 * time.Millisecond),
 			cleanupStop:     make(chan struct{}),
 		}
+		s.configuration.Store(&Configuration{})
 
 		// Start cleanup loop
 		go s.cleanupLoop()
@@ -180,80 +177,6 @@ func TestCleanupLoop_ExitsCleanly(t *testing.T) {
 	if leaked > 2 { // Allow small variance
 		t.Errorf("Goroutine leak detected: initial=%d, final=%d, leaked=%d",
 			initialGoroutines, finalGoroutines, leaked)
-	}
-}
-
-// TestRequestContextPool_Reset verifies request context is properly reset
-func TestRequestContextPool_Reset(t *testing.T) {
-	reqPool, err := pool.NewLitePool(func() *requestContext {
-		return &requestContext{}
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Get a context and set fields
-	ctx := reqPool.Get()
-	ctx.requestID = "test-123"
-	ctx.startTime = time.Now()
-	ctx.endpoint = "test-endpoint"
-	ctx.targetURL = "http://example.com"
-
-	// Return to pool
-	reqPool.Put(ctx)
-
-	// Get it again - should be reset
-	ctx2 := reqPool.Get()
-	if ctx2.requestID != "" {
-		t.Errorf("requestID not reset: %s", ctx2.requestID)
-	}
-	if !ctx2.startTime.IsZero() {
-		t.Errorf("startTime not reset: %v", ctx2.startTime)
-	}
-	if ctx2.endpoint != "" {
-		t.Errorf("endpoint not reset: %s", ctx2.endpoint)
-	}
-	if ctx2.targetURL != "" {
-		t.Errorf("targetURL not reset: %s", ctx2.targetURL)
-	}
-}
-
-// TestErrorContextPool_Reset verifies error context is properly reset
-func TestErrorContextPool_Reset(t *testing.T) {
-	errorPool, err := pool.NewLitePool(func() *errorContext {
-		return &errorContext{}
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Get a context and set fields
-	ctx := errorPool.Get()
-	ctx.err = errors.New("test error")
-	ctx.context = "test context"
-	ctx.duration = 5 * time.Second
-	ctx.code = 500
-	ctx.allocated = true
-
-	// Return to pool
-	errorPool.Put(ctx)
-
-	// Get it again - should be reset
-	ctx2 := errorPool.Get()
-	if ctx2.err != nil {
-		t.Errorf("err not reset: %v", ctx2.err)
-	}
-	if ctx2.context != "" {
-		t.Errorf("context not reset: %s", ctx2.context)
-	}
-	if ctx2.duration != 0 {
-		t.Errorf("duration not reset: %v", ctx2.duration)
-	}
-	if ctx2.code != 0 {
-		t.Errorf("code not reset: %d", ctx2.code)
-	}
-	if ctx2.allocated {
-		t.Errorf("allocated not reset")
 	}
 }
 
@@ -376,12 +299,12 @@ func TestCleanup_DoubleInvoke(t *testing.T) {
 		BaseProxyComponents: &core.BaseProxyComponents{
 			Logger: createTestLogger(),
 		},
-		configuration:   &Configuration{},
 		endpointPools:   *xsync.NewMap[string, *connectionPool](),
 		circuitBreakers: *xsync.NewMap[string, *circuitBreaker](),
 		cleanupTicker:   time.NewTicker(time.Hour),
 		cleanupStop:     make(chan struct{}),
 	}
+	s.configuration.Store(&Configuration{})
 
 	go s.cleanupLoop()
 

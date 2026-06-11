@@ -54,9 +54,6 @@ type BaseProxyComponents struct {
 	EventBus         *eventbus.EventBus[ProxyEvent]
 
 	Stats ProxyStats
-
-	// Atomic counters for request tracking
-	totalRequests atomic.Int64
 }
 
 // NewBaseProxyComponents creates a new BaseProxyComponents instance
@@ -79,7 +76,6 @@ func NewBaseProxyComponents(
 
 // IncrementRequests increments the total request counter
 func (b *BaseProxyComponents) IncrementRequests() {
-	b.totalRequests.Add(1)
 	atomic.AddInt64(&b.Stats.TotalRequests, 1)
 }
 

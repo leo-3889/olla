@@ -158,12 +158,24 @@ func (r *RouteRegistry) WireUpWithSecurityChain(mux *http.ServeMux, securityAdap
 		CreateRateLimitMiddleware() func(http.Handler) http.Handler
 	}
 
+	// Optional: size validation for non-proxy routes. The full security chain
+	// (proxy routes) already includes size enforcement; this ensures non-proxy
+	// routes (status, health, stats) are also protected against oversized bodies.
+	// Rate limiting on non-proxy routes is intentionally omitted: these endpoints
+	// are internal/observability-only and applying a per-IP token bucket would
+	// complicate operations without meaningful security benefit.
+	type sizeMiddlewareProvider interface {
+		CreateSizeMiddleware() func(http.Handler) http.Handler
+	}
+
 	adapters, hasAdapters := securityAdapters.(securityAdapterProvider)
 
 	if !hasAdapters {
 		r.WireUp(mux)
 		return
 	}
+
+	sizeProvider, hasSizeMiddleware := securityAdapters.(sizeMiddlewareProvider)
 
 	for route, info := range r.routes {
 		var handler http.Handler = info.Handler
@@ -172,7 +184,18 @@ func (r *RouteRegistry) WireUpWithSecurityChain(mux *http.ServeMux, securityAdap
 			handler = adapters.CreateChainMiddleware()(handler)
 			mux.Handle(route, handler)
 		} else {
+			// Non-proxy routes (status, health, stats) get logging via
+			// CreateRateLimitMiddleware. Size validation is added on top when the
+			// adapter supports it, running before the rate-limit/logging wrap so
+			// oversized requests are rejected before consuming any quota or log budget.
+			// Rate limiting itself is intentionally not enforced on these internal
+			// endpoints; they are operational/observability-only and applying a
+			// per-IP token bucket would complicate deployments without meaningful
+			// security gain.
 			handler = adapters.CreateRateLimitMiddleware()(handler)
+			if hasSizeMiddleware {
+				handler = sizeProvider.CreateSizeMiddleware()(handler)
+			}
 			mux.Handle(route, handler)
 		}
 	}
