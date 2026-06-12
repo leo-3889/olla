@@ -29,29 +29,43 @@ type SecurityAdapters struct {
 	logger           logger.StyledLogger
 }
 
-// CreateChainMiddleware creates middleware that applies the full security chain with enhanced logging
+// CreateChainMiddleware creates middleware that applies the full security chain with enhanced logging.
+// When concrete security adapters are available (production path), we delegate to them so that
+// per-validator status codes (429 rate-limit, 413 body-too-large) are preserved. The abstract
+// securityChain path is kept as a fallback for test contexts where only the chain is wired.
 func (s *SecurityAdapters) CreateChainMiddleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
-		// Chain the middleware: logging -> access logging -> security -> handler
+		// Wrap with logging so every proxy request is recorded regardless of which
+		// security path runs below.
 		withLogging := middleware.EnhancedLoggingMiddleware(s.logger)(next)
 		withAccessLogging := middleware.AccessLoggingMiddleware(s.logger)(withLogging)
 
+		if s.securityAdapters != nil {
+			// Delegate to the concrete adapter chain. It sets the correct status codes
+			// (429 + Retry-After/X-RateLimit-* for rate limiting, 413 for oversized
+			// bodies) rather than flattening everything to 403.
+			concreteChain := s.securityAdapters.CreateChainMiddleware()(withAccessLogging)
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				concreteChain.ServeHTTP(w, r)
+			})
+		}
+
+		// Fallback: abstract chain only (e.g. unit tests that inject securityChain
+		// directly without wiring the full security.Adapters).
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if s.securityChain != nil {
-				// Create security request from HTTP request
 				secReq := ports.SecurityRequest{
-					ClientID:      r.RemoteAddr, // This would normally be extracted better
+					ClientID:      r.RemoteAddr,
 					Endpoint:      r.URL.Path,
 					Method:        r.Method,
 					BodySize:      r.ContentLength,
-					HeaderSize:    0, // Would need to calculate
+					HeaderSize:    0,
 					Headers:       r.Header,
 					IsHealthCheck: r.URL.Path == "/internal/health",
 				}
 
 				result, err := s.securityChain.Validate(r.Context(), secReq)
 				if err != nil || !result.Allowed {
-					// Write appropriate error response
 					http.Error(w, "Security validation failed", http.StatusForbidden)
 					return
 				}
