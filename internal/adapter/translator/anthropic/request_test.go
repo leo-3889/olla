@@ -966,12 +966,15 @@ func TestTransformRequest_MixedTextAndToolResults(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, messages, 2)
 
-	assert.Equal(t, "user", messages[0]["role"])
-	assert.Equal(t, "Here's the result:", messages[0]["content"])
+	// tool messages must come before the user text so they sit immediately after
+	// the assistant tool_calls message; OpenAI-compatible backends reject any
+	// other role between them.
+	assert.Equal(t, "tool", messages[0]["role"])
+	assert.Equal(t, "tool_mixed", messages[0]["tool_call_id"])
+	assert.Equal(t, "Data from tool", messages[0]["content"])
 
-	assert.Equal(t, "tool", messages[1]["role"])
-	assert.Equal(t, "tool_mixed", messages[1]["tool_call_id"])
-	assert.Equal(t, "Data from tool", messages[1]["content"])
+	assert.Equal(t, "user", messages[1]["role"])
+	assert.Equal(t, "Here's the result:", messages[1]["content"])
 }
 
 func TestConvertSystemPrompt_AllFormats(t *testing.T) {
@@ -1149,4 +1152,139 @@ func TestTransformRequest_StronglyTypedSystemPrompt(t *testing.T) {
 
 	assert.Equal(t, "user", messages[1]["role"])
 	assert.Equal(t, "What's 2+2?", messages[1]["content"])
+}
+
+// TestConvertUserMessage_ToolResultPrecedesText verifies that when a user turn carries
+// both tool_result blocks and a text block (the typical agentic pattern used by Claude
+// Code), the resulting OpenAI messages are ordered tool(s) first, user text last.
+//
+// OpenAI-compatible backends require tool messages to sit immediately after the
+// assistant tool_calls message; inserting a user message between them returns 400.
+func TestConvertUserMessage_ToolResultPrecedesText(t *testing.T) {
+	t.Parallel()
+	tr := mustNewTranslator(createTestLogger(), createTestConfig())
+
+	anthropicReq := AnthropicRequest{
+		Model:     "claude-3-5-sonnet-20241022",
+		MaxTokens: 1024,
+		Messages: []AnthropicMessage{
+			{
+				Role: "assistant",
+				Content: []interface{}{
+					map[string]interface{}{
+						"type": "tool_use",
+						"id":   "toolu_agentic",
+						"name": "bash",
+						"input": map[string]interface{}{
+							"command": "ls",
+						},
+					},
+				},
+			},
+			{
+				// Claude Code sends [tool_result, text] on virtually every agentic turn.
+				Role: "user",
+				Content: []interface{}{
+					map[string]interface{}{
+						"type":        "tool_result",
+						"tool_use_id": "toolu_agentic",
+						"content":     "file1.go file2.go",
+					},
+					map[string]interface{}{
+						"type": "text",
+						"text": "That worked great.",
+					},
+				},
+			},
+		},
+	}
+
+	body, err := json.Marshal(anthropicReq)
+	require.NoError(t, err)
+
+	req := &http.Request{
+		Body: io.NopCloser(bytes.NewReader(body)),
+	}
+
+	result, err := tr.TransformRequest(context.Background(), req)
+	require.NoError(t, err)
+
+	messages, ok := result.OpenAIRequest["messages"].([]map[string]interface{})
+	require.True(t, ok)
+	// assistant(tool_calls), tool(result), user(text)
+	require.Len(t, messages, 3)
+
+	assert.Equal(t, "assistant", messages[0]["role"])
+
+	assert.Equal(t, "tool", messages[1]["role"],
+		"tool result must immediately follow the assistant message")
+	assert.Equal(t, "toolu_agentic", messages[1]["tool_call_id"])
+	assert.Equal(t, "file1.go file2.go", messages[1]["content"])
+
+	assert.Equal(t, "user", messages[2]["role"],
+		"user text must come after the tool result")
+	assert.Equal(t, "That worked great.", messages[2]["content"])
+}
+
+// TestConvertUserMessage_MultipleToolResultsPrecedeText verifies that multiple tool
+// results in a single user turn all appear before the user text block.
+func TestConvertUserMessage_MultipleToolResultsPrecedeText(t *testing.T) {
+	t.Parallel()
+	tr := mustNewTranslator(createTestLogger(), createTestConfig())
+
+	msgs := []AnthropicMessage{
+		{
+			Role: "user",
+			Content: []interface{}{
+				map[string]interface{}{
+					"type":        "tool_result",
+					"tool_use_id": "tool_r1",
+					"content":     "result one",
+				},
+				map[string]interface{}{
+					"type":        "tool_result",
+					"tool_use_id": "tool_r2",
+					"content":     "result two",
+				},
+				map[string]interface{}{
+					"type": "text",
+					"text": "Here is what I got.",
+				},
+			},
+		},
+	}
+
+	result, err := tr.convertMessages(msgs, nil)
+	require.NoError(t, err)
+	require.Len(t, result, 3)
+
+	assert.Equal(t, "tool", result[0]["role"])
+	assert.Equal(t, "tool_r1", result[0]["tool_call_id"])
+
+	assert.Equal(t, "tool", result[1]["role"])
+	assert.Equal(t, "tool_r2", result[1]["tool_call_id"])
+
+	assert.Equal(t, "user", result[2]["role"])
+	assert.Equal(t, "Here is what I got.", result[2]["content"])
+}
+
+// TestConvertUserMessage_TextOnlyUnchanged verifies that a text-only user message
+// (no tool_result blocks) is not affected by the reordering.
+func TestConvertUserMessage_TextOnlyUnchanged(t *testing.T) {
+	t.Parallel()
+	tr := mustNewTranslator(createTestLogger(), createTestConfig())
+
+	msgs := []AnthropicMessage{
+		{
+			Role:    "user",
+			Content: "Just a plain question.",
+		},
+	}
+
+	result, err := tr.convertMessages(msgs, nil)
+	require.NoError(t, err)
+	require.Len(t, result, 1)
+
+	assert.Equal(t, "user", result[0]["role"])
+	assert.Equal(t, "Just a plain question.", result[0]["content"])
 }

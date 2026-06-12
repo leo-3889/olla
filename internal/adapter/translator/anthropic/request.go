@@ -158,10 +158,12 @@ func (t *Translator) convertSingleMessage(msg AnthropicMessage) ([]map[string]in
 	// user msgs can have text + tool results, assistant msgs have text + tool uses
 	if msg.Role == "user" {
 		userMsg, toolMsgs := t.convertUserMessage(contentBlocks)
+		// tool messages must immediately follow the assistant tool_calls message;
+		// OpenAI-compatible backends reject any other role between them.
+		result = append(result, toolMsgs...)
 		if userMsg != nil {
 			result = append(result, userMsg)
 		}
-		result = append(result, toolMsgs...)
 	} else if msg.Role == "assistant" {
 		assistantMsg := t.convertAssistantMessage(contentBlocks)
 		if assistantMsg != nil {

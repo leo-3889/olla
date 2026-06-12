@@ -989,16 +989,18 @@ func TestAnthropicEdgeCases_RoundTrip(t *testing.T) {
 		transformed, err := translator.TransformRequest(ctx, httpReq)
 		require.NoError(t, err)
 
-		// Should create separate messages: user text + tool result
+		// tool messages must come before the user text so they sit immediately after
+		// the assistant tool_calls message; OpenAI-compatible backends reject any
+		// other role between them.
 		messages := transformed.OpenAIRequest["messages"].([]map[string]interface{})
 		require.Len(t, messages, 2)
 
-		assert.Equal(t, "user", messages[0]["role"])
-		assert.Equal(t, "Here's the result:", messages[0]["content"])
+		assert.Equal(t, "tool", messages[0]["role"])
+		assert.Equal(t, "tool_123", messages[0]["tool_call_id"])
+		assert.Equal(t, "Result data", messages[0]["content"])
 
-		assert.Equal(t, "tool", messages[1]["role"])
-		assert.Equal(t, "tool_123", messages[1]["tool_call_id"])
-		assert.Equal(t, "Result data", messages[1]["content"])
+		assert.Equal(t, "user", messages[1]["role"])
+		assert.Equal(t, "Here's the result:", messages[1]["content"])
 	})
 
 	t.Run("tool_result_with_structured_content", func(t *testing.T) {
