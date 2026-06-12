@@ -44,12 +44,16 @@ func (a *Application) executePassthroughRequest(
 		return
 	}
 
-	// The proxy selector chooses the actual endpoint later, so only override the
-	// translator default when every candidate backend agrees on the same native
-	// path. Mixed native-Anthropic backends can require different paths (for
-	// example DMR uses /anthropic/v1/messages while vLLM uses /v1/messages).
-	if targetPath := a.resolvePassthroughTargetPath(endpoints, passthroughReq.TargetPath); targetPath != "" {
-		passthroughReq.TargetPath = targetPath
+	// The proxy selector chooses the actual endpoint later. When capable backends
+	// disagree on their native Anthropic path (e.g. DMR uses /anthropic/v1/messages
+	// while vLLM uses /v1/messages), we restrict to the largest path-compatible
+	// subset so the selected backend and the request path always agree.
+	resolvedPath, filteredEndpoints := a.resolvePassthroughTargetPath(endpoints, passthroughReq.TargetPath)
+	if resolvedPath != "" {
+		passthroughReq.TargetPath = resolvedPath
+	}
+	if len(filteredEndpoints) > 0 {
+		endpoints = filteredEndpoints
 	}
 
 	// Update proxy request details - capture streaming flag for accurate metrics
@@ -94,33 +98,70 @@ func (a *Application) executePassthroughRequest(
 	pr.stats.EndTime = time.Now()
 }
 
-// resolvePassthroughTargetPath returns the native Anthropic path only when every
-// candidate backend agrees on the same one. The proxy selector picks the real
-// endpoint after this runs, so a mixed fleet (e.g. DMR on /anthropic/v1/messages
-// alongside vLLM on /v1/messages) can't be given a single correct path; in that
-// case we keep the translator's neutral default rather than risk a 404 on whichever
-// backend is chosen.
-func (a *Application) resolvePassthroughTargetPath(endpoints []*domain.Endpoint, defaultPath string) string {
+// resolvePassthroughTargetPath resolves the native Anthropic messages path and
+// the endpoint subset that must be used with it.
+//
+// Uniform fleets: all candidates share the same MessagesPath. Returns that path
+// and nil (caller keeps original endpoint list unchanged).
+//
+// Mixed fleets: candidates disagree on their native path (e.g. DMR uses
+// /anthropic/v1/messages while vLLM uses /v1/messages). Restricting the proxy
+// to the full list would cause a 404 on whichever backend is selected but whose
+// path was not used. Instead we return the largest path-compatible subset.
+// Tie-break: prefer the subset whose path equals defaultPath; if no subset
+// matches, use the path of the first endpoint in the list.
+//
+// If profileLookup is nil or the endpoint list is empty, returns defaultPath and
+// nil so the caller leaves everything unchanged.
+func (a *Application) resolvePassthroughTargetPath(endpoints []*domain.Endpoint, defaultPath string) (string, []*domain.Endpoint) {
 	if a.profileLookup == nil || len(endpoints) == 0 {
-		return defaultPath
+		return defaultPath, nil
 	}
 
-	var resolvedPath string
-	for _, endpoint := range endpoints {
-		support := a.profileLookup.GetAnthropicSupport(endpoint.Type)
-		if support == nil || support.MessagesPath == "" {
-			return defaultPath
+	// Build a path→endpoints map. Any endpoint whose profile has no MessagesPath
+	// configured falls back to defaultPath so it still participates.
+	pathGroups := make(map[string][]*domain.Endpoint, len(endpoints))
+	for _, ep := range endpoints {
+		support := a.profileLookup.GetAnthropicSupport(ep.Type)
+		path := defaultPath
+		if support != nil && support.MessagesPath != "" {
+			path = support.MessagesPath
 		}
-		if resolvedPath == "" {
-			resolvedPath = support.MessagesPath
-			continue
-		}
-		if support.MessagesPath != resolvedPath {
-			return defaultPath
+		pathGroups[path] = append(pathGroups[path], ep)
+	}
+
+	// Uniform fleet: all candidates agree on a single path.
+	if len(pathGroups) == 1 {
+		for path := range pathGroups {
+			// nil filtered list signals "keep original slice" to the caller.
+			return path, nil
 		}
 	}
 
-	return resolvedPath
+	// Mixed fleet: pick the largest subset. Tie-break by preferring defaultPath,
+	// then by the path of whichever group appears first when iterating endpoints
+	// (deterministic: follows original endpoint order).
+	var bestPath string
+	var bestCount int
+
+	// First pass: find the maximum group size.
+	for path, group := range pathGroups {
+		if len(group) > bestCount {
+			bestCount = len(group)
+			bestPath = path
+		} else if len(group) == bestCount {
+			// Prefer defaultPath on a tie.
+			if path == defaultPath {
+				bestPath = path
+			}
+		}
+	}
+
+	// If the tie-break didn't resolve to defaultPath because sizes differ,
+	// and there happens to be a defaultPath group, prefer it when the winning
+	// group is the same size (handled above). Otherwise fall through.
+
+	return bestPath, pathGroups[bestPath]
 }
 
 // executeTranslationRequest handles the translation path where requests are converted
@@ -382,15 +423,23 @@ func (a *Application) executeTranslatedNonStreamingRequest(
 		return fmt.Errorf("proxy request failed: %w", err)
 	}
 
-	// Parse OpenAI response
+	// Check for backend errors before attempting JSON parse. A reverse proxy or
+	// rate-limiter in front of the backend may return plain-text or HTML on 4xx/5xx,
+	// so parsing first would surface a misleading "failed to parse OpenAI response"
+	// error and lose the upstream status code (e.g. a plain-text 429 must stay 429).
+	if recorder.status >= 400 {
+		// Opportunistic parse: pass the map if the body is valid JSON so the
+		// error formatter can extract a message; pass nil otherwise and let
+		// extractAndLogBackendError fall back to its generic message.
+		var openaiErrResp map[string]interface{}
+		_ = json.Unmarshal(recorder.body.Bytes(), &openaiErrResp)
+		return a.handleNonStreamingBackendError(w, r, recorder, openaiErrResp, pr, trans)
+	}
+
+	// Success path: strict parse — a malformed 200 body is a gateway error.
 	var openaiResp map[string]interface{}
 	if jerr := json.Unmarshal(recorder.body.Bytes(), &openaiResp); jerr != nil {
 		return fmt.Errorf("failed to parse OpenAI response: %w", jerr)
-	}
-
-	// handle backend errors
-	if recorder.status >= 400 {
-		return a.handleNonStreamingBackendError(w, r, recorder, openaiResp, pr, trans)
 	}
 
 	// transform and write successful response
@@ -565,9 +614,10 @@ func (a *Application) executeTranslatedStreamingRequest(
 	// run proxy in background while translation processes
 	proxyErrChan := a.startProxyGoroutine(ctx, r, endpoints, pr, streamRecorder, pipeWriter)
 
-	// panic recovery prevents goroutine leak; sends a 502 to the client rather
-	// than re-panicking, which would produce a connection reset.
-	defer a.handleStreamingPanic(w, pipeReader, pipeWriter, proxyErrChan, pr, trans)
+	// panic recovery prevents goroutine leak; sends a 502 (or SSE error event
+	// if the stream has already started) to the client rather than re-panicking,
+	// which would produce a connection reset with no useful error for the client.
+	defer a.handleStreamingPanic(w, pipeReader, pipeWriter, proxyErrChan, streamRecorder, pr, trans)
 
 	// Wait for headers before inspecting status. The select also handles context
 	// cancellation so we don't block forever if the proxy errors without writing.
@@ -644,12 +694,19 @@ func (a *Application) startProxyGoroutine(
 // handleStreamingPanic recovers from panic during streaming to prevent goroutine
 // leak and connection resets. Instead of re-panicking (which terminates the
 // connection abruptly and gives the client no useful error), it closes the pipe,
-// drains the error channel, and writes a 502 to the client.
+// drains the error channel, and writes an appropriate error to the client.
+//
+// When the upstream has already written body bytes (streamRecorder.started is
+// true), net/http silently ignores a WriteHeader(502) call because the response
+// is already committed. In that case we emit a spec-valid Anthropic SSE error
+// event into the open stream so the client receives a structured termination
+// signal rather than a truncated stream with injected JSON garbage.
 func (a *Application) handleStreamingPanic(
 	w http.ResponseWriter,
 	pipeReader *io.PipeReader,
 	pipeWriter *io.PipeWriter,
 	proxyErrChan chan error,
+	streamRecorder *streamingResponseRecorder,
 	pr *proxyRequest,
 	trans translator.RequestTranslator,
 ) {
@@ -666,14 +723,41 @@ func (a *Application) handleStreamingPanic(
 			"translator", trans.Name(),
 			"model", pr.model)
 
-		// Respond with 502 rather than re-panicking. Re-panicking would reset
-		// the TCP connection, giving the client no indication of what went wrong.
-		// A 502 is the appropriate "gateway failed" response here.
+		// If the upstream had already sent body bytes before the panic, the HTTP
+		// response is committed and WriteHeader(502) is a no-op. Emitting a
+		// well-formed SSE error event is the only way to signal the failure to
+		// the client without corrupting the stream with raw JSON.
+		if streamRecorder != nil && streamRecorder.started {
+			a.writeSSEErrorEvent(w, "internal error during stream transformation")
+			return
+		}
+
+		// Stream not yet started — response is uncommitted, so a plain HTTP 502
+		// with a structured error body reaches the client correctly.
 		if ew, ok := trans.(translator.ErrorWriter); ok {
 			ew.WriteError(w, errors.New("internal error during stream transformation"), http.StatusBadGateway)
 		} else {
 			http.Error(w, "internal error during stream transformation", http.StatusBadGateway)
 		}
+	}
+}
+
+// writeSSEErrorEvent emits a spec-valid Anthropic SSE error event into an
+// already-committed text/event-stream response. This is the only safe way to
+// report a mid-stream failure; a WriteHeader call would be silently ignored by
+// net/http once the response is committed.
+func (a *Application) writeSSEErrorEvent(w http.ResponseWriter, message string) {
+	if w == nil {
+		return
+	}
+	payload := fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":%q}}`, message)
+	// SSE format: event line, data line, blank line terminator.
+	sseEvent := fmt.Sprintf("event: error\ndata: %s\n\n", payload)
+	_, _ = fmt.Fprint(w, sseEvent)
+	// Flush if the underlying writer supports it, so the client receives
+	// the event immediately rather than waiting for a buffer drain.
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
 	}
 }
 
@@ -957,6 +1041,11 @@ type streamingResponseRecorder struct {
 	headersReady chan struct{}
 	closeOnce    sync.Once
 	status       int
+	// started is set true on the first Write, signalling that the upstream has
+	// begun emitting body bytes. The panic handler uses this to decide whether
+	// to inject an SSE error event into the already-open stream rather than
+	// attempting a plain HTTP 502 (which net/http silently ignores post-commit).
+	started bool
 }
 
 func newStreamingResponseRecorder(w io.Writer) *streamingResponseRecorder {
@@ -979,6 +1068,7 @@ func (r *streamingResponseRecorder) ensureHeadersReady() {
 }
 
 func (r *streamingResponseRecorder) Write(data []byte) (int, error) {
+	r.started = true
 	r.ensureHeadersReady()
 	return r.writer.Write(data)
 }
