@@ -844,14 +844,14 @@ func TestTransformStreamingResponse_TwoSequentialToolCallsExactSequence(t *testi
 	// Exact event sequence required by the Anthropic SSE spec.
 	assertEventSequence(t, events, []string{
 		"message_start",
-		"content_block_start",  // index 0, tool_alpha
-		"content_block_delta",  // index 0, partial_json {
-		"content_block_delta",  // index 0, partial_json \"x\":1}
-		"content_block_stop",   // index 0
-		"content_block_start",  // index 1, tool_beta
-		"content_block_delta",  // index 1, partial_json {
-		"content_block_delta",  // index 1, partial_json \"y\":2}
-		"content_block_stop",   // index 1
+		"content_block_start", // index 0, tool_alpha
+		"content_block_delta", // index 0, partial_json {
+		"content_block_delta", // index 0, partial_json \"x\":1}
+		"content_block_stop",  // index 0
+		"content_block_start", // index 1, tool_beta
+		"content_block_delta", // index 1, partial_json {
+		"content_block_delta", // index 1, partial_json \"y\":2}
+		"content_block_stop",  // index 1
 		"message_delta",
 		"message_stop",
 	})
@@ -915,12 +915,12 @@ func TestTransformStreamingResponse_TextThenToolExactSequence(t *testing.T) {
 
 	assertEventSequence(t, events, []string{
 		"message_start",
-		"content_block_start",  // index 0, text
-		"content_block_delta",  // text_delta "Thinking..."
-		"content_block_stop",   // index 0 stopped before tool starts
-		"content_block_start",  // index 1, tool_use
-		"content_block_delta",  // input_json_delta
-		"content_block_stop",   // index 1
+		"content_block_start", // index 0, text
+		"content_block_delta", // text_delta "Thinking..."
+		"content_block_stop",  // index 0 stopped before tool starts
+		"content_block_start", // index 1, tool_use
+		"content_block_delta", // input_json_delta
+		"content_block_stop",  // index 1
 		"message_delta",
 		"message_stop",
 	})

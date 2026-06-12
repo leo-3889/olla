@@ -1046,8 +1046,8 @@ type streamingResponseRecorder struct {
 	writer       io.Writer
 	headers      http.Header
 	headersReady chan struct{}
-	closeOnce    sync.Once
 	status       int
+	closeOnce    sync.Once
 	// started is set true on the first Write, signalling that the upstream has
 	// begun emitting body bytes. The panic handler uses this to decide whether
 	// to inject an SSE error event into the already-open stream rather than
