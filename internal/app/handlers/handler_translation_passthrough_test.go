@@ -1915,15 +1915,18 @@ func TestPassthrough_ProfileMessagesPathOverride(t *testing.T) {
 		"proxy must use the backend's configured messages_path, not the translator default")
 }
 
-// TestPassthrough_MixedMessagesPathsKeepsNeutralTargetPath verifies that the
-// handler does not apply the first endpoint's backend-specific messages_path to
-// every passthrough candidate. The proxy selector runs later, so mixed native
-// Anthropic backends must keep the translator's neutral target path unless all
-// candidates agree.
-func TestPassthrough_MixedMessagesPathsKeepsNeutralTargetPath(t *testing.T) {
+// TestPassthrough_MixedMessagesPathsFiltersToCompatibleSubset verifies that when
+// capable backends disagree on their native Anthropic path, the handler restricts
+// the proxy endpoint list to the path-compatible subset rather than passing all
+// endpoints with a neutral path (which would cause 404s on mismatched backends).
+//
+// Fleet: DMR on /anthropic/v1/messages (1 endpoint) + vLLM on /v1/messages (1 endpoint).
+// The translator's default path is /v1/messages, so on a size tie the /v1/messages
+// group wins. The proxy receives only the vllm endpoint with path /v1/messages.
+func TestPassthrough_MixedMessagesPathsFiltersToCompatibleSubset(t *testing.T) {
 	t.Parallel()
 
-	var capturedEndpoint string
+	var capturedEndpoints []*domain.Endpoint
 	var capturedPath string
 
 	endpoints := []*domain.Endpoint{
@@ -1956,13 +1959,11 @@ func TestPassthrough_MixedMessagesPathsKeepsNeutralTargetPath(t *testing.T) {
 
 	proxyService := &mockProxyService{
 		proxyFunc: func(ctx context.Context, w http.ResponseWriter, r *http.Request, eps []*domain.Endpoint, stats *ports.RequestStats, rlog logger.StyledLogger) error {
-			require.Len(t, eps, 2)
-			selected := eps[1]
-			capturedEndpoint = selected.Name
+			capturedEndpoints = eps
 			capturedPath = r.URL.Path
 
 			w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
-			w.Header().Set(constants.HeaderXOllaEndpoint, selected.Name)
+			w.Header().Set(constants.HeaderXOllaEndpoint, eps[0].Name)
 			w.WriteHeader(http.StatusOK)
 			return json.NewEncoder(w).Encode(map[string]interface{}{"type": "message", "id": "msg_vllm"})
 		},
@@ -1996,7 +1997,157 @@ func TestPassthrough_MixedMessagesPathsKeepsNeutralTargetPath(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, string(constants.TranslatorModePassthrough), rec.Header().Get(constants.HeaderXOllaMode))
-	assert.Equal(t, "vllm-backend", capturedEndpoint)
+	// On a tie the resolver prefers the subset whose path matches the translator
+	// default (/v1/messages), which is the vllm group.
+	require.Len(t, capturedEndpoints, 1,
+		"proxy must receive only the path-compatible subset, not the full mixed fleet")
+	assert.Equal(t, "vllm-backend", capturedEndpoints[0].Name,
+		"vllm endpoint (path=/v1/messages, matches translator default) must be selected")
 	assert.Equal(t, "/v1/messages", capturedPath,
-		"proxy must not use DMR's first-endpoint path when the selected backend uses /v1/messages")
+		"request path must match the selected subset's native messages path")
+}
+
+// TestPassthrough_MixedFleet_TwoVllmOneDmr_PicksVllmSubset verifies that when the
+// majority of capable backends share a path, that larger subset wins regardless of
+// the tie-break rule, and the DMR endpoint is excluded.
+func TestPassthrough_MixedFleet_TwoVllmOneDmr_PicksVllmSubset(t *testing.T) {
+	t.Parallel()
+
+	var capturedEndpoints []*domain.Endpoint
+	var capturedPath string
+
+	endpoints := []*domain.Endpoint{
+		{Name: "vllm-1", Type: "vllm", Status: domain.StatusHealthy, URLString: "http://localhost:8001"},
+		{Name: "vllm-2", Type: "vllm", Status: domain.StatusHealthy, URLString: "http://localhost:8002"},
+		{Name: "dmr-1", Type: "docker-model-runner", Status: domain.StatusHealthy, URLString: "http://localhost:12434"},
+	}
+
+	profileLookup := &mockPassthroughProfileLookup{
+		configs: map[string]*domain.AnthropicSupportConfig{
+			"vllm":                {Enabled: true, MessagesPath: "/v1/messages"},
+			"docker-model-runner": {Enabled: true, MessagesPath: "/anthropic/v1/messages"},
+		},
+	}
+
+	trans := &mockPassthroughTranslator{
+		name:               "anthropic",
+		passthroughEnabled: true,
+		profileLookup:      profileLookup,
+	}
+
+	proxyService := &mockProxyService{
+		proxyFunc: func(ctx context.Context, w http.ResponseWriter, r *http.Request, eps []*domain.Endpoint, stats *ports.RequestStats, rlog logger.StyledLogger) error {
+			capturedEndpoints = eps
+			capturedPath = r.URL.Path
+			w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
+			w.WriteHeader(http.StatusOK)
+			return json.NewEncoder(w).Encode(map[string]interface{}{"type": "message", "id": "msg_1"})
+		},
+	}
+
+	app := &Application{
+		logger:           &mockStyledLogger{},
+		proxyService:     proxyService,
+		statsCollector:   &mockStatsCollector{},
+		repository:       &mockEndpointRepository{getEndpointsFunc: func() []*domain.Endpoint { return endpoints }},
+		inspectorChain:   inspector.NewChain(&mockStyledLogger{}),
+		profileFactory:   &mockProfileFactory{},
+		profileLookup:    profileLookup,
+		discoveryService: &mockDiscoveryServiceWithEndpoints{endpoints: endpoints},
+		Config:           &config.Config{},
+	}
+
+	handler := app.translationHandler(trans)
+
+	reqBody, _ := json.Marshal(map[string]interface{}{
+		"model":    "claude-3-5-sonnet-20241022",
+		"messages": []map[string]interface{}{{"role": "user", "content": "hello"}},
+	})
+
+	req := httptest.NewRequest("POST", "/olla/anthropic/v1/messages", bytes.NewReader(reqBody))
+	req.Header.Set(constants.HeaderContentType, constants.ContentTypeJSON)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, string(constants.TranslatorModePassthrough), rec.Header().Get(constants.HeaderXOllaMode))
+	// The vllm group has 2 endpoints vs DMR's 1 — larger subset wins.
+	require.Len(t, capturedEndpoints, 2,
+		"both vllm endpoints must be passed; DMR must be excluded")
+	for _, ep := range capturedEndpoints {
+		assert.Equal(t, "vllm", ep.Type, "all passed endpoints must be vllm")
+	}
+	assert.Equal(t, "/v1/messages", capturedPath,
+		"path must be the vllm native path, not the DMR path")
+}
+
+// TestPassthrough_UniformDmrFleet_AllEndpointsPassed verifies that a uniform
+// DMR-only fleet (all on /anthropic/v1/messages) passes all endpoints through
+// without filtering and uses the DMR-specific path.
+func TestPassthrough_UniformDmrFleet_AllEndpointsPassed(t *testing.T) {
+	t.Parallel()
+
+	var capturedEndpoints []*domain.Endpoint
+	var capturedPath string
+
+	endpoints := []*domain.Endpoint{
+		{Name: "dmr-1", Type: "docker-model-runner", Status: domain.StatusHealthy, URLString: "http://localhost:12434"},
+		{Name: "dmr-2", Type: "docker-model-runner", Status: domain.StatusHealthy, URLString: "http://localhost:12435"},
+	}
+
+	profileLookup := &mockPassthroughProfileLookup{
+		configs: map[string]*domain.AnthropicSupportConfig{
+			"docker-model-runner": {Enabled: true, MessagesPath: "/anthropic/v1/messages"},
+		},
+	}
+
+	trans := &mockPassthroughTranslator{
+		name:               "anthropic",
+		passthroughEnabled: true,
+		profileLookup:      profileLookup,
+	}
+
+	proxyService := &mockProxyService{
+		proxyFunc: func(ctx context.Context, w http.ResponseWriter, r *http.Request, eps []*domain.Endpoint, stats *ports.RequestStats, rlog logger.StyledLogger) error {
+			capturedEndpoints = eps
+			capturedPath = r.URL.Path
+			w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
+			w.WriteHeader(http.StatusOK)
+			return json.NewEncoder(w).Encode(map[string]interface{}{"type": "message", "id": "msg_dmr"})
+		},
+	}
+
+	app := &Application{
+		logger:           &mockStyledLogger{},
+		proxyService:     proxyService,
+		statsCollector:   &mockStatsCollector{},
+		repository:       &mockEndpointRepository{getEndpointsFunc: func() []*domain.Endpoint { return endpoints }},
+		inspectorChain:   inspector.NewChain(&mockStyledLogger{}),
+		profileFactory:   &mockProfileFactory{},
+		profileLookup:    profileLookup,
+		discoveryService: &mockDiscoveryServiceWithEndpoints{endpoints: endpoints},
+		Config:           &config.Config{},
+	}
+
+	handler := app.translationHandler(trans)
+
+	reqBody, _ := json.Marshal(map[string]interface{}{
+		"model":    "ai/llama3.2",
+		"messages": []map[string]interface{}{{"role": "user", "content": "hello"}},
+	})
+
+	req := httptest.NewRequest("POST", "/olla/anthropic/v1/messages", bytes.NewReader(reqBody))
+	req.Header.Set(constants.HeaderContentType, constants.ContentTypeJSON)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, string(constants.TranslatorModePassthrough), rec.Header().Get(constants.HeaderXOllaMode))
+	// Uniform fleet: no filtering — both DMR endpoints must be passed.
+	require.Len(t, capturedEndpoints, 2,
+		"uniform DMR fleet must pass all endpoints without filtering")
+	assert.Equal(t, "/anthropic/v1/messages", capturedPath,
+		"path must be the DMR native path for a uniform DMR fleet")
 }
