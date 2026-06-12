@@ -2151,3 +2151,47 @@ func TestPassthrough_UniformDmrFleet_AllEndpointsPassed(t *testing.T) {
 	assert.Equal(t, "/anthropic/v1/messages", capturedPath,
 		"path must be the DMR native path for a uniform DMR fleet")
 }
+
+// TestResolvePassthroughTargetPath_TieBreakDeterminism ensures that when two equal-sized
+// non-default path groups exist, the function always resolves to the path whose first
+// endpoint appears earliest in the input slice — never the other group, regardless of
+// Go's randomised map iteration order.
+func TestResolvePassthroughTargetPath_TieBreakDeterminism(t *testing.T) {
+	t.Parallel()
+
+	// Two backend types with distinct native Anthropic paths, neither matching defaultPath.
+	// Each group has exactly one endpoint so the sizes are equal — a pure tie.
+	// The endpoint for "alpha" appears before "beta" in the slice, so "alpha" must always win.
+	const defaultPath = "/v1/messages"
+	const alphaPath = "/alpha/v1/messages"
+	const betaPath = "/beta/v1/messages"
+
+	profileLookup := &mockPassthroughProfileLookup{
+		configs: map[string]*domain.AnthropicSupportConfig{
+			"alpha": {Enabled: true, MessagesPath: alphaPath},
+			"beta":  {Enabled: true, MessagesPath: betaPath},
+		},
+	}
+
+	endpoints := []*domain.Endpoint{
+		{Name: "alpha-1", Type: "alpha", Status: domain.StatusHealthy},
+		{Name: "beta-1", Type: "beta", Status: domain.StatusHealthy},
+	}
+
+	app := &Application{
+		profileLookup: profileLookup,
+	}
+
+	// Run enough iterations to expose any map-order flapping.
+	const iterations = 20
+	for i := range iterations {
+		resolvedPath, filteredEndpoints := app.resolvePassthroughTargetPath(endpoints, defaultPath)
+		if resolvedPath != alphaPath {
+			t.Errorf("iteration %d: expected %q (first-seen path), got %q", i, alphaPath, resolvedPath)
+		}
+		// The filtered set must contain only the alpha endpoint.
+		if len(filteredEndpoints) != 1 || filteredEndpoints[0].Name != "alpha-1" {
+			t.Errorf("iteration %d: expected [alpha-1], got %v", i, filteredEndpoints)
+		}
+	}
+}

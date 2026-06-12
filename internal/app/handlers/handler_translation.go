@@ -109,7 +109,9 @@ func (a *Application) executePassthroughRequest(
 // to the full list would cause a 404 on whichever backend is selected but whose
 // path was not used. Instead we return the largest path-compatible subset.
 // Tie-break: prefer the subset whose path equals defaultPath; if no subset
-// matches, use the path of the first endpoint in the list.
+// matches, use the path whose first endpoint appears earliest in the original
+// endpoints slice. This ensures deterministic selection regardless of map
+// iteration order.
 //
 // If profileLookup is nil or the endpoint list is empty, returns defaultPath and
 // nil so the caller leaves everything unchanged.
@@ -118,14 +120,19 @@ func (a *Application) resolvePassthroughTargetPath(endpoints []*domain.Endpoint,
 		return defaultPath, nil
 	}
 
-	// Build a path→endpoints map. Any endpoint whose profile has no MessagesPath
-	// configured falls back to defaultPath so it still participates.
+	// Build path→endpoints groups while recording the first-seen index for each
+	// path. Iterating the original slice preserves endpoint order so the
+	// first-seen index is stable across calls.
 	pathGroups := make(map[string][]*domain.Endpoint, len(endpoints))
-	for _, ep := range endpoints {
+	firstSeen := make(map[string]int, len(endpoints)) // path → index of first endpoint in slice
+	for i, ep := range endpoints {
 		support := a.profileLookup.GetAnthropicSupport(ep.Type)
 		path := defaultPath
 		if support != nil && support.MessagesPath != "" {
 			path = support.MessagesPath
+		}
+		if _, exists := firstSeen[path]; !exists {
+			firstSeen[path] = i
 		}
 		pathGroups[path] = append(pathGroups[path], ep)
 	}
@@ -138,28 +145,28 @@ func (a *Application) resolvePassthroughTargetPath(endpoints []*domain.Endpoint,
 		}
 	}
 
-	// Mixed fleet: pick the largest subset. Tie-break by preferring defaultPath,
-	// then by the path of whichever group appears first when iterating endpoints
-	// (deterministic: follows original endpoint order).
+	// Mixed fleet: pick the largest subset. Tie-break order:
+	//   1. defaultPath wins (avoids surprising path changes for the majority case).
+	//   2. The path whose first endpoint appears earliest in the original slice
+	//      wins (deterministic, not dependent on map iteration order).
 	var bestPath string
 	var bestCount int
+	bestFirstSeen := -1
 
-	// First pass: find the maximum group size.
 	for path, group := range pathGroups {
-		if len(group) > bestCount {
-			bestCount = len(group)
-			bestPath = path
-		} else if len(group) == bestCount {
-			// Prefer defaultPath on a tie.
-			if path == defaultPath {
-				bestPath = path
-			}
+		count := len(group)
+		fs := firstSeen[path]
+		switch {
+		case count > bestCount:
+			bestPath, bestCount, bestFirstSeen = path, count, fs
+		case count == bestCount && path == defaultPath:
+			// defaultPath takes priority in a tie regardless of first-seen.
+			bestPath, bestFirstSeen = path, fs
+		case count == bestCount && bestPath != defaultPath && fs < bestFirstSeen:
+			// Neither candidate is defaultPath; earliest first-seen endpoint wins.
+			bestPath, bestFirstSeen = path, fs
 		}
 	}
-
-	// If the tie-break didn't resolve to defaultPath because sizes differ,
-	// and there happens to be a defaultPath group, prefer it when the winning
-	// group is the same size (handled above). Otherwise fall through.
 
 	return bestPath, pathGroups[bestPath]
 }
