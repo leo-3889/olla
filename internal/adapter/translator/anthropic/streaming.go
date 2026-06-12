@@ -196,17 +196,10 @@ func (t *Translator) handleContentDelta(content string, state *StreamingState, w
 
 	// start new text block if needed (anthropic wants block_start before deltas)
 	if state.currentBlock == nil || state.currentBlock.Type != contentTypeText {
-		// close previous block if different type
-		if state.currentBlock != nil && state.currentBlock.Type != contentTypeText {
-			if err := t.writeEvent(w, "content_block_stop", map[string]interface{}{
-				"type":  "content_block_stop",
-				"index": state.currentIndex,
-			}); err != nil {
-				return err
-			}
-			if err := rc.Flush(); err != nil {
-				return fmt.Errorf("flush failed: %w", err)
-			}
+		// close whatever block is open (tool_use or a prior text block) before
+		// opening a new text block; every start needs a matching stop.
+		if err := t.closeCurrentBlock(state, w, rc); err != nil {
+			return err
 		}
 
 		state.currentBlock = &ContentBlock{
@@ -294,26 +287,32 @@ func extractToolCallData(tc interface{}) (*toolCallData, bool) {
 	return data, true
 }
 
-// closeCurrentBlockIfNeeded closes the current block if it exists and matches the given type
-func (t *Translator) closeCurrentBlockIfNeeded(state *StreamingState, blockType string, w http.ResponseWriter, rc *http.ResponseController) error {
-	if state.currentBlock != nil && state.currentBlock.Type == blockType {
-		if err := t.writeEvent(w, "content_block_stop", map[string]interface{}{
-			"type":  "content_block_stop",
-			"index": state.currentIndex,
-		}); err != nil {
-			return err
-		}
-		if err := rc.Flush(); err != nil {
-			return fmt.Errorf("flush failed: %w", err)
-		}
+// closeCurrentBlock closes the currently open block regardless of type.
+// Every content_block_start must be paired with a content_block_stop; SDK
+// accumulators (including Claude Code's own stream reader) finalise tool
+// input on the stop event, so omitting it silently breaks multi-tool calls.
+func (t *Translator) closeCurrentBlock(state *StreamingState, w http.ResponseWriter, rc *http.ResponseController) error {
+	if state.currentBlock == nil {
+		return nil
 	}
+	if err := t.writeEvent(w, "content_block_stop", map[string]interface{}{
+		"type":  "content_block_stop",
+		"index": state.currentIndex,
+	}); err != nil {
+		return err
+	}
+	if err := rc.Flush(); err != nil {
+		return fmt.Errorf("flush failed: %w", err)
+	}
+	state.currentBlock = nil
 	return nil
 }
 
 // initializeToolBlock creates and sends a new tool_use block start event
 func (t *Translator) initializeToolBlock(id, name string, toolIndex int, state *StreamingState, w http.ResponseWriter, rc *http.ResponseController) error {
-	// close current text block before starting tool block, anthropic requires this
-	if err := t.closeCurrentBlockIfNeeded(state, contentTypeText, w, rc); err != nil {
+	// close whatever block is currently open before starting a new one; both text
+	// and prior tool blocks must be stopped before the next block_start is emitted.
+	if err := t.closeCurrentBlock(state, w, rc); err != nil {
 		return err
 	}
 
@@ -343,13 +342,35 @@ func (t *Translator) initializeToolBlock(id, name string, toolIndex int, state *
 	return rc.Flush()
 }
 
-// sendToolArgumentsDelta buffers and sends a partial_json delta for tool arguments
+// sendToolArgumentsDelta buffers and emits a partial_json delta for the given tool index.
+//
+// The SSE index must track the tool's own content block, not the currently open block.
+// When arguments arrive for a tool that has already been stopped (late or interleaved
+// delivery), we still buffer the data so finaliseStream can reconstruct the complete
+// input, but we skip the SSE emission. Emitting a delta for a stopped block is invalid
+// on the wire and matches vLLM's own guard (it checks state.tool_use_id == tool_use_id).
 func (t *Translator) sendToolArgumentsDelta(args string, toolIndex int, state *StreamingState, w http.ResponseWriter, rc *http.ResponseController) error {
+	// Always buffer regardless of block state so finalisation stays correct.
 	state.toolCallBuffers[toolIndex].WriteString(args)
+
+	blockIndex, mapped := state.toolIndexToBlock[toolIndex]
+	if !mapped {
+		// Arguments arrived before the id+name chunk opened the block; buffer only.
+		t.logger.Debug("Tool args received before block initialised, buffering only",
+			"tool_index", toolIndex)
+		return nil
+	}
+
+	// Only emit if this tool's block is still the currently open one.
+	if state.currentBlock == nil || blockIndex != state.currentIndex {
+		t.logger.Debug("Skipping delta for already-stopped tool block",
+			"tool_index", toolIndex, "block_index", blockIndex, "current_index", state.currentIndex)
+		return nil
+	}
 
 	if err := t.writeEvent(w, "content_block_delta", map[string]interface{}{
 		"type":  "content_block_delta",
-		"index": state.currentIndex,
+		"index": blockIndex,
 		"delta": map[string]interface{}{
 			"type":         "input_json_delta",
 			"partial_json": args,
@@ -398,17 +419,10 @@ func (t *Translator) handleToolCallsDelta(toolCalls []interface{}, state *Stream
 
 // send final events, parse tool buffers, determine stop_reason
 func (t *Translator) finalizeStream(state *StreamingState, w http.ResponseWriter, rc *http.ResponseController, original *http.Request) error {
-	// close current block if still open
-	if state.currentBlock != nil {
-		if err := t.writeEvent(w, "content_block_stop", map[string]interface{}{
-			"type":  "content_block_stop",
-			"index": state.currentIndex,
-		}); err != nil {
-			return err
-		}
-		if err := rc.Flush(); err != nil {
-			return fmt.Errorf("flush failed: %w", err)
-		}
+	// close the last open block; with the single-active-block invariant restored
+	// by closeCurrentBlock, exactly one stop is emitted here at most.
+	if err := t.closeCurrentBlock(state, w, rc); err != nil {
+		return err
 	}
 
 	// parse buffered json args into objects using the tool index mapping

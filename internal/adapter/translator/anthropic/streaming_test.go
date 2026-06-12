@@ -454,11 +454,14 @@ func TestTransformStreamingResponse_MultipleToolsSequential(t *testing.T) {
 func TestTransformStreamingResponse_InterleavedToolArguments(t *testing.T) {
 	translator := newTestTranslator()
 
-	// simulate arguments arriving interleaved between tools (common in streaming)
+	// Interleaved tool starts followed by interleaved args. Under the single-active-block
+	// invariant, toolStart(1) closes block 0 before opening block 1. Any subsequent args
+	// for tool 0 (whose block is already stopped) are buffered internally for finalisation
+	// but are NOT emitted on the SSE wire. This matches vLLM's guard on tool_use_id.
 	stream := mockOpenAIStream([]string{
 		toolStartChunk("chatcmpl-int", 0, "call_A", "toolA"),
 		toolStartChunk("chatcmpl-int", 1, "call_B", "toolB"),
-		// interleave chunks
+		// args for tool 0 arrive after its block was stopped by tool 1's start
 		toolArgsChunk("chatcmpl-int", 0, `{\\\"data\\\"`),
 		toolArgsChunk("chatcmpl-int", 1, `{\\\"value\\\"`),
 		toolArgsChunk("chatcmpl-int", 0, `:123}`),
@@ -470,10 +473,19 @@ func TestTransformStreamingResponse_InterleavedToolArguments(t *testing.T) {
 	recorder := executeTransform(t, translator, stream)
 	body := recorder.Body.String()
 
-	// verify both tools present with complete arguments despite interleaving
+	// Both tool IDs and names must still appear (from content_block_start events).
 	assertToolPresent(t, body, "call_A", "toolA")
 	assertToolPresent(t, body, "call_B", "toolB")
-	assertContainsAll(t, body, []string{`123`, `456`})
+
+	// args for tool 1 (the active block) must be on the wire.
+	assert.Contains(t, body, `456`)
+
+	// args for tool 0 arrived after its block was stopped; no SSE delta emitted.
+	assert.NotContains(t, body, `123`)
+
+	events := parseAnthropicEvents(t, body)
+	assertContentBlockCount(t, events, 2)
+	assertBlocksClosed(t, events)
 }
 
 func TestTransformStreamingResponse_ToolTextToolTransitions(t *testing.T) {
@@ -805,4 +817,171 @@ func TestTransformStreamingResponse_MessageStartNoSeedIsZero(t *testing.T) {
 	usage := message["usage"].(map[string]interface{})
 	inputTokens := usage["input_tokens"].(float64)
 	assert.Equal(t, float64(0), inputTokens, "no seed in context should give 0 input_tokens in message_start")
+}
+
+// TestTransformStreamingResponse_TwoSequentialToolCallsExactSequence pins the full SSE
+// event order for a stream containing two back-to-back tool calls. Every
+// content_block_start must be paired with a content_block_stop and indices must
+// correspond to the correct block throughout.
+func TestTransformStreamingResponse_TwoSequentialToolCallsExactSequence(t *testing.T) {
+	t.Parallel()
+	tr := newTestTranslator()
+
+	stream := mockOpenAIStream([]string{
+		toolStartChunk("chatcmpl-seq2", 0, "call_seq_0", "tool_alpha"),
+		toolArgsChunk("chatcmpl-seq2", 0, `{`),
+		toolArgsChunk("chatcmpl-seq2", 0, `\\\"x\\\":1}`),
+		toolStartChunk("chatcmpl-seq2", 1, "call_seq_1", "tool_beta"),
+		toolArgsChunk("chatcmpl-seq2", 1, `{`),
+		toolArgsChunk("chatcmpl-seq2", 1, `\\\"y\\\":2}`),
+		finishChunk("chatcmpl-seq2", "tool_calls"),
+		doneChunk(),
+	})
+
+	recorder := executeTransform(t, tr, stream)
+	events := parseAnthropicEvents(t, recorder.Body.String())
+
+	// Exact event sequence required by the Anthropic SSE spec.
+	assertEventSequence(t, events, []string{
+		"message_start",
+		"content_block_start",  // index 0, tool_alpha
+		"content_block_delta",  // index 0, partial_json {
+		"content_block_delta",  // index 0, partial_json \"x\":1}
+		"content_block_stop",   // index 0
+		"content_block_start",  // index 1, tool_beta
+		"content_block_delta",  // index 1, partial_json {
+		"content_block_delta",  // index 1, partial_json \"y\":2}
+		"content_block_stop",   // index 1
+		"message_delta",
+		"message_stop",
+	})
+
+	starts := findEventsByType(events, "content_block_start")
+	stops := findEventsByType(events, "content_block_stop")
+	require.Len(t, starts, 2, "two tool blocks must be started")
+	require.Len(t, stops, 2, "both tool blocks must be stopped")
+
+	// Block 0 is tool_alpha at index 0.
+	idx0, _ := getContentBlockIndex(starts[0])
+	assert.Equal(t, 0, idx0)
+	bt0, _ := getContentBlockType(starts[0])
+	assert.Equal(t, contentTypeToolUse, bt0)
+
+	// Block 1 is tool_beta at index 1.
+	idx1, _ := getContentBlockIndex(starts[1])
+	assert.Equal(t, 1, idx1)
+	bt1, _ := getContentBlockType(starts[1])
+	assert.Equal(t, contentTypeToolUse, bt1)
+
+	// Each stop event carries the correct index.
+	stopIdx0, _ := getContentBlockIndex(stops[0])
+	assert.Equal(t, 0, stopIdx0)
+	stopIdx1, _ := getContentBlockIndex(stops[1])
+	assert.Equal(t, 1, stopIdx1)
+
+	// Deltas must carry the owning block's index, not the current block at emit time.
+	deltas := findEventsByType(events, "content_block_delta")
+	require.Len(t, deltas, 4)
+	di0, _ := getContentBlockIndex(deltas[0])
+	assert.Equal(t, 0, di0, "first delta must be for block 0")
+	di1, _ := getContentBlockIndex(deltas[1])
+	assert.Equal(t, 0, di1, "second delta must be for block 0")
+	di2, _ := getContentBlockIndex(deltas[2])
+	assert.Equal(t, 1, di2, "third delta must be for block 1")
+	di3, _ := getContentBlockIndex(deltas[3])
+	assert.Equal(t, 1, di3, "fourth delta must be for block 1")
+
+	assertStopReason(t, events, "tool_use")
+}
+
+// TestTransformStreamingResponse_TextThenToolExactSequence pins the event order when
+// a text block transitions into a tool call. The text block must be stopped before
+// the tool block starts; this is already guarded by assertBlockTransitionOrder but
+// this test also verifies the exact full sequence.
+func TestTransformStreamingResponse_TextThenToolExactSequence(t *testing.T) {
+	t.Parallel()
+	tr := newTestTranslator()
+
+	stream := mockOpenAIStream([]string{
+		textChunk("chatcmpl-txttool", "claude-3-5-sonnet-20241022", "Thinking..."),
+		toolStartChunk("chatcmpl-txttool", 0, "call_after_text", "lookup"),
+		toolArgsChunk("chatcmpl-txttool", 0, `{\\\"k\\\":\\\"v\\\"}`),
+		finishChunk("chatcmpl-txttool", "tool_calls"),
+		doneChunk(),
+	})
+
+	recorder := executeTransform(t, tr, stream)
+	events := parseAnthropicEvents(t, recorder.Body.String())
+
+	assertEventSequence(t, events, []string{
+		"message_start",
+		"content_block_start",  // index 0, text
+		"content_block_delta",  // text_delta "Thinking..."
+		"content_block_stop",   // index 0 stopped before tool starts
+		"content_block_start",  // index 1, tool_use
+		"content_block_delta",  // input_json_delta
+		"content_block_stop",   // index 1
+		"message_delta",
+		"message_stop",
+	})
+
+	assertBlocksClosed(t, events)
+	assertBlockTransitionOrder(t, events)
+
+	// text block is index 0, tool block is index 1
+	starts := findEventsByType(events, "content_block_start")
+	textIdx, _ := getContentBlockIndex(starts[0])
+	assert.Equal(t, 0, textIdx)
+	toolIdx, _ := getContentBlockIndex(starts[1])
+	assert.Equal(t, 1, toolIdx)
+}
+
+// TestTransformStreamingResponse_LateArgDeltaDropped verifies that a delta arriving
+// for a tool whose block has already been stopped is not emitted on the wire, does
+// not corrupt the index of the subsequent block, and does not panic.
+func TestTransformStreamingResponse_LateArgDeltaDropped(t *testing.T) {
+	t.Parallel()
+	tr := newTestTranslator()
+
+	// tool 0 starts and gets an arg, then tool 1 starts (which closes tool 0),
+	// then a late arg arrives for tool 0 -- must be silently dropped.
+	stream := mockOpenAIStream([]string{
+		toolStartChunk("chatcmpl-late", 0, "call_early", "first_tool"),
+		toolArgsChunk("chatcmpl-late", 0, `{\\\"a\\\":1}`),
+		toolStartChunk("chatcmpl-late", 1, "call_late_target", "second_tool"),
+		toolArgsChunk("chatcmpl-late", 0, `{\\\"late\\\":true}`), // late for tool 0
+		toolArgsChunk("chatcmpl-late", 1, `{\\\"b\\\":2}`),
+		finishChunk("chatcmpl-late", "tool_calls"),
+		doneChunk(),
+	})
+
+	recorder := executeTransform(t, tr, stream)
+	body := recorder.Body.String()
+	events := parseAnthropicEvents(t, body)
+
+	// stream must complete without panicking
+	require.NotEmpty(t, events)
+
+	assertBlocksClosed(t, events)
+	assertContentBlockCount(t, events, 2)
+
+	// late arg for tool 0 ({\"late\":true}) must not appear on the wire as a delta
+	assert.NotContains(t, body, `"partial_json":"{\\\"late`)
+	assert.NotContains(t, body, `true`)
+
+	// tool 1's args must be present (the partial_json chunk)
+	assert.Contains(t, body, `second_tool`)
+	// tool 1 has a delta event with its args
+	deltas := findEventsByType(events, "content_block_delta")
+	require.NotEmpty(t, deltas, "at least one delta must be emitted for tool 1")
+
+	// no delta should reference a stopped block; all deltas must use their
+	// owning block's index, not bleed onto the currently open block.
+	for _, d := range deltas {
+		idx, ok := getContentBlockIndex(d)
+		require.True(t, ok)
+		// tool 0's only valid delta (args arriving while still open) is at index 0;
+		// tool 1's deltas must be at index 1; no delta should be at index > 1.
+		assert.LessOrEqual(t, idx, 1, "no delta should reference a block index beyond the two opened blocks")
+	}
 }
