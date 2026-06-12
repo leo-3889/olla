@@ -11,6 +11,12 @@ import (
 	"github.com/thushan/olla/internal/core/domain"
 )
 
+// processStartTime is captured once at startup so that created_at in the
+// Anthropic models response is stable across calls. There is no genuine
+// creation timestamp on UnifiedModel (LastSeen is a discovery heartbeat that
+// shifts on every health poll), so process start is the best stable proxy.
+var processStartTime = time.Now().UTC().Format(time.RFC3339)
+
 // list models in translator format (eg /olla/anthropic/v1/models)
 func (a *Application) translatorModelsHandler(trans translator.RequestTranslator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -52,31 +58,41 @@ func (a *Application) translatorModelsHandler(trans translator.RequestTranslator
 	}
 }
 
-// convert to anthropic format (matches python reference)
+// convertModelsToAnthropicFormat emits the Anthropic GET /v1/models wire format.
+// The SDK uses "type" as a deserialise discriminator so it must be "model", not "chat".
+// "display_name" and "created_at" (RFC3339) match the published Anthropic spec.
 func (a *Application) convertModelsToAnthropicFormat(models []*domain.UnifiedModel) map[string]interface{} {
 	data := make([]map[string]interface{}, 0, len(models))
 
 	for _, model := range models {
-		// use first alias or fallback to default id
+		// prefer the first alias as the canonical id clients send back to us
 		modelID := model.ID
 		if len(model.Aliases) > 0 {
 			modelID = model.Aliases[0].Name
 		}
 
-		// map model fields to human-readable fields
 		entry := map[string]interface{}{
-			"id":          modelID,
-			"name":        modelID,
-			"created":     time.Now().Unix(),
-			"description": "Chat model via Olla proxy",
-			"type":        "chat",
+			"type":         "model",
+			"id":           modelID,
+			"display_name": modelID,
+			"created_at":   processStartTime,
 		}
 
 		data = append(data, entry)
 	}
 
+	// first_id / last_id are null when the list is empty
+	var firstID, lastID interface{}
+	if len(data) > 0 {
+		firstID = data[0]["id"]
+		lastID = data[len(data)-1]["id"]
+	}
+
 	return map[string]interface{}{
-		"data": data,
+		"data":     data,
+		"has_more": false,
+		"first_id": firstID,
+		"last_id":  lastID,
 	}
 }
 
