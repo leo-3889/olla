@@ -118,7 +118,10 @@ func (t *Translator) WriteError(w http.ResponseWriter, err error, statusCode int
 		"error", err.Error(),
 		"status", statusCode)
 
-	// Map HTTP status codes to Anthropic error types
+	// Map HTTP status codes to Anthropic error types.
+	// overloaded_error is reserved for Anthropic's own infrastructure being overloaded;
+	// a generic backend 503 is an api_error per litellm and bifrost conventions.
+	// timeout_error maps to 504/408 as defined by litellm and the Anthropic error taxonomy.
 	errorType := "api_error"
 	switch statusCode {
 	case http.StatusBadRequest:
@@ -131,8 +134,8 @@ func (t *Translator) WriteError(w http.ResponseWriter, err error, statusCode int
 		errorType = "not_found_error"
 	case http.StatusTooManyRequests:
 		errorType = "rate_limit_error"
-	case http.StatusServiceUnavailable:
-		errorType = "overloaded_error"
+	case http.StatusRequestTimeout, http.StatusGatewayTimeout:
+		errorType = "timeout_error"
 	}
 
 	// Anthropic error format

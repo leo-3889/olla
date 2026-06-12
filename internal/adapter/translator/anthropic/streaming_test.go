@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/thushan/olla/internal/core/constants"
 )
 
 func TestTransformStreamingResponse_SimpleText(t *testing.T) {
@@ -729,4 +731,78 @@ func TestTransformStreamingResponse_RapidBlockTypeSwitch(t *testing.T) {
 	assertTextContent(t, body, "Text2")
 	assertToolPresent(t, body, "call_2", "tool2")
 	assertTextContent(t, body, "Text3")
+}
+
+// TestTransformStreamingResponse_MessageStartInputTokensSeeded verifies that when
+// the handler injects a pre-computed token estimate into context (via
+// ContextInputTokensKey), the message_start event carries that non-zero value.
+//
+// vLLM and lmdeploy both populate real input_tokens in message_start from the first
+// upstream chunk; Olla's translation path seeds the value from the request body
+// estimator to match that behaviour without buffering the stream.
+//
+// output_tokens in message_start must remain 0 per the Anthropic spec.
+func TestTransformStreamingResponse_MessageStartInputTokensSeeded(t *testing.T) {
+	trans := newTestTranslator()
+
+	stream := mockOpenAIStream([]string{
+		textChunk("chatcmpl-seeded", "claude-3-5-sonnet-20241022", "Hello"),
+		finishChunk("chatcmpl-seeded", "stop"),
+		doneChunk(),
+	})
+
+	// Simulate the handler injecting a pre-computed estimate into context.
+	const seedTokens = 42
+	ctx := context.WithValue(context.Background(), constants.ContextInputTokensKey, seedTokens)
+
+	recorder := httptest.NewRecorder()
+	err := trans.TransformStreamingResponse(ctx, stream, recorder, nil)
+	require.NoError(t, err)
+
+	events := parseAnthropicEvents(t, recorder.Body.String())
+
+	messageStart := getEventByType(events, "message_start")
+	require.NotNil(t, messageStart, "message_start event must be present")
+
+	message, ok := messageStart["message"].(map[string]interface{})
+	require.True(t, ok, "message_start must have a message field")
+
+	usage, ok := message["usage"].(map[string]interface{})
+	require.True(t, ok, "message_start.message must have a usage field")
+
+	inputTokens, ok := usage["input_tokens"].(float64)
+	require.True(t, ok, "usage must have input_tokens")
+	assert.Equal(t, float64(seedTokens), inputTokens,
+		"message_start input_tokens must reflect the seeded estimate")
+
+	outputTokens, ok := usage["output_tokens"].(float64)
+	require.True(t, ok, "usage must have output_tokens")
+	assert.Equal(t, float64(0), outputTokens,
+		"message_start output_tokens must be 0 per Anthropic spec")
+}
+
+// TestTransformStreamingResponse_MessageStartNoSeedIsZero confirms baseline behaviour:
+// without a seeded estimate in context, message_start input_tokens is 0.
+// This covers the passthrough path and any caller that does not inject the key.
+func TestTransformStreamingResponse_MessageStartNoSeedIsZero(t *testing.T) {
+	trans := newTestTranslator()
+
+	stream := mockOpenAIStream([]string{
+		textChunk("chatcmpl-noseed", "claude-3-5-sonnet-20241022", "Hi"),
+		finishChunk("chatcmpl-noseed", "stop"),
+		doneChunk(),
+	})
+
+	recorder := httptest.NewRecorder()
+	err := trans.TransformStreamingResponse(context.Background(), stream, recorder, nil)
+	require.NoError(t, err)
+
+	events := parseAnthropicEvents(t, recorder.Body.String())
+	messageStart := getEventByType(events, "message_start")
+	require.NotNil(t, messageStart)
+
+	message := messageStart["message"].(map[string]interface{})
+	usage := message["usage"].(map[string]interface{})
+	inputTokens := usage["input_tokens"].(float64)
+	assert.Equal(t, float64(0), inputTokens, "no seed in context should give 0 input_tokens in message_start")
 }

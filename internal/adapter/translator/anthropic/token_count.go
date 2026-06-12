@@ -11,6 +11,27 @@ import (
 	"github.com/thushan/olla/internal/adapter/translator"
 )
 
+// countTokensWireResponse is the Anthropic-conformant wire shape for
+// POST /v1/messages/count_tokens. The spec returns {"input_tokens":N} only;
+// output_tokens and total_tokens are not part of this endpoint's contract.
+// Confirmed against vLLM, lmdeploy, bifrost, and litellm reference impls.
+type countTokensWireResponse struct {
+	InputTokens int `json:"input_tokens"`
+}
+
+// EstimateInputTokens implements translator.InputTokenEstimator.
+// Called by the streaming path to seed input_tokens in message_start before the
+// upstream usage chunk arrives (which only comes at the end of the stream).
+// vLLM and lmdeploy both populate real input_tokens in message_start; this brings
+// Olla's translation path in line with that behaviour.
+func (t *Translator) EstimateInputTokens(originalBodyBytes []byte) int {
+	var req AnthropicRequest
+	if err := json.Unmarshal(originalBodyBytes, &req); err != nil {
+		return 0
+	}
+	return estimateTokensFromRequest(&req)
+}
+
 // token estimation for claude code compatibility
 func (t *Translator) CountTokens(ctx context.Context, r *http.Request) (*translator.TokenCountResponse, error) {
 	// bounded read to prevent OOM attacks
@@ -42,10 +63,16 @@ func (t *Translator) CountTokens(ctx context.Context, r *http.Request) (*transla
 	tokenCount := estimateTokensFromRequest(&req)
 
 	return &translator.TokenCountResponse{
-		InputTokens:  tokenCount,
-		OutputTokens: 0, // zero output tokens for count endpoint
-		TotalTokens:  tokenCount,
+		InputTokens: tokenCount,
 	}, nil
+}
+
+// SerialiseCountTokens implements translator.TokenCountSerializer.
+// Returns only {"input_tokens":N} — the Anthropic spec for this endpoint does not
+// include output_tokens or total_tokens. Confirmed against vLLM, lmdeploy, bifrost,
+// and litellm reference implementations.
+func (t *Translator) SerialiseCountTokens(resp *translator.TokenCountResponse) ([]byte, error) {
+	return json.Marshal(countTokensWireResponse{InputTokens: resp.InputTokens})
 }
 
 // character-based token estimation

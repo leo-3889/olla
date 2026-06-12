@@ -65,10 +65,13 @@ func TestWriteError(t *testing.T) {
 			expectedStatus: http.StatusTooManyRequests,
 		},
 		{
+			// 503 from a backend means the backend is unavailable, not that Anthropic's
+			// own infra is overloaded. overloaded_error is an Anthropic-origin signal;
+			// a generic gateway 503 maps to api_error per litellm/bifrost conventions.
 			name:           "service_unavailable",
 			err:            errors.New("service overloaded"),
 			statusCode:     http.StatusServiceUnavailable,
-			expectedType:   "overloaded_error",
+			expectedType:   "api_error",
 			expectedStatus: http.StatusServiceUnavailable,
 		},
 		{
@@ -169,4 +172,59 @@ func TestWriteError_JSONEncodingSuccess(t *testing.T) {
 	var response map[string]interface{}
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(t, err, "response should be valid JSON")
+}
+
+// TestWriteError_ConformanceMapping verifies Anthropic-conformant error type mappings.
+//
+// Key correctness constraints:
+//   - 503 must map to api_error, NOT overloaded_error. overloaded_error is an Anthropic-origin
+//     signal (litellm maps it only for responses from Anthropic's own infrastructure). A backend
+//     503 means the upstream gateway is unavailable — that is api_error territory.
+//   - 504 and 408 must map to timeout_error per litellm's error taxonomy.
+//   - Response body must be the Anthropic error envelope: {"type":"error","error":{"type":"...","message":"..."}}.
+func TestWriteError_ConformanceMapping(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		status       int
+		expectedType string
+	}{
+		{http.StatusBadRequest, "invalid_request_error"},
+		{http.StatusUnauthorized, "authentication_error"},
+		{http.StatusForbidden, "permission_error"},
+		{http.StatusNotFound, "not_found_error"},
+		{http.StatusTooManyRequests, "rate_limit_error"},
+		{http.StatusInternalServerError, "api_error"},
+		{http.StatusBadGateway, "api_error"},
+		// 503 from a backend is NOT Anthropic-origin overloaded; it is api_error.
+		{http.StatusServiceUnavailable, "api_error"},
+		{http.StatusGatewayTimeout, "timeout_error"},
+		{http.StatusRequestTimeout, "timeout_error"},
+	}
+
+	for _, tc := range cases {
+
+		t.Run(http.StatusText(tc.status), func(t *testing.T) {
+			t.Parallel()
+
+			trans := mustNewTranslator(createTestLogger(), createTestConfig())
+			rec := httptest.NewRecorder()
+			trans.WriteError(rec, errors.New("test error"), tc.status)
+
+			require.Equal(t, tc.status, rec.Code)
+			require.Equal(t, constants.ContentTypeJSON, rec.Header().Get(constants.HeaderContentType))
+
+			var body map[string]interface{}
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+
+			// Anthropic error envelope: {"type":"error","error":{...}}
+			assert.Equal(t, "error", body["type"], "outer type must be 'error'")
+
+			errObj, ok := body["error"].(map[string]interface{})
+			require.True(t, ok, "body.error must be an object")
+			assert.Equal(t, tc.expectedType, errObj["type"],
+				"status %d should map to %s", tc.status, tc.expectedType)
+			assert.NotEmpty(t, errObj["message"], "error.message must not be empty")
+		})
+	}
 }

@@ -44,6 +44,14 @@ func (t *Translator) TransformStreamingResponse(ctx context.Context, openaiStrea
 		toolIndexToBlock: make(map[int]int),
 	}
 
+	// Seed input_tokens from the pre-computed estimate injected by the handler.
+	// vLLM and lmdeploy both emit real input_tokens in message_start rather than 0;
+	// this brings the translation path in line with that behaviour. The value is
+	// overwritten by actual upstream usage when (and if) the backend sends it.
+	if estimate, ok := ctx.Value(constants.ContextInputTokensKey).(int); ok && estimate > 0 {
+		state.inputTokens = estimate
+	}
+
 	// sync streaming for now (async needs more work for agent workflows)
 	streamErr := t.transformStreamingSync(ctx, openaiStream, w, rc, state)
 

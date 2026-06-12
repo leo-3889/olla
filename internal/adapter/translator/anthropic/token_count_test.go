@@ -223,16 +223,6 @@ func TestCountTokens(t *testing.T) {
 				t.Fatal("Expected non-nil response")
 			}
 
-			// Check output tokens is always 0
-			if resp.OutputTokens != 0 {
-				t.Errorf("Expected OutputTokens=0, got %d", resp.OutputTokens)
-			}
-
-			// Check input tokens matches total tokens
-			if resp.InputTokens != resp.TotalTokens {
-				t.Errorf("Expected InputTokens=%d to match TotalTokens=%d", resp.InputTokens, resp.TotalTokens)
-			}
-
 			// Verify token count
 			if tt.expectedExact > 0 {
 				if resp.InputTokens != tt.expectedExact {
@@ -245,8 +235,7 @@ func TestCountTokens(t *testing.T) {
 				}
 			}
 
-			t.Logf("Token count: %d (input=%d, output=%d, total=%d)",
-				resp.InputTokens, resp.InputTokens, resp.OutputTokens, resp.TotalTokens)
+			t.Logf("Token count: input=%d", resp.InputTokens)
 		})
 	}
 }
@@ -429,6 +418,93 @@ func TestCountTokensMatchesPythonReference(t *testing.T) {
 		t.Errorf("Expected %d tokens to match Python reference, got %d", expectedTokens, resp.InputTokens)
 	}
 }
+
+// TestCountTokensWireResponse verifies that SerialiseCountTokens emits only
+// {"input_tokens":N} — no output_tokens or total_tokens fields.
+// Anthropic's spec, vLLM, lmdeploy, bifrost, and litellm all define this shape.
+func TestCountTokensWireResponse(t *testing.T) {
+	t.Parallel()
+
+	trans := mustNewTranslator(createTestLogger(), createTestConfig())
+
+	reqBody := []byte(`{
+		"model": "claude-3-5-sonnet-20241022",
+		"max_tokens": 1024,
+		"messages": [{"role": "user", "content": "Hello world"}]
+	}`)
+
+	req, err := http.NewRequest("POST", "/v1/messages/count_tokens", bytes.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+
+	resp, err := trans.CountTokens(context.Background(), req)
+	if err != nil {
+		t.Fatalf("CountTokens failed: %v", err)
+	}
+	if resp.InputTokens == 0 {
+		t.Fatal("expected non-zero InputTokens")
+	}
+
+	wireBytes, err := trans.SerialiseCountTokens(resp)
+	if err != nil {
+		t.Fatalf("SerialiseCountTokens failed: %v", err)
+	}
+
+	var wireMap map[string]interface{}
+	if err := json.Unmarshal(wireBytes, &wireMap); err != nil {
+		t.Fatalf("wire response is not valid JSON: %v", err)
+	}
+
+	// Must contain input_tokens
+	if _, ok := wireMap["input_tokens"]; !ok {
+		t.Error("wire response missing input_tokens field")
+	}
+
+	// Must NOT contain output_tokens or total_tokens
+	if _, ok := wireMap["output_tokens"]; ok {
+		t.Error("wire response must not contain output_tokens (not part of Anthropic count_tokens spec)")
+	}
+	if _, ok := wireMap["total_tokens"]; ok {
+		t.Error("wire response must not contain total_tokens (not part of Anthropic count_tokens spec)")
+	}
+
+	// Must contain exactly one field
+	if len(wireMap) != 1 {
+		t.Errorf("wire response must have exactly 1 field, got %d: %v", len(wireMap), wireMap)
+	}
+}
+
+// TestEstimateInputTokens verifies the streaming token seeding path.
+func TestEstimateInputTokens(t *testing.T) {
+	t.Parallel()
+
+	trans := mustNewTranslator(createTestLogger(), createTestConfig())
+
+	body := []byte(`{
+		"model": "claude-3-5-sonnet-20241022",
+		"max_tokens": 1024,
+		"messages": [{"role": "user", "content": "Hello, this is a test message for token estimation."}]
+	}`)
+
+	estimate := trans.EstimateInputTokens(body)
+	if estimate <= 0 {
+		t.Errorf("expected positive token estimate for non-empty prompt, got %d", estimate)
+	}
+}
+
+// TestEstimateInputTokens_InvalidBody returns 0 without panicking on malformed input.
+func TestEstimateInputTokens_InvalidBody(t *testing.T) {
+	t.Parallel()
+
+	trans := mustNewTranslator(createTestLogger(), createTestConfig())
+
+	estimate := trans.EstimateInputTokens([]byte(`{not json`))
+	if estimate != 0 {
+		t.Errorf("expected 0 for invalid body, got %d", estimate)
+	}
+}
+
 func BenchmarkCountTokens(b *testing.B) {
 	trans := mustNewTranslator(createTestLogger(), createTestConfig())
 

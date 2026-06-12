@@ -177,6 +177,19 @@ func (a *Application) executeTranslationRequest(
 
 	a.logRequestStart(pr, len(endpoints))
 
+	// For streaming requests, seed the context with an estimated input token count
+	// computed from the original (pre-translation) request body. This lets the
+	// streaming translator populate a non-zero input_tokens in message_start, matching
+	// the behaviour of vLLM and lmdeploy which both emit real input_tokens at that point.
+	// The estimate is overwritten by the actual upstream usage when it arrives.
+	if transformedReq.IsStreaming {
+		if estimator, ok := trans.(translator.InputTokenEstimator); ok && len(transformedReq.OriginalBody) > 0 {
+			estimate := estimator.EstimateInputTokens(transformedReq.OriginalBody)
+			ctx = context.WithValue(ctx, constants.ContextInputTokensKey, estimate)
+			r = r.WithContext(ctx)
+		}
+	}
+
 	// Execute proxy with appropriate response handling (streaming vs non-streaming)
 	var proxyErr error
 	if transformedReq.IsStreaming {
@@ -829,11 +842,23 @@ func (a *Application) tokenCountHandler(trans translator.RequestTranslator) http
 			return
 		}
 
-		// Write successful response
+		// Write successful response. Use the translator's own serialiser when
+		// available so each translator emits exactly the fields its spec defines.
+		// Anthropic count_tokens returns {"input_tokens":N} only; a generic encoder
+		// would include output_tokens and total_tokens which are not part of the spec.
 		w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 		w.WriteHeader(http.StatusOK)
 
-		if err := json.NewEncoder(w).Encode(resp); err != nil {
+		if serialiser, ok := trans.(translator.TokenCountSerializer); ok {
+			body, serErr := serialiser.SerialiseCountTokens(resp)
+			if serErr != nil {
+				a.logger.Error("Failed to serialise token count response", "error", serErr)
+				return
+			}
+			if _, wErr := w.Write(body); wErr != nil { //nolint:gosec // body is serialised JSON, not user-controlled data
+				a.logger.Error("Failed to write token count response", "error", wErr)
+			}
+		} else if err := json.NewEncoder(w).Encode(resp); err != nil {
 			a.logger.Error("Failed to encode token count response", "error", err)
 		}
 	}

@@ -26,4 +26,9 @@ const (
 	// when a model alias is resolved, allowing the proxy to rewrite the model name in the
 	// request body to match what the selected backend expects
 	ContextModelAliasMapKey = "model_alias_map"
+
+	// ContextInputTokensKey carries a prompt token estimate through the translation
+	// pipeline so the streaming translator can populate input_tokens in message_start
+	// before the upstream usage chunk arrives (which only comes at the end of the stream).
+	ContextInputTokensKey = contextKey("input-tokens")
 )
