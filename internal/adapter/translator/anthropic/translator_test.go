@@ -193,6 +193,7 @@ func TestWriteError_ConformanceMapping(t *testing.T) {
 		{http.StatusUnauthorized, "authentication_error"},
 		{http.StatusForbidden, "permission_error"},
 		{http.StatusNotFound, "not_found_error"},
+		{http.StatusRequestEntityTooLarge, "request_too_large"},
 		{http.StatusTooManyRequests, "rate_limit_error"},
 		{http.StatusInternalServerError, "api_error"},
 		{http.StatusBadGateway, "api_error"},
@@ -227,4 +228,29 @@ func TestWriteError_ConformanceMapping(t *testing.T) {
 			assert.NotEmpty(t, errObj["message"], "error.message must not be empty")
 		})
 	}
+}
+
+// TestWriteError_413RequestTooLarge verifies that an oversized body (413) maps to the
+// Anthropic "request_too_large" error type, not the generic "api_error".
+func TestWriteError_413RequestTooLarge(t *testing.T) {
+	t.Parallel()
+
+	trans := mustNewTranslator(createTestLogger(), createTestConfig())
+	rec := httptest.NewRecorder()
+
+	trans.WriteError(rec, errors.New("request body exceeds maximum size"), http.StatusRequestEntityTooLarge)
+
+	require.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
+	require.Equal(t, constants.ContentTypeJSON, rec.Header().Get(constants.HeaderContentType))
+
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+
+	assert.Equal(t, "error", body["type"])
+
+	errObj, ok := body["error"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "request_too_large", errObj["type"],
+		"413 must map to request_too_large per the Anthropic error taxonomy")
+	assert.NotEmpty(t, errObj["message"])
 }

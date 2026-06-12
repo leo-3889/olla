@@ -132,6 +132,9 @@ func (t *Translator) WriteError(w http.ResponseWriter, err error, statusCode int
 		errorType = "permission_error"
 	case http.StatusNotFound:
 		errorType = "not_found_error"
+	case http.StatusRequestEntityTooLarge:
+		// Anthropic error taxonomy: oversized request body maps to request_too_large.
+		errorType = "request_too_large"
 	case http.StatusTooManyRequests:
 		errorType = "rate_limit_error"
 	case http.StatusRequestTimeout, http.StatusGatewayTimeout:
