@@ -1114,6 +1114,21 @@ func (c *committedResponseWriter) Write(b []byte) (int, error) {
 	return c.ResponseWriter.Write(b)
 }
 
+// Flush marks the response as committed (bytes are en route to the client) and
+// forwards the flush to the underlying writer. Without this, http.ResponseController
+// cannot find http.Flusher on the wrapped writer, causing every SSE flush to return
+// "feature not supported" and the translated streaming path to 502.
+func (c *committedResponseWriter) Flush() {
+	c.committed.Store(true)
+	http.NewResponseController(c.ResponseWriter).Flush() //nolint:errcheck // best-effort flush; caller drives SSE cadence
+}
+
+// Unwrap returns the underlying ResponseWriter so that http.ResponseController can
+// reach optional interfaces (SetWriteDeadline, etc.) that we don't explicitly proxy.
+func (c *committedResponseWriter) Unwrap() http.ResponseWriter {
+	return c.ResponseWriter
+}
+
 // abstract header access for both response types
 type headerGetter interface {
 	Header() http.Header

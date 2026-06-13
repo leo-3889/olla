@@ -2076,3 +2076,68 @@ func TestStreamingPanic_BeforeWrite_Returns502(t *testing.T) {
 	require.True(t, ok, "error object must be present")
 	assert.Equal(t, "api_error", errObj["type"])
 }
+
+// TestCommittedResponseWriter_FlushSetsCommitted verifies that Flush() marks the response
+// as committed. Without this the translated SSE path calls http.NewResponseController(cw).Flush()
+// which can't find http.Flusher on the wrapper, returns "feature not supported", and the
+// streaming handler treats the flush failure as a transform error (502).
+func TestCommittedResponseWriter_FlushSetsCommitted(t *testing.T) {
+	t.Parallel()
+
+	rec := httptest.NewRecorder()
+	cw := newCommittedResponseWriter(rec)
+
+	if cw.committed.Load() {
+		t.Fatal("committed must be false before any write")
+	}
+
+	rc := http.NewResponseController(cw)
+	if err := rc.Flush(); err != nil {
+		t.Fatalf("Flush via ResponseController must succeed, got: %v", err)
+	}
+
+	if !cw.committed.Load() {
+		t.Fatal("committed must be true after Flush()")
+	}
+}
+
+// TestCommittedResponseWriter_Unwrap verifies that the underlying ResponseWriter is
+// reachable via Unwrap so ResponseController can discover optional interfaces
+// (SetWriteDeadline, etc.) beyond what committedResponseWriter explicitly proxies.
+func TestCommittedResponseWriter_Unwrap(t *testing.T) {
+	t.Parallel()
+
+	rec := httptest.NewRecorder()
+	cw := newCommittedResponseWriter(rec)
+
+	if cw.Unwrap() != rec {
+		t.Fatal("Unwrap must return the exact underlying ResponseWriter")
+	}
+}
+
+// TestCommittedResponseWriter_WriteAndWriteHeaderSetCommitted confirms the existing
+// committed-flag behaviour for Write and WriteHeader is unaffected by the new methods.
+func TestCommittedResponseWriter_WriteAndWriteHeaderSetCommitted(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Write", func(t *testing.T) {
+		t.Parallel()
+		rec := httptest.NewRecorder()
+		cw := newCommittedResponseWriter(rec)
+		_, err := cw.Write([]byte("hello"))
+		require.NoError(t, err)
+		if !cw.committed.Load() {
+			t.Fatal("committed must be true after Write()")
+		}
+	})
+
+	t.Run("WriteHeader", func(t *testing.T) {
+		t.Parallel()
+		rec := httptest.NewRecorder()
+		cw := newCommittedResponseWriter(rec)
+		cw.WriteHeader(http.StatusOK)
+		if !cw.committed.Load() {
+			t.Fatal("committed must be true after WriteHeader()")
+		}
+	})
+}
