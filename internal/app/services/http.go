@@ -132,7 +132,7 @@ func (s *HTTPService) Start(ctx context.Context) error {
 	}
 	s.application = app
 
-	// Wire sticky session stats if enabled — proxySvc holds the wrapper.
+	// Wire sticky session stats if enabled - proxySvc holds the wrapper.
 	if s.proxySvc != nil {
 		s.application.SetStickyStatsFn(s.proxySvc.StickyStats)
 	}
@@ -165,14 +165,9 @@ func (s *HTTPService) Start(ctx context.Context) error {
 
 	addr := s.config.GetAddress()
 
-	// Bind synchronously so that a port-already-in-use error is returned
-	// immediately to the caller rather than being silently swallowed in a
-	// goroutine behind a fixed sleep. The previous probe-bind approach had a
-	// TOCTOU window between the probe closing and ListenAndServe re-binding.
-	// Use ListenConfig so the listener respects context cancellation.
-	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
+	ln, err := bindListener(ctx, addr)
 	if err != nil {
-		return fmt.Errorf("failed to bind %s: %w", addr, err)
+		return err
 	}
 
 	s.server = &http.Server{
@@ -217,6 +212,17 @@ func applyCORS(handler http.Handler, cfg config.CorsConfig) http.Handler {
 		return handler
 	}
 	return middleware.NewCORS(cfg).Handler(handler)
+}
+
+// bindListener binds a TCP listener on addr synchronously so that any
+// port-in-use error surfaces immediately to the caller. Using ListenConfig
+// means the listener also respects context cancellation during startup.
+func bindListener(ctx context.Context, addr string) (net.Listener, error) {
+	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to bind %s: %w", addr, err)
+	}
+	return ln, nil
 }
 
 func (s *HTTPService) printWarnings() {

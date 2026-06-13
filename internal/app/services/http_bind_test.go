@@ -1,58 +1,41 @@
 package services
 
 import (
+	"context"
 	"net"
 	"testing"
-
-	"github.com/thushan/olla/internal/config"
 )
 
-// TestHTTPService_Start_DuplicatePortReturnsError verifies that starting a second
-// HTTPService on a port already held by another listener returns a non-nil error
-// from Start() rather than swallowing it in a goroutine.
-//
-// Before the synchronous net.Listen fix, Start() returned nil after a fixed 100ms
-// sleep even when the bind had failed. This test exercises the corrected path.
-func TestHTTPService_Start_DuplicatePortReturnsError(t *testing.T) {
+// TestBindListener_FreePort verifies that bindListener returns a valid listener
+// when no other process holds the port.
+func TestBindListener_FreePort(t *testing.T) {
 	t.Parallel()
 
-	// Grab an ephemeral port on localhost so the test is portable.
+	ln, err := bindListener(context.Background(), "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("expected bind to succeed on a free port: %v", err)
+	}
+	ln.Close()
+}
+
+// TestBindListener_OccupiedPort verifies that bindListener returns a non-nil
+// error when another listener already holds the port. This is the path that
+// Start() uses to surface port conflicts immediately rather than swallowing
+// them inside a goroutine.
+func TestBindListener_OccupiedPort(t *testing.T) {
+	t.Parallel()
+
+	// Hold a port so the second bind must fail.
 	anchor, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("failed to acquire anchor listener: %v", err)
 	}
 	defer anchor.Close()
 
-	port := anchor.Addr().(*net.TCPAddr).Port
+	addr := anchor.Addr().String()
 
-	// We cannot call svc.Start() directly here because it initialises full
-	// application dependencies. Exercise the bind path directly — this mirrors
-	// exactly what Start() does internally after the setup phase.
-	_ = NewHTTPService(
-		&config.ServerConfig{
-			Host: "127.0.0.1",
-			Port: port,
-		},
-		&config.Config{Server: config.ServerConfig{Host: "127.0.0.1", Port: port}},
-		newTestLogger(),
-	)
-
-	ln, bindErr := net.Listen("tcp", anchor.Addr().String())
+	_, bindErr := bindListener(context.Background(), addr)
 	if bindErr == nil {
-		ln.Close()
-		t.Fatal("expected bind to fail while anchor holds the port, but it succeeded")
+		t.Fatal("expected bindListener to return an error while anchor holds the port, but it succeeded")
 	}
-	// bindErr is non-nil — the synchronous bind correctly surfaced the error.
-}
-
-// TestHTTPService_Start_SuccessfulBind verifies that net.Listen succeeds on a
-// free port, confirming the bind logic works when no conflict exists.
-func TestHTTPService_Start_SuccessfulBind(t *testing.T) {
-	t.Parallel()
-
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("expected bind to succeed on a free port: %v", err)
-	}
-	ln.Close()
 }
