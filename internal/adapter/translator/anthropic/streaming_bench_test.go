@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -199,4 +200,34 @@ func TestWriteEvent_ConcurrentPoolSafety(t *testing.T) {
 	}
 
 	wg.Wait()
+}
+
+// BenchmarkProcessStreamLine_TextChunk isolates the per-line parse + dispatch cost
+// for a single text delta chunk, after message_start has already been sent.
+// This directly measures the typed-struct decode savings on the hot path, independent
+// of scanner, HTTP, and SSE write overhead.
+// Run with: go test -bench=BenchmarkProcessStreamLine_TextChunk -benchmem -count=5
+func BenchmarkProcessStreamLine_TextChunk(b *testing.B) {
+	tr := newTestTranslator()
+	rec := httptest.NewRecorder()
+	rc := http.NewResponseController(rec)
+	state := &StreamingState{
+		messageID:        "msg-bench",
+		contentBlocks:    make([]ContentBlock, 0, 4),
+		toolCallBuffers:  make(map[int]*strings.Builder),
+		toolIndexToBlock: make(map[int]int),
+		messageStartSent: true,
+	}
+	// Prime a text block so the hot path skips block_start overhead.
+	state.currentBlock = &ContentBlock{Type: contentTypeText, Text: ""}
+	state.currentIndex = 0
+	state.contentBlocks = append(state.contentBlocks, *state.currentBlock)
+
+	line := `data: {"id":"chatcmpl-b","model":"claude-3-5-sonnet-20241022","choices":[{"delta":{"content":"hello"},"index":0}]}`
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		_ = tr.processStreamLine(line, state, rec, rc)
+	}
 }
