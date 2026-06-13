@@ -635,13 +635,20 @@ func (a *Application) executeTranslatedStreamingRequest(
 	pipeReader, pipeWriter := io.Pipe()
 	streamRecorder := newStreamingResponseRecorder(pipeWriter)
 
+	// Wrap the real client ResponseWriter so we can track whether any byte has
+	// actually been committed to the client (status line written or body written).
+	// This is distinct from streamRecorder.started, which only signals that the
+	// backend wrote into the pipe -- bytes may still be in the translator's buffer
+	// at that point, not yet on the wire to the client.
+	cw := newCommittedResponseWriter(w)
+
 	// run proxy in background while translation processes
 	proxyErrChan := a.startProxyGoroutine(ctx, r, endpoints, pr, streamRecorder, pipeWriter)
 
 	// panic recovery prevents goroutine leak; sends a 502 (or SSE error event
 	// if the stream has already started) to the client rather than re-panicking,
 	// which would produce a connection reset with no useful error for the client.
-	defer a.handleStreamingPanic(w, pipeReader, pipeWriter, proxyErrChan, streamRecorder, pr, trans)
+	defer a.handleStreamingPanic(cw, pipeReader, pipeWriter, proxyErrChan, cw, pr, trans)
 
 	// Wait for headers before inspecting status. The select also handles context
 	// cancellation so we don't block forever if the proxy errors without writing.
@@ -654,18 +661,18 @@ func (a *Application) executeTranslatedStreamingRequest(
 
 	// handle backend errors before starting sse stream
 	if streamRecorder.status >= 400 {
-		a.handleStreamingBackendError(w, r, pipeReader, streamRecorder, proxyErrChan, pr, trans)
+		a.handleStreamingBackendError(cw, r, pipeReader, streamRecorder, proxyErrChan, pr, trans)
 		return nil
 	}
 
 	// copy olla headers before stream starts
-	a.copyOllaHeaders(streamRecorder, w)
-	a.setModelHeaderIfMissing(w, pr.model)
-	// Write sticky headers before the first write to w commits the response.
-	a.setStickyResponseHeadersFromRequest(w, r)
+	a.copyOllaHeaders(streamRecorder, cw)
+	a.setModelHeaderIfMissing(cw, pr.model)
+	// Write sticky headers before the first write to cw commits the response.
+	a.setStickyResponseHeadersFromRequest(cw, r)
 
 	// transform stream (blocks until done) and wait for proxy
-	return a.transformStreamAndWaitForProxy(ctx, pipeReader, w, r, proxyErrChan, trans)
+	return a.transformStreamAndWaitForProxy(ctx, pipeReader, cw, r, proxyErrChan, trans)
 }
 
 // writeStreamingNoEndpointsError writes error when no endpoints are available for streaming
@@ -720,17 +727,17 @@ func (a *Application) startProxyGoroutine(
 // connection abruptly and gives the client no useful error), it closes the pipe,
 // drains the error channel, and writes an appropriate error to the client.
 //
-// When the upstream has already written body bytes (streamRecorder.started is
-// true), net/http silently ignores a WriteHeader(502) call because the response
-// is already committed. In that case we emit a spec-valid Anthropic SSE error
-// event into the open stream so the client receives a structured termination
-// signal rather than a truncated stream with injected JSON garbage.
+// The committed flag on cw tracks whether any byte has actually been written to
+// the real client ResponseWriter (not just to the backend pipe). When committed,
+// net/http silently ignores a WriteHeader(502), so we emit a spec-valid Anthropic
+// SSE error event instead. When not committed, a plain HTTP 502 with a structured
+// body reaches the client correctly.
 func (a *Application) handleStreamingPanic(
 	w http.ResponseWriter,
 	pipeReader *io.PipeReader,
 	pipeWriter *io.PipeWriter,
 	proxyErrChan chan error,
-	streamRecorder *streamingResponseRecorder,
+	cw *committedResponseWriter,
 	pr *proxyRequest,
 	trans translator.RequestTranslator,
 ) {
@@ -747,17 +754,17 @@ func (a *Application) handleStreamingPanic(
 			"translator", trans.Name(),
 			"model", pr.model)
 
-		// If the upstream had already sent body bytes before the panic, the HTTP
-		// response is committed and WriteHeader(502) is a no-op. Emitting a
-		// well-formed SSE error event is the only way to signal the failure to
-		// the client without corrupting the stream with raw JSON.
-		if streamRecorder != nil && streamRecorder.started.Load() {
+		// If anything was already written to the real client, the response is
+		// committed and WriteHeader(502) is a no-op. Emitting a well-formed SSE
+		// error event is the only way to signal the failure without corrupting
+		// the stream with raw JSON.
+		if cw != nil && cw.committed.Load() {
 			a.writeSSEErrorEvent(w, "internal error during stream transformation")
 			return
 		}
 
-		// Stream not yet started — response is uncommitted, so a plain HTTP 502
-		// with a structured error body reaches the client correctly.
+		// Nothing reached the client yet — response is uncommitted, so a plain
+		// HTTP 502 with a structured error body reaches the client correctly.
 		if ew, ok := trans.(translator.ErrorWriter); ok {
 			ew.WriteError(w, errors.New("internal error during stream transformation"), http.StatusBadGateway)
 		} else {
@@ -1079,6 +1086,32 @@ func detectRequestFeatures(body []byte) requestFeatures {
 	})
 
 	return f
+}
+
+// committedResponseWriter wraps the real client http.ResponseWriter and sets a
+// committed flag on the first call to Write or WriteHeader. The panic handler
+// reads this flag to decide whether to attempt a plain HTTP 502 (not yet committed)
+// or inject an SSE error event into the already-open stream (committed). Using the
+// real client write as the signal is correct; streamRecorder.started only tracks
+// whether the backend wrote into the pipe, which can be true before any byte has
+// reached the actual client.
+type committedResponseWriter struct {
+	http.ResponseWriter
+	committed atomic.Bool
+}
+
+func newCommittedResponseWriter(w http.ResponseWriter) *committedResponseWriter {
+	return &committedResponseWriter{ResponseWriter: w}
+}
+
+func (c *committedResponseWriter) WriteHeader(statusCode int) {
+	c.committed.Store(true)
+	c.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (c *committedResponseWriter) Write(b []byte) (int, error) {
+	c.committed.Store(true)
+	return c.ResponseWriter.Write(b)
 }
 
 // abstract header access for both response types

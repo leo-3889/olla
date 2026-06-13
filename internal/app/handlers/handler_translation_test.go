@@ -908,21 +908,21 @@ func TestTranslationHandler_StreamingPanicRecovery(t *testing.T) {
 	// The handler must NOT re-panic. A re-panic resets the TCP connection,
 	// giving the client no indication of what went wrong.
 	//
-	// The proxy writes one SSE event before the panic fires, so the response
-	// is already committed. The expected behaviour is:
-	//   - status remains 200 (net/http ignores WriteHeader after first Write)
-	//   - body contains the SSE payload written before the panic
-	//   - body ends with a well-formed "event: error" SSE event
+	// The proxy writes one SSE event into the pipe, but the translator panics
+	// immediately without reading from it and writing anything to the real client
+	// ResponseWriter. The committedResponseWriter therefore has committed=false,
+	// and the handler correctly falls back to a plain HTTP 502 rather than an SSE
+	// error event. This is the correct behaviour: no bytes reached the client, so
+	// the response is not committed and a proper error status can be sent.
 	handler.ServeHTTP(rec, req)
 
-	// Response must not propagate the panic as a connection reset.
-	// Status is 200 because the stream was already started when the panic fired.
-	assert.Equal(t, http.StatusOK, rec.Code,
-		"status must be 200 when stream was already started before the panic")
-	assert.Contains(t, rec.Body.String(), "event: error",
-		"a spec-valid SSE error event must be appended after the panic")
-	assert.Contains(t, rec.Body.String(), "api_error",
-		"SSE error event must include the Anthropic error type")
+	// The panic must not propagate as a connection reset. Because the translator
+	// panicked before writing to the client, the response is uncommitted and a
+	// 502 with a structured error body is the correct outcome.
+	assert.Equal(t, http.StatusBadGateway, rec.Code,
+		"status must be 502 when panic fires before any bytes reach the client")
+	assert.NotContains(t, rec.Body.String(), "event: error",
+		"no SSE event should appear when the response was not committed")
 }
 
 // Verifies that:
@@ -1913,13 +1913,14 @@ func TestHandleStreamingPanic_Writes502(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 
-	// streamRecorder with started=false simulates a panic before any bytes were written.
-	streamRecorder := newStreamingResponseRecorder(pipeWriter)
+	// committedResponseWriter with committed=false simulates a panic before any
+	// byte was written to the real client — response is uncommitted.
+	cw := newCommittedResponseWriter(rec)
 
 	// Call handleStreamingPanic directly, simulating the deferred call after a panic.
 	// We wrap in a function that sets up a panic so recover() fires.
 	func() {
-		defer app.handleStreamingPanic(rec, pipeReader, pipeWriter, proxyErrChan, streamRecorder, &proxyRequest{
+		defer app.handleStreamingPanic(cw, pipeReader, pipeWriter, proxyErrChan, cw, &proxyRequest{
 			requestLogger: mockLogger,
 		}, trans)
 		panic("simulated streaming panic")
@@ -1954,13 +1955,13 @@ func TestHandleStreamingPanic_AfterStreamStarted_EmitsSSEError(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 
-	// Mark the recorder as started to simulate the state after the proxy has
-	// written at least one SSE event through the pipe.
-	streamRecorder := newStreamingResponseRecorder(pipeWriter)
-	streamRecorder.started.Store(true)
+	// committedResponseWriter with committed=true simulates the state after at
+	// least one byte has been written to the real client ResponseWriter.
+	cw := newCommittedResponseWriter(rec)
+	cw.committed.Store(true)
 
 	func() {
-		defer app.handleStreamingPanic(rec, pipeReader, pipeWriter, proxyErrChan, streamRecorder, &proxyRequest{
+		defer app.handleStreamingPanic(cw, pipeReader, pipeWriter, proxyErrChan, cw, &proxyRequest{
 			requestLogger: mockLogger,
 		}, trans)
 		panic("simulated mid-stream panic")
