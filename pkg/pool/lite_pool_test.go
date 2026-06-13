@@ -1,6 +1,7 @@
 package pool
 
 import (
+	"sync"
 	"testing"
 )
 
@@ -24,7 +25,10 @@ func TestNewLitePool_GetPutRoundTrip(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	got := p.Get()
+	got, err := p.Get()
+	if err != nil {
+		t.Fatalf("Get returned unexpected error: %v", err)
+	}
 	if got == nil {
 		t.Fatal("Get returned nil")
 	}
@@ -34,23 +38,12 @@ func TestNewLitePool_GetPutRoundTrip(t *testing.T) {
 	p.Put(got)
 }
 
-// TestLitePool_Get_PanicsOnNilFactory verifies that Get panics with a clear,
-// attributed message when a stateful factory returns nil after construction.
-// A loud panic at the pool boundary is preferable to a silent nil-deref deep
-// inside a caller, where the root cause is impossible to attribute.
-//
-// We test this by simulating the conditions that Get() would encounter: a typed nil
-// pointer returned by New (the common case for *T factories). isNilValue must detect
-// the typed nil and Get must panic rather than returning it. To exercise the actual
-// Get() code path we construct a pool whose stored new function is replaced after
-// construction; we cannot do that via the public API, so we test via a separate
-// pool that calls isNilValue on a typed nil directly.
-func TestLitePool_Get_PanicsOnNilFactory(t *testing.T) {
+// TestLitePool_IsNilValue verifies that isNilValue correctly identifies typed and untyped nils.
+func TestLitePool_IsNilValue(t *testing.T) {
 	t.Parallel()
 
-	// isNilValue must detect typed nils -- the classic interface nil trap.
 	// A (*int)(nil) stored in an interface{} is not == nil at the interface level.
-	var typedNil *int // (*int)(nil)
+	var typedNil *int
 	if !isNilValue(typedNil) {
 		t.Fatal("isNilValue must return true for a typed nil pointer")
 	}
@@ -60,38 +53,63 @@ func TestLitePool_Get_PanicsOnNilFactory(t *testing.T) {
 	if isNilValue(&v) {
 		t.Fatal("isNilValue must return false for a non-nil pointer")
 	}
+}
 
-	// Verify Get panics when a factory returns a typed nil. We achieve this by
-	// constructing a pool with a valid factory, then calling the unexported
-	// isNilValue check directly inside a deferred recover to confirm the panic
-	// message. The actual Get panic path is exercised by manually invoking the
-	// same check that Get would perform.
-	didPanic := false
-	func() {
-		defer func() {
-			r := recover()
-			if r == nil {
-				return
-			}
-			msg, ok := r.(string)
-			if !ok {
-				t.Errorf("expected string panic value, got %T: %v", r, r)
-				return
-			}
-			if msg != "litepool: factory returned nil" {
-				t.Errorf("unexpected panic message: %q", msg)
-				return
-			}
-			didPanic = true
-		}()
-		// Directly invoke the path that Get() takes when isNilValue returns true.
-		var nilPtr *int
-		if isNilValue(nilPtr) {
-			panic("litepool: factory returned nil")
-		}
-	}()
+// TestLitePool_Get_ErrorOnNilFactory verifies that Get returns a non-nil error (not a panic)
+// when a stateful factory violates its contract and returns nil after construction.
+// We cannot replicate this via NewLitePool (it validates at construction time), so we
+// construct a Pool directly with a sync.Pool whose New always yields a typed nil.
+func TestLitePool_Get_ErrorOnNilFactory(t *testing.T) {
+	t.Parallel()
 
-	if !didPanic {
-		t.Fatal("expected panic for typed-nil input, got none")
+	// Bypass NewLitePool's construction-time guard so we can exercise the Get() error path.
+	p := &Pool[*int]{
+		pool: sync.Pool{
+			New: func() any {
+				// Return a typed nil (*int)(nil) — not the same as untyped nil in an
+				// interface, which is what isNilValue is specifically designed to catch.
+				var n *int
+				return n
+			},
+		},
+	}
+
+	got, err := p.Get()
+	if err == nil {
+		t.Fatal("expected error when factory returns nil, got nil error")
+	}
+	if got != nil {
+		t.Errorf("expected zero value on error, got non-nil: %v", got)
+	}
+	const wantMsg = "litepool: factory returned nil"
+	if err.Error() != wantMsg {
+		t.Errorf("unexpected error message: got %q, want %q", err.Error(), wantMsg)
+	}
+}
+
+// TestLitePool_Get_InterfaceTyped_UntypedNil verifies that Get on a Pool[any] does not
+// panic when sync.Pool returns an untyped nil (raw == nil). The forced assertion path
+// used to execute before the nil guard, so this test exercises the new ordering.
+func TestLitePool_Get_InterfaceTyped_UntypedNil(t *testing.T) {
+	t.Parallel()
+
+	// Pool[any] with a New that returns untyped nil — simulates a stateful factory that
+	// has exhausted its resource. sync.Pool can also return nil when New is not set and
+	// the pool is empty, but setting New here makes the behaviour deterministic.
+	p := &Pool[any]{
+		pool: sync.Pool{
+			New: func() any {
+				return nil // untyped nil; raw.(T) would panic before the nil check
+			},
+		},
+	}
+
+	// Must return an error, never panic.
+	got, err := p.Get()
+	if err == nil {
+		t.Fatal("expected error for untyped nil from interface-typed pool, got nil error")
+	}
+	if got != nil {
+		t.Errorf("expected nil zero value on error, got: %v", got)
 	}
 }

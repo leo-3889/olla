@@ -108,7 +108,10 @@ func (bi *BodyInspector) Inspect(ctx context.Context, r *http.Request, profile *
 		return nil
 	}
 
-	buffer := bi.bufferPool.Get()
+	buffer, err := bi.bufferPool.Get()
+	if err != nil {
+		return fmt.Errorf("body inspector: buffer pool exhausted: %w", err)
+	}
 	defer func() {
 		buffer.Reset()
 		bi.bufferPool.Put(buffer)

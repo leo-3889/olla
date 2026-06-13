@@ -10,19 +10,23 @@ package pool
 // type assertion in Get() is safe and explicitly silenced.
 //
 // Example:
-//   type RequestContext struct { ... }
-//   func (r *RequestContext) Reset() { ... }
 //
-//   pool, err := NewLitePool(func() *RequestContext {
-//     return &RequestContext{}
-//   })
-//   if err != nil {
-//     // handle error
-//   }
+//	type RequestContext struct { ... }
+//	func (r *RequestContext) Reset() { ... }
 //
-//   ctx := pool.Get()
-//   ...
-//   pool.Put(ctx)
+//	pool, err := NewLitePool(func() *RequestContext {
+//	  return &RequestContext{}
+//	})
+//	if err != nil {
+//	  // handle error
+//	}
+//
+//	ctx, err := pool.Get()
+//	if err != nil {
+//	  // handle error
+//	}
+//	...
+//	pool.Put(ctx)
 //
 // Note: This is intentionally minimal and inlined for performance-sensitive paths.
 // If Go ever adds generics to sync.Pool (e.g. Go 1.23+), this becomes obsolete.
@@ -62,17 +66,28 @@ func NewLitePool[T any](newFn func() T) (*Pool[T], error) {
 	}, nil
 }
 
-func (p *Pool[T]) Get() T {
-	//nolint:forcetypeassert // safe due to validated New
-	v := p.pool.Get().(T)
-	// A nil return here means the factory violated its contract after construction.
-	// Panic loudly at the pool boundary rather than handing a nil pointer to callers
-	// where the root cause would be impossible to attribute. This is a programmer
-	// error (unrecoverable contract violation), not a runtime condition.
-	if isNilValue(v) {
-		panic("litepool: factory returned nil")
+func (p *Pool[T]) Get() (T, error) {
+	raw := p.pool.Get()
+	// sync.Pool.Get() returns nil when New is nil and the pool is empty.
+	// Guard here before the type assertion so interface-typed pools (Pool[any])
+	// never panic on an untyped nil returned by a stateful factory.
+	if raw == nil {
+		var zero T
+		return zero, errors.New("litepool: factory returned nil")
 	}
-	return v
+	v, ok := raw.(T)
+	if !ok {
+		var zero T
+		return zero, errors.New("litepool: pool returned unexpected type")
+	}
+	// A stateful factory can violate its contract after construction by returning
+	// a typed nil (e.g. (*T)(nil)). Return an error rather than panicking so
+	// callers can propagate it cleanly without crashing in-flight requests.
+	if isNilValue(v) {
+		var zero T
+		return zero, errors.New("litepool: factory returned nil")
+	}
+	return v, nil
 }
 
 // isNilValue reports whether v is nil, handling both untyped nil (interface{} == nil)

@@ -318,7 +318,10 @@ func BenchmarkPoolGetPut(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := range b.N {
-		obj := pool.Get()
+		obj, err := pool.Get()
+		if err != nil {
+			b.Fatal(err)
+		}
 		// Use the object
 		obj.data[0] = byte(i)
 		pool.Put(obj)
@@ -370,7 +373,10 @@ func BenchmarkOllaObjectPools(b *testing.B) {
 		b.ReportAllocs()
 
 		for range b.N {
-			buf := bufferPool.Get()
+			buf, err := bufferPool.Get()
+			if err != nil {
+				b.Fatal(err)
+			}
 			bufferPool.Put(buf)
 		}
 	})
@@ -394,7 +400,10 @@ func BenchmarkOllaObjectPools(b *testing.B) {
 		b.ReportAllocs()
 
 		for range b.N {
-			ctx := reqPool.Get()
+			ctx, err := reqPool.Get()
+			if err != nil {
+				b.Fatal(err)
+			}
 			reqPool.Put(ctx)
 		}
 	})

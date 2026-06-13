@@ -729,7 +729,10 @@ func (t *Translator) createMessageStart(state *StreamingState) map[string]interf
 // The pooled buffer is reset and returned before this function returns, so
 // there is no aliasing risk — w receives a copy via its own internal write path.
 func (t *Translator) writeEvent(w http.ResponseWriter, event string, data interface{}) error {
-	buf := t.bufferPool.Get()
+	buf, err := t.bufferPool.Get()
+	if err != nil {
+		return fmt.Errorf("writeEvent: buffer pool exhausted: %w", err)
+	}
 	// Encode JSON directly into the pooled buffer, avoiding a separate []byte allocation.
 	enc := json.NewEncoder(buf)
 	if err := enc.Encode(data); err != nil {
