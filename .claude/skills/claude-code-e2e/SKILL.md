@@ -535,10 +535,15 @@ tier_b() {
 Gauges Olla's own hot path under load, *after* functional validation has passed -
 numbers never gate the run (a goroutine leak is the only WARN). Two ideas:
 
-1. **Hammer Olla-bound endpoints.** `count_tokens` and `/v1/models` are served
-   entirely by Olla (estimator, translation envelope, unifier/registry) with **no
-   backend inference wait**, so a concurrent burst against them profiles Olla's
-   CPU, not Ollama's. That is where hot-path regressions actually show.
+1. **Two burst modes per leg.** `perf_burst micro` floods `count_tokens` +
+   `/v1/models` - served entirely by Olla (estimator, translation envelope,
+   unifier/registry) with **no backend inference wait** - so it isolates Olla's
+   own CPU. `perf_burst stream` drives real streaming `/v1/messages` at low
+   concurrency to profile the **realistic** translation/proxy + SSE path
+   (backend-bound, so fewer requests, but it captures the true streaming
+   allocation profile, not the micro-request one). Compare the two: micro
+   over-weights per-request middleware overhead; stream shows what real Claude
+   Code traffic actually allocates.
 2. **Bracket each leg with goroutine/heap snapshots** to catch a streaming/proxy
    goroutine leak across a realistic session (incl. the Tier-B multi-turn run).
 
@@ -551,25 +556,38 @@ pprof_heap_field() {  # $1 = HeapAlloc | NumGC
   curl -sf --max-time 5 "${PPROF}/heap?debug=1" | grep -E "^#[[:space:]]+$1[[:space:]]*=" | head -1 | grep -oE '[0-9]+' | head -1
 }
 
-perf_burst() {  # concurrent Olla-bound load under a CPU profile - profiles Olla, not the model
+perf_request() {  # one request appropriate to the burst mode (subshells inherit this fn)
+  case "$1" in
+    micro)  # pure-Olla endpoints, no backend inference wait - isolates Olla's CPU
+      curl -s -o /dev/null --max-time 10 -X POST "${BASE}/v1/messages/count_tokens" \
+        -H "content-type: application/json" -H "x-api-key: ${TOKEN}" -H "anthropic-version: 2023-06-01" \
+        -d "{\"model\":\"${MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"profile the hot path with a body large enough to exercise tokenisation and the translation envelope build\"}]}"
+      curl -s -o /dev/null --max-time 10 "${BASE}/v1/models" -H "x-api-key: ${TOKEN}" ;;
+    stream) # real streaming messages - exercises the true translation/proxy + SSE path
+      curl -sN -o /dev/null --max-time 30 -X POST "${BASE}/v1/messages" \
+        -H "content-type: application/json" -H "x-api-key: ${TOKEN}" -H "anthropic-version: 2023-06-01" \
+        -d "{\"model\":\"${MODEL}\",\"max_tokens\":128,\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"Briefly list three colours.\"}]}" ;;
+  esac
+}
+
+perf_burst() {  # $1 = mode: micro (high-concurrency Olla-bound) | stream (realistic, backend-bound)
   [ "$PROFILE" = 1 ] || return 0
-  local secs=20 workers=8 i bin="build/regression/olla${EXE}"
-  local cpu="${LOGDIR}/cpu-${LEG}.pb.gz" allocs="${LOGDIR}/allocs-${LEG}.pb.gz"
+  local mode="$1" bin="build/regression/olla${EXE}" secs workers
+  case "$mode" in
+    micro)  secs=20; workers=8 ;;   # Olla-bound endpoints sustain high concurrency
+    stream) secs=25; workers=3 ;;   # streaming is backend-bound; keep concurrency low
+    *) return 0 ;;
+  esac
+  local cpu="${LOGDIR}/cpu-${LEG}-${mode}.pb.gz" allocs="${LOGDIR}/allocs-${LEG}-${mode}.pb.gz"
   # No -f: on a non-2xx we still want the body (error text) on disk so an empty
   # capture is diagnosable; the HTTP status is saved alongside. (Go's CPU profiler
   # can be flaky on Windows under heavy syscall load - allocs/goroutine are not.)
   curl -s --max-time $((secs + 15)) -w '%{http_code}' "${PPROF}/profile?seconds=${secs}" \
-    -o "$cpu" > "${LOGDIR}/cpu-${LEG}.status" 2>/dev/null &
+    -o "$cpu" > "${LOGDIR}/cpu-${LEG}-${mode}.status" 2>/dev/null &
   local prof_pid=$!
-  local deadline=$(( $(date +%s) + secs )); i=0
-  local worker_pids=""
+  local deadline=$(( $(date +%s) + secs )) i=0 worker_pids=""
   while [ "$i" -lt "$workers" ]; do
-    ( while [ "$(date +%s)" -lt "$deadline" ]; do
-        curl -s -o /dev/null --max-time 10 -X POST "${BASE}/v1/messages/count_tokens" \
-          -H "content-type: application/json" -H "x-api-key: ${TOKEN}" -H "anthropic-version: 2023-06-01" \
-          -d "{\"model\":\"${MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"profile the hot path with a body large enough to exercise tokenisation and the translation envelope build\"}]}"
-        curl -s -o /dev/null --max-time 10 "${BASE}/v1/models" -H "x-api-key: ${TOKEN}"
-      done ) &
+    ( while [ "$(date +%s)" -lt "$deadline" ]; do perf_request "$mode"; done ) &
     worker_pids="$worker_pids $!"
     i=$((i + 1))
   done
@@ -579,22 +597,20 @@ perf_burst() {  # concurrent Olla-bound load under a CPU profile - profiles Olla
   # background process (started in boot_olla) and hang until the server exits.
   # shellcheck disable=SC2086
   wait $worker_pids 2>/dev/null || true
-  go tool pprof -top -cum -nodecount=12 "$bin" "$cpu" > "${LOGDIR}/cpu-${LEG}-top.txt" 2>/dev/null
-  go tool pprof -top -alloc_objects -nodecount=12 "$bin" "$allocs" > "${LOGDIR}/allocs-${LEG}-top.txt" 2>/dev/null
-  # Report CPU and allocs independently - allocs is the reliable signal on
-  # Windows and gives the real per-request allocation findings even when the CPU
-  # profile comes back empty.
-  if [ -s "${LOGDIR}/cpu-${LEG}-top.txt" ]; then
-    assert_pass "[${LEG}] PERF CPU profile captured (cpu-${LEG}.pb.gz)"
-    echo "INFO: [${LEG}] top CPU (cum):"; sed -n '1,9p' "${LOGDIR}/cpu-${LEG}-top.txt"
+  go tool pprof -top -cum -nodecount=12 "$bin" "$cpu" > "${LOGDIR}/cpu-${LEG}-${mode}-top.txt" 2>/dev/null
+  go tool pprof -top -alloc_objects -nodecount=12 "$bin" "$allocs" > "${LOGDIR}/allocs-${LEG}-${mode}-top.txt" 2>/dev/null
+  # Report CPU and allocs independently - allocs is the reliable signal on Windows.
+  if [ -s "${LOGDIR}/cpu-${LEG}-${mode}-top.txt" ]; then
+    assert_pass "[${LEG}/${mode}] PERF CPU profile captured"
+    echo "INFO: [${LEG}/${mode}] top CPU (cum):"; sed -n '1,9p' "${LOGDIR}/cpu-${LEG}-${mode}-top.txt"
   else
-    assert_warn "[${LEG}] PERF CPU profile empty (http=$(tr -d '\r\n' < "${LOGDIR}/cpu-${LEG}.status" 2>/dev/null); CPU profiling can be flaky on Windows - allocs/goroutine still captured)"
+    assert_warn "[${LEG}/${mode}] PERF CPU profile empty (http=$(tr -d '\r\n' < "${LOGDIR}/cpu-${LEG}-${mode}.status" 2>/dev/null); CPU profiling can be flaky on Windows)"
   fi
-  if [ -s "${LOGDIR}/allocs-${LEG}-top.txt" ]; then
-    assert_pass "[${LEG}] PERF allocs profile captured (allocs-${LEG}.pb.gz)"
-    echo "INFO: [${LEG}] top allocators:"; sed -n '1,9p' "${LOGDIR}/allocs-${LEG}-top.txt"
+  if [ -s "${LOGDIR}/allocs-${LEG}-${mode}-top.txt" ]; then
+    assert_pass "[${LEG}/${mode}] PERF allocs profile captured"
+    echo "INFO: [${LEG}/${mode}] top allocators:"; sed -n '1,9p' "${LOGDIR}/allocs-${LEG}-${mode}-top.txt"
   else
-    assert_warn "[${LEG}] PERF allocs profile empty"
+    assert_warn "[${LEG}/${mode}] PERF allocs profile empty"
   fi
 }
 
@@ -624,7 +640,8 @@ for LEG in passthrough translation; do
   GBASE=""; HBASE=""
   if [ "$PROFILE" = 1 ]; then GBASE=$(pprof_goroutines); HBASE=$(pprof_heap_field HeapAlloc); fi
   tier_a
-  perf_burst        # no-op unless --profile; profiles Olla's hot path under load
+  perf_burst micro  # no-op unless --profile; isolates Olla's CPU (no backend wait)
+  perf_burst stream # no-op unless --profile; realistic streaming translation/proxy path
   tier_b
   perf_leg_end      # no-op unless --profile; goroutine/heap leak check vs baseline
   stop_olla
@@ -683,10 +700,12 @@ Write `$REPORT`:
 | top CPU (cum) path | ... | ... |
 | top allocator | ... | ... |
 
-Raw profiles: `cpu-<leg>.pb.gz`, `allocs-<leg>.pb.gz` in the log dir
-(`go tool pprof build/regression/olla <file>` to explore). Headline text in
-`cpu-<leg>-top.txt` / `allocs-<leg>-top.txt`. Compare passthrough vs translation
-to see the translation path's added overhead.
+Raw profiles per leg and mode: `cpu-<leg>-<micro|stream>.pb.gz`,
+`allocs-<leg>-<micro|stream>.pb.gz` in the log dir (`go tool pprof
+build/regression/olla <file>` to explore). Headline text in the matching
+`*-top.txt`. Compare passthrough vs translation for the translation path's added
+overhead, and micro vs stream to separate per-request middleware cost from the
+real streaming allocation profile.
 
 ## Failures
 <one block each: check, expected, actual, evidence/log path>
