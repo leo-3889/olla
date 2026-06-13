@@ -205,6 +205,15 @@ func (t *Translator) convertUserMessage(blocks []interface{}) (map[string]interf
 				}
 			}
 
+			// OpenAI tool messages have no is_error field; encode the signal in the
+			// content string so the model can distinguish error results on the way back.
+			// Skip the prefix if the content already starts with "Error" to avoid
+			// double-prefixing when re-translating an already-annotated result.
+			isError, _ := blockMap["is_error"].(bool)
+			if isError && !strings.HasPrefix(strings.ToLower(content), "error") {
+				content = "Error: " + content
+			}
+
 			toolResults = append(toolResults, map[string]interface{}{
 				"role":         "tool",
 				"tool_call_id": toolUseID,

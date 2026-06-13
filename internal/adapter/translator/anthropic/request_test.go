@@ -1288,3 +1288,123 @@ func TestConvertUserMessage_TextOnlyUnchanged(t *testing.T) {
 	assert.Equal(t, "user", result[0]["role"])
 	assert.Equal(t, "Just a plain question.", result[0]["content"])
 }
+
+// TestConvertUserMessage_IsError_True verifies that a tool_result block with
+// is_error:true gets an "Error: " prefix prepended to the content string.
+func TestConvertUserMessage_IsError_True(t *testing.T) {
+	t.Parallel()
+	tr := mustNewTranslator(createTestLogger(), createTestConfig())
+
+	msgs := []AnthropicMessage{
+		{
+			Role: "user",
+			Content: []interface{}{
+				map[string]interface{}{
+					"type":        "tool_result",
+					"tool_use_id": "toolu_err",
+					"content":     "file not found",
+					"is_error":    true,
+				},
+			},
+		},
+	}
+
+	result, err := tr.convertMessages(msgs, nil)
+	require.NoError(t, err)
+	// tool message comes first (before optional user text message)
+	require.NotEmpty(t, result)
+
+	toolMsg := result[0]
+	assert.Equal(t, "tool", toolMsg["role"])
+	content, _ := toolMsg["content"].(string)
+	assert.Equal(t, "Error: file not found", content,
+		"is_error:true must prepend 'Error: ' to the content")
+}
+
+// TestConvertUserMessage_IsError_AlreadyPrefixed verifies that double-prefixing is
+// avoided when the content already starts with "Error" (case-insensitive).
+func TestConvertUserMessage_IsError_AlreadyPrefixed(t *testing.T) {
+	t.Parallel()
+	tr := mustNewTranslator(createTestLogger(), createTestConfig())
+
+	msgs := []AnthropicMessage{
+		{
+			Role: "user",
+			Content: []interface{}{
+				map[string]interface{}{
+					"type":        "tool_result",
+					"tool_use_id": "toolu_dup",
+					"content":     "Error: already prefixed message",
+					"is_error":    true,
+				},
+			},
+		},
+	}
+
+	result, err := tr.convertMessages(msgs, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, result)
+
+	toolMsg := result[0]
+	content, _ := toolMsg["content"].(string)
+	assert.Equal(t, "Error: already prefixed message", content,
+		"content already starting with 'Error' must not be double-prefixed")
+}
+
+// TestConvertUserMessage_IsError_False verifies that is_error:false leaves content unchanged.
+func TestConvertUserMessage_IsError_False(t *testing.T) {
+	t.Parallel()
+	tr := mustNewTranslator(createTestLogger(), createTestConfig())
+
+	msgs := []AnthropicMessage{
+		{
+			Role: "user",
+			Content: []interface{}{
+				map[string]interface{}{
+					"type":        "tool_result",
+					"tool_use_id": "toolu_ok",
+					"content":     "result data",
+					"is_error":    false,
+				},
+			},
+		},
+	}
+
+	result, err := tr.convertMessages(msgs, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, result)
+
+	toolMsg := result[0]
+	content, _ := toolMsg["content"].(string)
+	assert.Equal(t, "result data", content,
+		"is_error:false must leave content unchanged")
+}
+
+// TestConvertUserMessage_IsError_Absent verifies that omitting is_error leaves content unchanged.
+func TestConvertUserMessage_IsError_Absent(t *testing.T) {
+	t.Parallel()
+	tr := mustNewTranslator(createTestLogger(), createTestConfig())
+
+	msgs := []AnthropicMessage{
+		{
+			Role: "user",
+			Content: []interface{}{
+				map[string]interface{}{
+					"type":        "tool_result",
+					"tool_use_id": "toolu_absent",
+					"content":     "normal result",
+					// no is_error field
+				},
+			},
+		},
+	}
+
+	result, err := tr.convertMessages(msgs, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, result)
+
+	toolMsg := result[0]
+	content, _ := toolMsg["content"].(string)
+	assert.Equal(t, "normal result", content,
+		"absent is_error must leave content unchanged")
+}
