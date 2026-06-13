@@ -579,6 +579,12 @@ perf_burst() {  # $1 = mode: micro (high-concurrency Olla-bound) | stream (reali
     *) return 0 ;;
   esac
   local cpu="${LOGDIR}/cpu-${LEG}-${mode}.pb.gz" allocs="${LOGDIR}/allocs-${LEG}-${mode}.pb.gz"
+  local allocs_base="${LOGDIR}/allocs-${LEG}-${mode}-base.pb.gz"
+  # Baseline alloc snapshot BEFORE the burst. The alloc_objects profile is
+  # cumulative-since-boot, so on its own it is swamped by one-shot startup work
+  # (YAML config parse). Diffing after-vs-base with `go tool pprof -base` isolates
+  # the allocations made *during* the burst - the true per-request signal.
+  curl -sf --max-time 10 "${PPROF}/allocs" -o "$allocs_base" 2>/dev/null
   # No -f: on a non-2xx we still want the body (error text) on disk so an empty
   # capture is diagnosable; the HTTP status is saved alongside. (Go's CPU profiler
   # can be flaky on Windows under heavy syscall load - allocs/goroutine are not.)
@@ -598,7 +604,10 @@ perf_burst() {  # $1 = mode: micro (high-concurrency Olla-bound) | stream (reali
   # shellcheck disable=SC2086
   wait $worker_pids 2>/dev/null || true
   go tool pprof -top -cum -nodecount=12 "$bin" "$cpu" > "${LOGDIR}/cpu-${LEG}-${mode}-top.txt" 2>/dev/null
-  go tool pprof -top -alloc_objects -nodecount=12 "$bin" "$allocs" > "${LOGDIR}/allocs-${LEG}-${mode}-top.txt" 2>/dev/null
+  # Cumulative (since-boot) and the burst-only delta (after vs base). The delta is
+  # the per-request signal; the cumulative is kept for reference.
+  go tool pprof -top -alloc_objects -nodecount=12 "$bin" "$allocs" > "${LOGDIR}/allocs-${LEG}-${mode}-cumulative-top.txt" 2>/dev/null
+  go tool pprof -top -alloc_objects -base "$allocs_base" -nodecount=12 "$bin" "$allocs" > "${LOGDIR}/allocs-${LEG}-${mode}-delta-top.txt" 2>/dev/null
   # Report CPU and allocs independently - allocs is the reliable signal on Windows.
   if [ -s "${LOGDIR}/cpu-${LEG}-${mode}-top.txt" ]; then
     assert_pass "[${LEG}/${mode}] PERF CPU profile captured"
@@ -606,11 +615,11 @@ perf_burst() {  # $1 = mode: micro (high-concurrency Olla-bound) | stream (reali
   else
     assert_warn "[${LEG}/${mode}] PERF CPU profile empty (http=$(tr -d '\r\n' < "${LOGDIR}/cpu-${LEG}-${mode}.status" 2>/dev/null); CPU profiling can be flaky on Windows)"
   fi
-  if [ -s "${LOGDIR}/allocs-${LEG}-${mode}-top.txt" ]; then
-    assert_pass "[${LEG}/${mode}] PERF allocs profile captured"
-    echo "INFO: [${LEG}/${mode}] top allocators:"; sed -n '1,9p' "${LOGDIR}/allocs-${LEG}-${mode}-top.txt"
+  if [ -s "${LOGDIR}/allocs-${LEG}-${mode}-delta-top.txt" ]; then
+    assert_pass "[${LEG}/${mode}] PERF allocs delta captured (burst-only, startup excluded)"
+    echo "INFO: [${LEG}/${mode}] top allocators during burst:"; sed -n '1,9p' "${LOGDIR}/allocs-${LEG}-${mode}-delta-top.txt"
   else
-    assert_warn "[${LEG}/${mode}] PERF allocs profile empty"
+    assert_warn "[${LEG}/${mode}] PERF allocs delta empty (allocs endpoint unreachable or go tool pprof failed)"
   fi
 }
 
@@ -700,12 +709,14 @@ Write `$REPORT`:
 | top CPU (cum) path | ... | ... |
 | top allocator | ... | ... |
 
-Raw profiles per leg and mode: `cpu-<leg>-<micro|stream>.pb.gz`,
-`allocs-<leg>-<micro|stream>.pb.gz` in the log dir (`go tool pprof
-build/regression/olla <file>` to explore). Headline text in the matching
-`*-top.txt`. Compare passthrough vs translation for the translation path's added
-overhead, and micro vs stream to separate per-request middleware cost from the
-real streaming allocation profile.
+Raw profiles per leg and mode in the log dir: `cpu-<leg>-<micro|stream>.pb.gz`
+and, for allocations, a `-base` snapshot plus the final `allocs-<leg>-<mode>.pb.gz`
+(`go tool pprof build/regression/olla <file>` to explore). Headline text:
+`cpu-*-top.txt`, `allocs-*-delta-top.txt` (**burst-only, startup excluded - the
+per-request signal**) and `allocs-*-cumulative-top.txt` (since-boot, reference).
+Compare passthrough vs translation for the translation path's added overhead, and
+micro vs stream to separate per-request middleware cost from the real streaming
+allocation profile.
 
 ## Failures
 <one block each: check, expected, actual, evidence/log path>
