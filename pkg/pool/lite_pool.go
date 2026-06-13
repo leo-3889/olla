@@ -29,6 +29,7 @@ package pool
 
 import (
 	"errors"
+	"reflect"
 	"sync"
 )
 
@@ -47,18 +48,13 @@ func NewLitePool[T any](newFn func() T) (*Pool[T], error) {
 	}
 	// Validate early that the result is non-nil
 	test := newFn()
-	if any(test) == nil {
+	if isNilValue(test) {
 		return nil, errors.New("litepool: constructor returned nil")
 	}
 
 	return &Pool[T]{
 		pool: sync.Pool{
 			New: func() any {
-				// newFn was validated at pool construction time so nil is not
-				// expected here. If it does happen (e.g. a stateful factory
-				// exhausted its resources), return the zero value rather than
-				// panicking — a zero value is always safe to use and avoids
-				// killing an unrelated goroutine via a recovered panic.
 				return newFn()
 			},
 		},
@@ -68,7 +64,31 @@ func NewLitePool[T any](newFn func() T) (*Pool[T], error) {
 
 func (p *Pool[T]) Get() T {
 	//nolint:forcetypeassert // safe due to validated New
-	return p.pool.Get().(T)
+	v := p.pool.Get().(T)
+	// A nil return here means the factory violated its contract after construction.
+	// Panic loudly at the pool boundary rather than handing a nil pointer to callers
+	// where the root cause would be impossible to attribute. This is a programmer
+	// error (unrecoverable contract violation), not a runtime condition.
+	if isNilValue(v) {
+		panic("litepool: factory returned nil")
+	}
+	return v
+}
+
+// isNilValue reports whether v is nil, handling both untyped nil (interface{} == nil)
+// and typed nils (e.g. (*T)(nil) stored in an interface). The reflect path is only
+// reached for nilable kinds; value types like structs always return false.
+func isNilValue[T any](v T) bool {
+	if any(v) == nil {
+		return true
+	}
+	rv := reflect.ValueOf(any(v))
+	switch rv.Kind() {
+	case reflect.Ptr, reflect.Interface, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func:
+		return rv.IsNil()
+	default:
+		return false
+	}
 }
 
 func (p *Pool[T]) Put(v T) {
