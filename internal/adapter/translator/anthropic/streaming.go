@@ -14,6 +14,37 @@ import (
 	"github.com/thushan/olla/internal/util"
 )
 
+// sseDeltaEvent is the hot-path content_block_delta envelope.
+// Field order is chosen for struct packing (interface{} + string + int fits without
+// padding on amd64). JSON tag order (delta, index, type) differs from field
+// declaration order — clients parse JSON by key, not position, so this is safe.
+type sseDeltaEvent struct {
+	Delta interface{} `json:"delta"` // sseTextDelta | sseThinkingDelta | sseInputJSONDelta
+	Type  string      `json:"type"`
+	Index int         `json:"index"`
+}
+
+// sseTextDelta is the delta payload for text_delta events.
+// Field order matches alphabetical JSON tag order (text < type).
+type sseTextDelta struct {
+	Text string `json:"text"`
+	Type string `json:"type"`
+}
+
+// sseThinkingDelta is the delta payload for thinking_delta events.
+// Field order matches alphabetical JSON tag order (thinking < type).
+type sseThinkingDelta struct {
+	Thinking string `json:"thinking"`
+	Type     string `json:"type"`
+}
+
+// sseInputJSONDelta is the delta payload for input_json_delta events.
+// Field order matches alphabetical JSON tag order (partial_json < type).
+type sseInputJSONDelta struct {
+	PartialJSON string `json:"partial_json"`
+	Type        string `json:"type"`
+}
+
 // errInterleavedToolArguments signals that args arrived for a tool block that was
 // already stopped and closed on the wire. Corrupt tool input is worse than a failed
 // stream — the client can retry a clean failure, but cannot recover silent data loss.
@@ -262,14 +293,11 @@ func (t *Translator) handleContentDelta(content string, state *StreamingState, w
 		}
 	}
 
-	// send delta event for each chunk
-	if err := t.writeEvent(w, "content_block_delta", map[string]interface{}{
-		"type":  "content_block_delta",
-		"index": state.currentIndex,
-		"delta": map[string]interface{}{
-			"type": "text_delta",
-			"text": content,
-		},
+	// send delta event for each chunk — typed struct avoids a per-chunk map allocation
+	if err := t.writeEvent(w, "content_block_delta", sseDeltaEvent{
+		Delta: sseTextDelta{Text: content, Type: "text_delta"},
+		Index: state.currentIndex,
+		Type:  "content_block_delta",
 	}); err != nil {
 		return err
 	}
@@ -322,13 +350,11 @@ func (t *Translator) handleReasoningDelta(reasoning string, state *StreamingStat
 		}
 	}
 
-	if err := t.writeEvent(w, "content_block_delta", map[string]interface{}{
-		"type":  "content_block_delta",
-		"index": state.currentIndex,
-		"delta": map[string]interface{}{
-			"type":     "thinking_delta",
-			"thinking": reasoning,
-		},
+	// typed struct avoids a per-chunk map allocation on the thinking_delta hot path
+	if err := t.writeEvent(w, "content_block_delta", sseDeltaEvent{
+		Delta: sseThinkingDelta{Thinking: reasoning, Type: "thinking_delta"},
+		Index: state.currentIndex,
+		Type:  "content_block_delta",
 	}); err != nil {
 		return err
 	}
@@ -452,13 +478,10 @@ func (t *Translator) initializeToolBlock(id, name string, toolIndex int, state *
 	// Without this the pre-init buffer is silently discarded on the wire.
 	if buf, exists := state.toolCallBuffers[toolIndex]; exists && buf.Len() > 0 {
 		buffered := buf.String()
-		if err := t.writeEvent(w, "content_block_delta", map[string]interface{}{
-			"type":  "content_block_delta",
-			"index": state.currentIndex,
-			"delta": map[string]interface{}{
-				"type":         "input_json_delta",
-				"partial_json": buffered,
-			},
+		if err := t.writeEvent(w, "content_block_delta", sseDeltaEvent{
+			Delta: sseInputJSONDelta{PartialJSON: buffered, Type: "input_json_delta"},
+			Index: state.currentIndex,
+			Type:  "content_block_delta",
 		}); err != nil {
 			return err
 		}
@@ -504,13 +527,11 @@ func (t *Translator) sendToolArgumentsDelta(args string, toolIndex int, state *S
 		return errInterleavedToolArguments
 	}
 
-	if err := t.writeEvent(w, "content_block_delta", map[string]interface{}{
-		"type":  "content_block_delta",
-		"index": blockIndex,
-		"delta": map[string]interface{}{
-			"type":         "input_json_delta",
-			"partial_json": args,
-		},
+	// typed struct avoids a per-chunk map allocation on the input_json_delta hot path
+	if err := t.writeEvent(w, "content_block_delta", sseDeltaEvent{
+		Delta: sseInputJSONDelta{PartialJSON: args, Type: "input_json_delta"},
+		Index: blockIndex,
+		Type:  "content_block_delta",
 	}); err != nil {
 		return err
 	}
@@ -690,16 +711,44 @@ func (t *Translator) createMessageStart(state *StreamingState) map[string]interf
 	}
 }
 
-// write sse event: event: <name>\ndata: <json>\n\n
+// writeEvent serialises data as a Server-Sent Events frame and writes it to w.
+//
+// Uses the translator's buffer pool to avoid a heap allocation per event.
+// The SSE frame format is: "event: <name>\ndata: <json>\n\n".
+// The pooled buffer is reset and returned before this function returns, so
+// there is no aliasing risk — w receives a copy via its own internal write path.
 func (t *Translator) writeEvent(w http.ResponseWriter, event string, data interface{}) error {
-	dataJSON, err := json.Marshal(data)
-	if err != nil {
+	buf := t.bufferPool.Get()
+	// Encode JSON directly into the pooled buffer, avoiding a separate []byte allocation.
+	enc := json.NewEncoder(buf)
+	if err := enc.Encode(data); err != nil {
+		t.bufferPool.Put(buf)
 		return fmt.Errorf("failed to marshal event data: %w", err)
 	}
-
-	if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, dataJSON); err != nil {
-		return fmt.Errorf("failed to write event: %w", err)
+	// json.Encoder.Encode appends a trailing newline; trim it so our framing is exact.
+	dataJSON := buf.Bytes()
+	if len(dataJSON) > 0 && dataJSON[len(dataJSON)-1] == '\n' {
+		dataJSON = dataJSON[:len(dataJSON)-1]
 	}
 
+	// Write the SSE frame in three direct writes — cheaper than fmt.Fprintf's
+	// format string parsing and avoids a string concatenation allocation.
+	var writeErr error
+	if _, writeErr = io.WriteString(w, "event: "); writeErr == nil {
+		if _, writeErr = io.WriteString(w, event); writeErr == nil {
+			if _, writeErr = io.WriteString(w, "\ndata: "); writeErr == nil {
+				if _, writeErr = w.Write(dataJSON); writeErr == nil {
+					_, writeErr = io.WriteString(w, "\n\n")
+				}
+			}
+		}
+	}
+
+	buf.Reset()
+	t.bufferPool.Put(buf)
+
+	if writeErr != nil {
+		return fmt.Errorf("failed to write event: %w", writeErr)
+	}
 	return nil
 }
