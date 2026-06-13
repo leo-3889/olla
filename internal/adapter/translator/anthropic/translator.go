@@ -150,6 +150,14 @@ func (t *Translator) WriteError(w http.ResponseWriter, err error, statusCode int
 		},
 	}
 
+	// Best-effort: propagate the Olla request ID into the Anthropic error envelope.
+	// SDKs read the request-id response header and the top-level request_id body field
+	// for correlation. Only set when the header was already written by the handler.
+	if reqID := w.Header().Get(constants.HeaderXOllaRequestID); reqID != "" {
+		w.Header().Set("request-id", reqID)
+		errorResp["request_id"] = reqID
+	}
+
 	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 	w.WriteHeader(statusCode)
 

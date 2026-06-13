@@ -254,3 +254,48 @@ func TestWriteError_413RequestTooLarge(t *testing.T) {
 		"413 must map to request_too_large per the Anthropic error taxonomy")
 	assert.NotEmpty(t, errObj["message"])
 }
+
+// TestWriteError_RequestIDPresent verifies that when X-Olla-Request-ID is already set on
+// the response, WriteError copies it to the request-id response header and to the top-level
+// request_id field of the error body. Anthropic SDKs read both for correlation.
+func TestWriteError_RequestIDPresent(t *testing.T) {
+	t.Parallel()
+
+	trans := mustNewTranslator(createTestLogger(), createTestConfig())
+	rec := httptest.NewRecorder()
+
+	const reqID = "olla-req-abc123"
+	rec.Header().Set(constants.HeaderXOllaRequestID, reqID)
+
+	trans.WriteError(rec, errors.New("something failed"), http.StatusInternalServerError)
+
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
+
+	// request-id response header must be set
+	assert.Equal(t, reqID, rec.Header().Get("request-id"))
+
+	// request_id must appear as a top-level field in the JSON body
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, reqID, body["request_id"],
+		"request_id top-level field must match the Olla request ID header")
+}
+
+// TestWriteError_RequestIDAbsent verifies that when X-Olla-Request-ID is not set,
+// WriteError does not fabricate a request_id and does not set the request-id header.
+func TestWriteError_RequestIDAbsent(t *testing.T) {
+	t.Parallel()
+
+	trans := mustNewTranslator(createTestLogger(), createTestConfig())
+	rec := httptest.NewRecorder()
+
+	// Do NOT set X-Olla-Request-ID.
+	trans.WriteError(rec, errors.New("something failed"), http.StatusBadRequest)
+
+	assert.Empty(t, rec.Header().Get("request-id"), "request-id header must not be set when source header is absent")
+
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	_, hasRequestID := body["request_id"]
+	assert.False(t, hasRequestID, "request_id must not appear in body when source header is absent")
+}
