@@ -153,12 +153,29 @@ func (s *ProxyServiceWrapper) Start(ctx context.Context) error {
 	return nil
 }
 
+// cleanupable is an optional interface implemented by proxy engines that own
+// background goroutines or connection pools that must be released on shutdown.
+// Using a type-assert rather than embedding in ports.ProxyService keeps the
+// interface minimal and avoids forcing all current and future implementations
+// to add a no-op method.
+type cleanupable interface {
+	Cleanup()
+}
+
 // Stop gracefully shuts down the proxy service
 func (s *ProxyServiceWrapper) Stop(ctx context.Context) error {
 	s.logger.Info(" Stopping proxy service")
 
 	if s.stickyWrapper != nil {
 		s.stickyWrapper.Stop()
+	}
+
+	// Call Cleanup on the proxy engine if it supports it. This stops the
+	// cleanupLoop goroutine and releases per-endpoint connection pools,
+	// preventing a goroutine/resource leak if the engine is ever rebuilt
+	// in-process.
+	if c, ok := s.proxyService.(cleanupable); ok {
+		c.Cleanup()
 	}
 
 	defer func() {

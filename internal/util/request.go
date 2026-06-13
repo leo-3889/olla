@@ -36,6 +36,16 @@ func GetClientIP(r *http.Request, trustProxyHeaders bool, trustedCIDRs []*net.IP
 		return r.RemoteAddr
 	}
 
+	// With no trusted CIDRs configured, every source is implicitly untrusted and
+	// getSourceIP would allocate a net.IP only to immediately discard it. Skip the
+	// parse and fall through to RemoteAddr directly.
+	if len(trustedCIDRs) == 0 {
+		if ip, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+			return ip
+		}
+		return r.RemoteAddr
+	}
+
 	sourceIP := getSourceIP(r)
 	if sourceIP == nil || !isIPInTrustedCIDRs(sourceIP, trustedCIDRs) {
 		if ip, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {

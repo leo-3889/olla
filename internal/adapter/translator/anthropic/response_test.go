@@ -16,7 +16,7 @@ func createResponseTestLogger() logger.StyledLogger {
 }
 
 func TestTransformResponse_SimpleText(t *testing.T) {
-	translator := NewTranslator(createResponseTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createResponseTestLogger(), createTestConfig())
 
 	openaiResp := map[string]interface{}{
 		"id":    "chatcmpl-123",
@@ -57,7 +57,7 @@ func TestTransformResponse_SimpleText(t *testing.T) {
 }
 
 func TestTransformResponse_WithToolCalls(t *testing.T) {
-	translator := NewTranslator(createResponseTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createResponseTestLogger(), createTestConfig())
 
 	openaiResp := map[string]interface{}{
 		"id":    "chatcmpl-123",
@@ -109,7 +109,7 @@ func TestTransformResponse_WithToolCalls(t *testing.T) {
 }
 
 func TestTransformResponse_MultipleToolCalls(t *testing.T) {
-	translator := NewTranslator(createResponseTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createResponseTestLogger(), createTestConfig())
 
 	openaiResp := map[string]interface{}{
 		"choices": []interface{}{
@@ -158,7 +158,7 @@ func TestTransformResponse_MultipleToolCalls(t *testing.T) {
 }
 
 func TestTransformResponse_EmptyResponse(t *testing.T) {
-	translator := NewTranslator(createResponseTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createResponseTestLogger(), createTestConfig())
 
 	t.Run("empty_content", func(t *testing.T) {
 		// OpenAI response with empty content string
@@ -230,7 +230,7 @@ func TestTransformResponse_EmptyResponse(t *testing.T) {
 }
 
 func TestTransformResponse_MissingUsage(t *testing.T) {
-	translator := NewTranslator(createResponseTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createResponseTestLogger(), createTestConfig())
 
 	t.Run("usage_not_present", func(t *testing.T) {
 		openaiResp := map[string]interface{}{
@@ -289,7 +289,7 @@ func TestTransformResponse_MissingUsage(t *testing.T) {
 }
 
 func TestTransformResponse_InvalidToolArguments(t *testing.T) {
-	translator := NewTranslator(createResponseTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createResponseTestLogger(), createTestConfig())
 
 	t.Run("malformed_json", func(t *testing.T) {
 		openaiResp := map[string]interface{}{
@@ -376,7 +376,7 @@ func TestTransformResponse_InvalidToolArguments(t *testing.T) {
 }
 
 func TestTransformResponse_OnlyToolCalls(t *testing.T) {
-	translator := NewTranslator(createResponseTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createResponseTestLogger(), createTestConfig())
 
 	openaiResp := map[string]interface{}{
 		"id":    "chatcmpl-toolonly",
@@ -423,7 +423,7 @@ func TestTransformResponse_OnlyToolCalls(t *testing.T) {
 }
 
 func TestTransformResponse_FinishReasonMapping(t *testing.T) {
-	translator := NewTranslator(createResponseTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createResponseTestLogger(), createTestConfig())
 
 	t.Run("stop_to_end_turn", func(t *testing.T) {
 		openaiResp := map[string]interface{}{
@@ -562,7 +562,7 @@ func TestTransformResponse_FinishReasonMapping(t *testing.T) {
 }
 
 func TestTransformResponse_MessageIDGeneration(t *testing.T) {
-	translator := NewTranslator(createResponseTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createResponseTestLogger(), createTestConfig())
 
 	t.Run("generates_anthropic_format_id", func(t *testing.T) {
 		openaiResp := map[string]interface{}{
@@ -665,7 +665,7 @@ func TestTransformResponse_MessageIDGeneration(t *testing.T) {
 }
 
 func TestTransformResponse_ComplexToolArguments(t *testing.T) {
-	translator := NewTranslator(createResponseTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createResponseTestLogger(), createTestConfig())
 
 	openaiResp := map[string]interface{}{
 		"id":    "chatcmpl-complex",
@@ -732,7 +732,7 @@ func TestTransformResponse_ComplexToolArguments(t *testing.T) {
 }
 
 func TestTransformResponse_InvalidFormat(t *testing.T) {
-	translator := NewTranslator(createResponseTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createResponseTestLogger(), createTestConfig())
 
 	t.Run("missing_choices", func(t *testing.T) {
 		openaiResp := map[string]interface{}{
@@ -792,7 +792,7 @@ func TestTransformResponse_InvalidFormat(t *testing.T) {
 }
 
 func TestTransformResponse_StopSequenceHandling(t *testing.T) {
-	translator := NewTranslator(createResponseTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createResponseTestLogger(), createTestConfig())
 
 	t.Run("with_stop_sequence", func(t *testing.T) {
 		openaiResp := map[string]interface{}{
@@ -821,7 +821,7 @@ func TestTransformResponse_StopSequenceHandling(t *testing.T) {
 }
 
 func TestTransformResponse_ModelFieldPreservation(t *testing.T) {
-	translator := NewTranslator(createResponseTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createResponseTestLogger(), createTestConfig())
 
 	testCases := []struct {
 		name      string
@@ -870,7 +870,7 @@ func TestTransformResponse_ModelFieldPreservation(t *testing.T) {
 }
 
 func TestTransformResponse_TypeAndRoleFields(t *testing.T) {
-	translator := NewTranslator(createResponseTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createResponseTestLogger(), createTestConfig())
 
 	openaiResp := map[string]interface{}{
 		"id":    "chatcmpl-fields",
@@ -899,7 +899,7 @@ func TestTransformResponse_TypeAndRoleFields(t *testing.T) {
 }
 
 func BenchmarkTransformResponse_Simple(b *testing.B) {
-	tr := NewTranslator(createResponseTestLogger(), createTestConfig())
+	tr := mustNewTranslator(createResponseTestLogger(), createTestConfig())
 	openaiResp := map[string]interface{}{
 		"id": "chatcmpl-123", "model": "claude-3-5-sonnet-20241022",
 		"choices": []interface{}{map[string]interface{}{

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/thushan/olla/internal/adapter/translator/anthropic"
 	"github.com/thushan/olla/internal/config"
@@ -49,7 +50,10 @@ func TestTranslatorModelsHandler_Success(t *testing.T) {
 		Enabled:        true,
 		MaxMessageSize: 10 << 20, // 10MB
 	}
-	trans := anthropic.NewTranslator(app.logger, testConfig)
+	trans, err := anthropic.NewTranslator(app.logger, testConfig)
+	if err != nil {
+		t.Fatalf("failed to create translator: %v", err)
+	}
 
 	// Create request
 	req := httptest.NewRequest(http.MethodGet, "/olla/anthropic/v1/models", nil)
@@ -81,21 +85,68 @@ func TestTranslatorModelsHandler_Success(t *testing.T) {
 		t.Errorf("expected 2 models, got %d", len(data))
 	}
 
-	// Verify model format matches Anthropic spec
+	// Verify the response carries Anthropic-compliant envelope fields.
+	if _, ok := response["has_more"]; !ok {
+		t.Error("expected has_more field in response envelope")
+	}
+	if _, ok := response["first_id"]; !ok {
+		t.Error("expected first_id field in response envelope")
+	}
+	if _, ok := response["last_id"]; !ok {
+		t.Error("expected last_id field in response envelope")
+	}
+
+	// Verify per-entry shape matches the Anthropic spec wire format.
 	if len(data) > 0 {
 		model := data[0].(map[string]interface{})
-		requiredFields := []string{"id", "name", "created", "description", "type"}
-		for _, field := range requiredFields {
-			if _, ok := model[field]; !ok {
-				t.Errorf("expected field %s in model response", field)
+
+		// "type" must be "model" — the Anthropic SDK uses it as a deserialise discriminator.
+		if modelType, ok := model["type"].(string); !ok || modelType != "model" {
+			t.Errorf("expected type \"model\", got %q", model["type"])
+		}
+
+		// "display_name" replaces "name".
+		if _, ok := model["display_name"]; !ok {
+			t.Error("expected display_name field")
+		}
+		if _, present := model["name"]; present {
+			t.Error("unexpected legacy name field; Anthropic spec uses display_name")
+		}
+
+		// "created_at" must be an RFC3339 string, not a unix int.
+		createdAt, ok := model["created_at"].(string)
+		if !ok {
+			t.Errorf("expected created_at to be a string, got %T", model["created_at"])
+		} else if _, parseErr := time.Parse(time.RFC3339, createdAt); parseErr != nil {
+			t.Errorf("created_at %q is not valid RFC3339: %v", createdAt, parseErr)
+		}
+		if _, present := model["created"]; present {
+			t.Error("unexpected legacy created field; Anthropic spec uses created_at (RFC3339 string)")
+		}
+
+		// created_at must be stable across repeated calls — it must not re-evaluate
+		// time.Now() on every request, which would make caching and idempotency impossible.
+		req2 := httptest.NewRequest(http.MethodGet, "/olla/anthropic/v1/models", nil)
+		w2 := httptest.NewRecorder()
+		handler(w2, req2)
+
+		var response2 map[string]interface{}
+		if err2 := json.NewDecoder(w2.Body).Decode(&response2); err2 != nil {
+			t.Fatalf("failed to decode second response: %v", err2)
+		}
+		if data2, ok2 := response2["data"].([]interface{}); ok2 && len(data2) > 0 {
+			model2 := data2[0].(map[string]interface{})
+			createdAt2, ok2 := model2["created_at"].(string)
+			if !ok2 {
+				t.Errorf("expected created_at to be a string on second call, got %T", model2["created_at"])
+			} else if createdAt2 != createdAt {
+				t.Errorf("created_at changed between calls: %q → %q; must be stable", createdAt, createdAt2)
 			}
 		}
 
-		// Verify type is "chat"
-		if modelType, ok := model["type"].(string); ok {
-			if modelType != "chat" {
-				t.Errorf("expected type 'chat', got '%s'", modelType)
-			}
+		// "description" is not in the Anthropic spec.
+		if _, present := model["description"]; present {
+			t.Error("unexpected description field; not in Anthropic spec")
 		}
 	}
 }
@@ -109,7 +160,10 @@ func TestTranslatorModelsHandler_EmptyRegistry(t *testing.T) {
 		Enabled:        true,
 		MaxMessageSize: 10 << 20, // 10MB
 	}
-	trans := anthropic.NewTranslator(app.logger, testConfig)
+	trans, err := anthropic.NewTranslator(app.logger, testConfig)
+	if err != nil {
+		t.Fatalf("failed to create translator: %v", err)
+	}
 
 	// Create request
 	req := httptest.NewRequest(http.MethodGet, "/olla/anthropic/v1/models", nil)
@@ -169,7 +223,10 @@ func TestTranslatorModelsHandler_ResponseFormat(t *testing.T) {
 		Enabled:        true,
 		MaxMessageSize: 10 << 20, // 10MB
 	}
-	trans := anthropic.NewTranslator(app.logger, testConfig)
+	trans, err := anthropic.NewTranslator(app.logger, testConfig)
+	if err != nil {
+		t.Fatalf("failed to create translator: %v", err)
+	}
 
 	// Create request
 	req := httptest.NewRequest(http.MethodGet, "/olla/anthropic/v1/models", nil)
@@ -185,8 +242,7 @@ func TestTranslatorModelsHandler_ResponseFormat(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	// Verify structure matches Python reference
-	// {data: [{id, name, created, description, type}]}
+	// Verify the Anthropic GET /v1/models wire format.
 	data, ok := response["data"].([]interface{})
 	if !ok {
 		t.Fatal("expected data field")
@@ -196,20 +252,39 @@ func TestTranslatorModelsHandler_ResponseFormat(t *testing.T) {
 		t.Fatal("expected at least one model")
 	}
 
+	// Envelope fields.
+	if hasMo, ok := response["has_more"].(bool); !ok || hasMo {
+		t.Errorf("expected has_more to be false, got %v", response["has_more"])
+	}
+	if response["first_id"] == nil {
+		t.Error("expected first_id to be non-null when data is non-empty")
+	}
+	if response["last_id"] == nil {
+		t.Error("expected last_id to be non-null when data is non-empty")
+	}
+
 	model := data[0].(map[string]interface{})
 
-	// Verify model has correct fields
 	if _, ok := model["id"]; !ok {
 		t.Error("expected id field")
 	}
 
-	// Verify created is unix timestamp
-	if created, ok := model["created"].(float64); ok {
-		if created <= 0 {
-			t.Error("expected created to be positive unix timestamp")
-		}
-	} else {
-		t.Error("expected created to be number")
+	// "type" must be "model" per spec.
+	if modelType, ok := model["type"].(string); !ok || modelType != "model" {
+		t.Errorf("expected type \"model\", got %q", model["type"])
+	}
+
+	// "display_name" replaces legacy "name".
+	if _, ok := model["display_name"]; !ok {
+		t.Error("expected display_name field")
+	}
+
+	// "created_at" must be a valid RFC3339 string.
+	createdAt, ok := model["created_at"].(string)
+	if !ok {
+		t.Errorf("expected created_at to be a string, got %T", model["created_at"])
+	} else if _, parseErr := time.Parse(time.RFC3339, createdAt); parseErr != nil {
+		t.Errorf("created_at %q is not valid RFC3339: %v", createdAt, parseErr)
 	}
 }
 

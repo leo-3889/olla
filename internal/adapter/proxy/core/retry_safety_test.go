@@ -58,6 +58,65 @@ var _ net.Error = (*connectionResetError)(nil)
 
 // ---- tests ------------------------------------------------------------------
 
+// TestIsConnectionError verifies the context-cancellation fix: client-side timeouts
+// and cancellations must NOT be classified as connection errors — the endpoint is
+// innocent and must not be penalised or failed-over on an already-expired context.
+func TestIsConnectionError(t *testing.T) {
+	t.Parallel()
+
+	// A genuine net.Error that is NOT a context error.
+	type urlError struct{ msg string }
+	_ = urlError{}
+
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "nil error",
+			err:  nil,
+			want: false,
+		},
+		{
+			name: "context.DeadlineExceeded",
+			err:  context.DeadlineExceeded,
+			want: false,
+		},
+		{
+			name: "context.Canceled",
+			err:  context.Canceled,
+			want: false,
+		},
+		{
+			name: "url.Error wrapping context.DeadlineExceeded",
+			err: &net.OpError{
+				Op:  "dial",
+				Err: context.DeadlineExceeded,
+			},
+			want: false,
+		},
+		{
+			name: "genuine net.Error (connection reset)",
+			err:  &connectionResetError{},
+			want: true,
+		},
+		{
+			name: "generic non-network error",
+			err:  errors.New("something went wrong"),
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := IsConnectionError(tt.err)
+			assert.Equal(t, tt.want, got, "IsConnectionError(%v)", tt.err)
+		})
+	}
+}
+
 // TestIsIdempotent confirms the idempotency predicate matches RFC 9110.
 func TestIsIdempotent(t *testing.T) {
 	t.Parallel()

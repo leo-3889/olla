@@ -290,6 +290,50 @@ func (m *mockStatsCollector) GetEndpointStats() map[string]ports.EndpointStats {
 func (m *mockStatsCollector) GetSecurityStats() ports.SecurityStats            { return ports.SecurityStats{} }
 func (m *mockStatsCollector) GetConnectionStats() map[string]int64             { return nil }
 
+// TestCleanupLoop_SurvivesTick_Panic verifies that a panic inside
+// cleanupUnusedResources does not kill the cleanupLoop goroutine. Before the
+// per-tick inner recover was added, a single panic would permanently stop cleanup.
+func TestCleanupLoop_SurvivesTick_Panic(t *testing.T) {
+	t.Parallel()
+
+	s := &Service{
+		BaseProxyComponents: &core.BaseProxyComponents{
+			Logger: createTestLogger(),
+		},
+		endpointPools:   *xsync.NewMap[string, *connectionPool](),
+		circuitBreakers: *xsync.NewMap[string, *circuitBreaker](),
+		cleanupTicker:   time.NewTicker(20 * time.Millisecond),
+		cleanupStop:     make(chan struct{}),
+	}
+	s.configuration.Store(&Configuration{})
+
+	// Insert a pool whose transport is nil — CloseIdleConnections() will panic
+	// when cleanupUnusedResources tries to close it (staleThreshold check passes
+	// because lastUsed == 0, which is always in the past).
+	s.endpointPools.Store("bad-endpoint", &connectionPool{
+		transport: nil, // nil dereference in CloseIdleConnections
+		lastUsed:  0,   // triggers cleanup immediately
+		healthy:   1,
+	})
+
+	go s.cleanupLoop()
+
+	// Wait for at least two ticks: first panics, second must still fire.
+	time.Sleep(100 * time.Millisecond)
+
+	// Liveness probe: an alive loop is parked in its select and receives this
+	// send (then exits). A dead goroutine never receives it.
+	select {
+	case s.cleanupStop <- struct{}{}:
+		// Expected: loop survived the panic and took the stop signal.
+	case <-time.After(2 * time.Second):
+		t.Fatal("cleanupLoop did not receive stop signal; goroutine died after tick panic")
+	}
+
+	// Shut down cleanly.
+	s.Cleanup()
+}
+
 // TestCleanup_DoubleInvoke verifies that calling Cleanup twice does not panic.
 // Previously, the second call would close an already-closed channel.
 func TestCleanup_DoubleInvoke(t *testing.T) {

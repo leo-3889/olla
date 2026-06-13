@@ -25,19 +25,20 @@ type Translator struct {
 	maxMessageSize int64 // derived from config
 }
 
-// NewTranslator creates a new Anthropic translator instance
-// Uses a buffer pool to reduce GC pressure during high-throughput operations
-// Accepts configuration for request size limits and streaming behaviour
-func NewTranslator(log logger.StyledLogger, cfg config.AnthropicTranslatorConfig) *Translator {
-	// Create buffer pool with 4KB initial capacity
-	// This size fits most chat completions without reallocation
+// NewTranslator creates a new Anthropic translator instance.
+// Uses a buffer pool to reduce GC pressure during high-throughput operations.
+// Accepts configuration for request size limits and streaming behaviour.
+// Returns an error if the buffer pool cannot be constructed (unreachable in
+// production because bytes.NewBuffer never returns nil, but exposed here to
+// honour the no-panic policy).
+func NewTranslator(log logger.StyledLogger, cfg config.AnthropicTranslatorConfig) (*Translator, error) {
+	// Create buffer pool with 4KB initial capacity.
+	// This size fits most chat completions without reallocation.
 	bufferPool, err := pool.NewLitePool(func() *bytes.Buffer {
 		return bytes.NewBuffer(make([]byte, 0, 4096))
 	})
 	if err != nil {
-		// This should never happen as the constructor is validated
-		log.Error("Failed to create buffer pool", "error", err)
-		panic("translator: failed to initialise buffer pool")
+		return nil, fmt.Errorf("translator: failed to initialise buffer pool: %w", err)
 	}
 
 	// Apply defaults if needed
@@ -61,7 +62,7 @@ func NewTranslator(log logger.StyledLogger, cfg config.AnthropicTranslatorConfig
 		config:         cfg,
 		maxMessageSize: maxSize,
 		inspector:      insp,
-	}
+	}, nil
 }
 
 // Name returns the translator identifier
@@ -117,7 +118,10 @@ func (t *Translator) WriteError(w http.ResponseWriter, err error, statusCode int
 		"error", err.Error(),
 		"status", statusCode)
 
-	// Map HTTP status codes to Anthropic error types
+	// Map HTTP status codes to Anthropic error types.
+	// overloaded_error is reserved for Anthropic's own infrastructure being overloaded;
+	// a generic backend 503 is an api_error per litellm and bifrost conventions.
+	// timeout_error maps to 504/408 as defined by litellm and the Anthropic error taxonomy.
 	errorType := "api_error"
 	switch statusCode {
 	case http.StatusBadRequest:
@@ -128,10 +132,13 @@ func (t *Translator) WriteError(w http.ResponseWriter, err error, statusCode int
 		errorType = "permission_error"
 	case http.StatusNotFound:
 		errorType = "not_found_error"
+	case http.StatusRequestEntityTooLarge:
+		// Anthropic error taxonomy: oversized request body maps to request_too_large.
+		errorType = "request_too_large"
 	case http.StatusTooManyRequests:
 		errorType = "rate_limit_error"
-	case http.StatusServiceUnavailable:
-		errorType = "overloaded_error"
+	case http.StatusRequestTimeout, http.StatusGatewayTimeout:
+		errorType = "timeout_error"
 	}
 
 	// Anthropic error format
@@ -141,6 +148,14 @@ func (t *Translator) WriteError(w http.ResponseWriter, err error, statusCode int
 			"type":    errorType,
 			"message": err.Error(),
 		},
+	}
+
+	// Best-effort: propagate the Olla request ID into the Anthropic error envelope.
+	// SDKs read the request-id response header and the top-level request_id body field
+	// for correlation. Only set when the header was already written by the handler.
+	if reqID := w.Header().Get(constants.HeaderXOllaRequestID); reqID != "" {
+		w.Header().Set("request-id", reqID)
+		errorResp["request_id"] = reqID
 	}
 
 	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)

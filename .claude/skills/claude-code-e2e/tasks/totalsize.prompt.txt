@@ -1,0 +1,1 @@
+Add a method `func (t *Summary) TotalSize() uint64` to pkg/analysis/summary.go that returns the sum of the Size field of every item the Summary holds. Then add a test in pkg/analysis/summary_test.go, following the existing style in that file, that verifies the returned total. Run `go test ./pkg/analysis/...` and make sure it passes before you finish.

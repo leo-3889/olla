@@ -310,6 +310,29 @@ func (srv *mockServer) streamOpenAIChat(w http.ResponseWriter, r *http.Request, 
 	}
 	data, _ := json.Marshal(final)
 	writeSSEData(w, data)
+	_ = rc.Flush()
+
+	// Terminal usage chunk in the include_usage shape: choices:[] with populated usage.
+	// Matches the non-stream path token numbers so streaming and non-streaming agree.
+	// This exercises the choices:[] usage-capture path in the translation layer and
+	// gives the translator a real output_tokens value instead of falling back to the
+	// chars/4 estimate.
+	usageChunk := map[string]any{
+		"id":      id,
+		"object":  "chat.completion.chunk",
+		"created": now,
+		"model":   model,
+		"choices": []map[string]any{},
+		"usage": map[string]any{
+			"prompt_tokens":     10,
+			"completion_tokens": 20,
+			"total_tokens":      30,
+		},
+	}
+	usageData, _ := json.Marshal(usageChunk)
+	writeSSEData(w, usageData)
+	_ = rc.Flush()
+
 	_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
 	_ = rc.Flush()
 }

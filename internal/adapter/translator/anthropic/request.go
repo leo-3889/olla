@@ -158,10 +158,12 @@ func (t *Translator) convertSingleMessage(msg AnthropicMessage) ([]map[string]in
 	// user msgs can have text + tool results, assistant msgs have text + tool uses
 	if msg.Role == "user" {
 		userMsg, toolMsgs := t.convertUserMessage(contentBlocks)
+		// tool messages must immediately follow the assistant tool_calls message;
+		// OpenAI-compatible backends reject any other role between them.
+		result = append(result, toolMsgs...)
 		if userMsg != nil {
 			result = append(result, userMsg)
 		}
-		result = append(result, toolMsgs...)
 	} else if msg.Role == "assistant" {
 		assistantMsg := t.convertAssistantMessage(contentBlocks)
 		if assistantMsg != nil {
@@ -201,6 +203,15 @@ func (t *Translator) convertUserMessage(blocks []interface{}) (map[string]interf
 				if contentBytes, err := json.Marshal(contentObj); err == nil {
 					content = string(contentBytes)
 				}
+			}
+
+			// OpenAI tool messages have no is_error field; encode the signal in the
+			// content string so the model can distinguish error results on the way back.
+			// Skip the prefix if the content already starts with "Error" to avoid
+			// double-prefixing when re-translating an already-annotated result.
+			isError, _ := blockMap["is_error"].(bool)
+			if isError && !strings.HasPrefix(strings.ToLower(content), "error") {
+				content = "Error: " + content
 			}
 
 			toolResults = append(toolResults, map[string]interface{}{

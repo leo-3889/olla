@@ -128,14 +128,15 @@ func (c *HTTPHealthChecker) StopChecking(ctx context.Context) error {
 }
 
 func (c *HTTPHealthChecker) healthCheckLoop(ctx context.Context) {
+	// Function-level safety net: if something truly unrecoverable escapes the
+	// per-tick inner recover, mark isRunning false so StartChecking can restart.
 	defer func() {
 		if c.ticker != nil {
 			c.ticker.Stop()
 		}
-		// Panic recovery for health check loop
 		if r := recover(); r != nil {
-			c.logger.Error("Health check loop panic recovered", "panic", r)
-			// Could restart the loop here if needed
+			c.logger.Error("Health check loop exited unexpectedly", "panic", r)
+			c.isRunning.Store(false)
 		}
 	}()
 
@@ -148,10 +149,23 @@ func (c *HTTPHealthChecker) healthCheckLoop(ctx context.Context) {
 			c.logger.Debug("Health check loop stopping due to stop signal")
 			return
 		case <-c.ticker.C:
-			// Use a separate context for health checks to avoid cancelling mid-check
-			checkCtx, cancel := context.WithTimeout(context.Background(), DefaultHealthCheckInterval/2)
-			c.performHealthChecks(checkCtx)
-			cancel()
+			// Wrap per-tick work in its own recover so a panic in
+			// performHealthChecks does not kill the goroutine - the loop
+			// continues and the next tick fires normally.
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						c.logger.Error("Health check tick panic recovered, loop continues",
+							"panic", r)
+					}
+				}()
+				// Derive from the loop's own context so in-flight checks are
+				// cancelled when the checker shuts down, rather than running
+				// to their full timeout against an already-stopped service.
+				checkCtx, cancel := context.WithTimeout(ctx, DefaultHealthCheckInterval/2)
+				defer cancel()
+				c.performHealthChecks(checkCtx)
+			}()
 		}
 	}
 }
@@ -305,7 +319,7 @@ func (c *HTTPHealthChecker) checkEndpoint(ctx context.Context, endpoint *domain.
 
 	// Trigger unhealthy callback only when an endpoint becomes non-routable from a
 	// routable state. Busy and Warming are still routable, so a Healthy→Busy transition
-	// must not evict sticky sessions — that would defeat KV-cache affinity entirely.
+	// must not evict sticky sessions - that would defeat KV-cache affinity entirely.
 	// Unknown→Unhealthy is intentionally excluded: nothing could have been pinned to an
 	// endpoint that was never routable, so there is nothing to purge.
 	if statusChanged && !newStatus.IsRoutable() && oldStatus.IsRoutable() {

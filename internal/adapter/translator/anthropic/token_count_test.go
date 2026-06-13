@@ -7,10 +7,13 @@ import (
 	"io"
 	"net/http"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCountTokens(t *testing.T) {
-	trans := NewTranslator(createTestLogger(), createTestConfig())
+	trans := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	tests := []struct {
 		name          string
@@ -223,16 +226,6 @@ func TestCountTokens(t *testing.T) {
 				t.Fatal("Expected non-nil response")
 			}
 
-			// Check output tokens is always 0
-			if resp.OutputTokens != 0 {
-				t.Errorf("Expected OutputTokens=0, got %d", resp.OutputTokens)
-			}
-
-			// Check input tokens matches total tokens
-			if resp.InputTokens != resp.TotalTokens {
-				t.Errorf("Expected InputTokens=%d to match TotalTokens=%d", resp.InputTokens, resp.TotalTokens)
-			}
-
 			// Verify token count
 			if tt.expectedExact > 0 {
 				if resp.InputTokens != tt.expectedExact {
@@ -245,14 +238,13 @@ func TestCountTokens(t *testing.T) {
 				}
 			}
 
-			t.Logf("Token count: %d (input=%d, output=%d, total=%d)",
-				resp.InputTokens, resp.InputTokens, resp.OutputTokens, resp.TotalTokens)
+			t.Logf("Token count: input=%d", resp.InputTokens)
 		})
 	}
 }
 
 func TestCountTokensWithRawJSON(t *testing.T) {
-	trans := NewTranslator(createTestLogger(), createTestConfig())
+	trans := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	tests := []struct {
 		name          string
@@ -322,7 +314,7 @@ func TestCountTokensWithRawJSON(t *testing.T) {
 }
 
 func TestCountTokensErrors(t *testing.T) {
-	trans := NewTranslator(createTestLogger(), createTestConfig())
+	trans := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	tests := []struct {
 		name        string
@@ -380,7 +372,7 @@ func TestCountTokensErrors(t *testing.T) {
 // TestCountTokensMatchesPythonReference verifies our implementation matches
 // the Python reference from anthropic-proxy.py
 func TestCountTokensMatchesPythonReference(t *testing.T) {
-	trans := NewTranslator(createTestLogger(), createTestConfig())
+	trans := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	// This test case directly mirrors the Python implementation logic
 	testCase := AnthropicRequest{
@@ -429,8 +421,95 @@ func TestCountTokensMatchesPythonReference(t *testing.T) {
 		t.Errorf("Expected %d tokens to match Python reference, got %d", expectedTokens, resp.InputTokens)
 	}
 }
+
+// TestCountTokensWireResponse verifies that SerialiseCountTokens emits only
+// {"input_tokens":N} — no output_tokens or total_tokens fields.
+// Anthropic's spec, vLLM, lmdeploy, bifrost, and litellm all define this shape.
+func TestCountTokensWireResponse(t *testing.T) {
+	t.Parallel()
+
+	trans := mustNewTranslator(createTestLogger(), createTestConfig())
+
+	reqBody := []byte(`{
+		"model": "claude-3-5-sonnet-20241022",
+		"max_tokens": 1024,
+		"messages": [{"role": "user", "content": "Hello world"}]
+	}`)
+
+	req, err := http.NewRequest("POST", "/v1/messages/count_tokens", bytes.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+
+	resp, err := trans.CountTokens(context.Background(), req)
+	if err != nil {
+		t.Fatalf("CountTokens failed: %v", err)
+	}
+	if resp.InputTokens == 0 {
+		t.Fatal("expected non-zero InputTokens")
+	}
+
+	wireBytes, err := trans.SerialiseCountTokens(resp)
+	if err != nil {
+		t.Fatalf("SerialiseCountTokens failed: %v", err)
+	}
+
+	var wireMap map[string]interface{}
+	if err := json.Unmarshal(wireBytes, &wireMap); err != nil {
+		t.Fatalf("wire response is not valid JSON: %v", err)
+	}
+
+	// Must contain input_tokens
+	if _, ok := wireMap["input_tokens"]; !ok {
+		t.Error("wire response missing input_tokens field")
+	}
+
+	// Must NOT contain output_tokens or total_tokens
+	if _, ok := wireMap["output_tokens"]; ok {
+		t.Error("wire response must not contain output_tokens (not part of Anthropic count_tokens spec)")
+	}
+	if _, ok := wireMap["total_tokens"]; ok {
+		t.Error("wire response must not contain total_tokens (not part of Anthropic count_tokens spec)")
+	}
+
+	// Must contain exactly one field
+	if len(wireMap) != 1 {
+		t.Errorf("wire response must have exactly 1 field, got %d: %v", len(wireMap), wireMap)
+	}
+}
+
+// TestEstimateInputTokens verifies the streaming token seeding path.
+func TestEstimateInputTokens(t *testing.T) {
+	t.Parallel()
+
+	trans := mustNewTranslator(createTestLogger(), createTestConfig())
+
+	body := []byte(`{
+		"model": "claude-3-5-sonnet-20241022",
+		"max_tokens": 1024,
+		"messages": [{"role": "user", "content": "Hello, this is a test message for token estimation."}]
+	}`)
+
+	estimate := trans.EstimateInputTokens(body)
+	if estimate <= 0 {
+		t.Errorf("expected positive token estimate for non-empty prompt, got %d", estimate)
+	}
+}
+
+// TestEstimateInputTokens_InvalidBody returns 0 without panicking on malformed input.
+func TestEstimateInputTokens_InvalidBody(t *testing.T) {
+	t.Parallel()
+
+	trans := mustNewTranslator(createTestLogger(), createTestConfig())
+
+	estimate := trans.EstimateInputTokens([]byte(`{not json`))
+	if estimate != 0 {
+		t.Errorf("expected 0 for invalid body, got %d", estimate)
+	}
+}
+
 func BenchmarkCountTokens(b *testing.B) {
-	trans := NewTranslator(createTestLogger(), createTestConfig())
+	trans := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	reqBody := []byte(`{
 		"model": "claude-3-5-sonnet-20241022",
@@ -447,8 +526,86 @@ func BenchmarkCountTokens(b *testing.B) {
 	}
 }
 
+// TestEstimateInputTokens_WithTools verifies that tool definitions are included in the
+// character estimate. Claude Code sends large tool schemas (10-20k tokens each), so
+// omitting them causes a large systematic undercount.
+func TestEstimateInputTokens_WithTools(t *testing.T) {
+	t.Parallel()
+
+	baseReq := AnthropicRequest{
+		Model:     "claude-3-5-sonnet-20241022",
+		MaxTokens: 1024,
+		Messages: []AnthropicMessage{
+			{Role: "user", Content: "What is the weather?"},
+		},
+	}
+
+	reqWithTools := baseReq
+	reqWithTools.Tools = []AnthropicTool{
+		{
+			Name:        "get_weather",
+			Description: "Retrieves current weather for a given location.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"location": map[string]interface{}{
+						"type":        "string",
+						"description": "City and state, e.g. Sydney, NSW",
+					},
+				},
+				"required": []string{"location"},
+			},
+		},
+	}
+
+	baseCount := estimateTokensFromRequest(&baseReq)
+	withToolsCount := estimateTokensFromRequest(&reqWithTools)
+
+	assert.Greater(t, withToolsCount, baseCount,
+		"request with tools must yield a larger token estimate than the same request without")
+}
+
+// TestEstimateInputTokens_ToolOnlyDeltaMatchesCharsDiv4 verifies that the tool schema
+// contribution to the estimate is roughly len(schema JSON) / 4.
+func TestEstimateInputTokens_ToolOnlyDeltaMatchesCharsDiv4(t *testing.T) {
+	t.Parallel()
+
+	schema := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"query": map[string]interface{}{"type": "string"},
+		},
+	}
+	tool := AnthropicTool{
+		Name:        "search",
+		Description: "Search the web",
+		InputSchema: schema,
+	}
+
+	// Manually compute expected char count for the tool.
+	schemaJSON, err := json.Marshal(schema)
+	require.NoError(t, err)
+	expectedChars := len(tool.Name) + len(tool.Description) + len(schemaJSON)
+	expectedTokens := expectedChars / 4
+
+	got := countToolDefinitionChars(&tool)
+	assert.Equal(t, expectedChars, got, "countToolDefinitionChars must match name+description+schema len")
+
+	// estimateTokensFromRequest for a tools-only request (empty messages, single tool)
+	// must be at least expectedTokens.
+	req := AnthropicRequest{
+		Model:     "test",
+		MaxTokens: 1,
+		Messages:  []AnthropicMessage{{Role: "user", Content: "hi"}},
+		Tools:     []AnthropicTool{tool},
+	}
+	total := estimateTokensFromRequest(&req)
+	assert.GreaterOrEqual(t, total, expectedTokens,
+		"total estimate must be at least the tool's contribution")
+}
+
 func BenchmarkCountTokensLargeRequest(b *testing.B) {
-	trans := NewTranslator(createTestLogger(), createTestConfig())
+	trans := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	// Large request with multiple messages and content blocks
 	messages := make([]map[string]interface{}, 50)

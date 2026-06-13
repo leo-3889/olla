@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/thushan/olla/internal/adapter/translator"
@@ -16,6 +17,7 @@ import (
 	"github.com/thushan/olla/internal/core/domain"
 	"github.com/thushan/olla/internal/core/ports"
 	"github.com/thushan/olla/internal/util"
+	"github.com/tidwall/gjson"
 )
 
 // executePassthroughRequest handles requests that can be forwarded directly to backends
@@ -44,12 +46,16 @@ func (a *Application) executePassthroughRequest(
 		return
 	}
 
-	// The proxy selector chooses the actual endpoint later, so only override the
-	// translator default when every candidate backend agrees on the same native
-	// path. Mixed native-Anthropic backends can require different paths (for
-	// example DMR uses /anthropic/v1/messages while vLLM uses /v1/messages).
-	if targetPath := a.resolvePassthroughTargetPath(endpoints, passthroughReq.TargetPath); targetPath != "" {
-		passthroughReq.TargetPath = targetPath
+	// The proxy selector chooses the actual endpoint later. When capable backends
+	// disagree on their native Anthropic path (e.g. DMR uses /anthropic/v1/messages
+	// while vLLM uses /v1/messages), we restrict to the largest path-compatible
+	// subset so the selected backend and the request path always agree.
+	resolvedPath, filteredEndpoints := a.resolvePassthroughTargetPath(endpoints, passthroughReq.TargetPath)
+	if resolvedPath != "" {
+		passthroughReq.TargetPath = resolvedPath
+	}
+	if len(filteredEndpoints) > 0 {
+		endpoints = filteredEndpoints
 	}
 
 	// Update proxy request details - capture streaming flag for accurate metrics
@@ -94,33 +100,77 @@ func (a *Application) executePassthroughRequest(
 	pr.stats.EndTime = time.Now()
 }
 
-// resolvePassthroughTargetPath returns the native Anthropic path only when every
-// candidate backend agrees on the same one. The proxy selector picks the real
-// endpoint after this runs, so a mixed fleet (e.g. DMR on /anthropic/v1/messages
-// alongside vLLM on /v1/messages) can't be given a single correct path; in that
-// case we keep the translator's neutral default rather than risk a 404 on whichever
-// backend is chosen.
-func (a *Application) resolvePassthroughTargetPath(endpoints []*domain.Endpoint, defaultPath string) string {
+// resolvePassthroughTargetPath resolves the native Anthropic messages path and
+// the endpoint subset that must be used with it.
+//
+// Uniform fleets: all candidates share the same MessagesPath. Returns that path
+// and nil (caller keeps original endpoint list unchanged).
+//
+// Mixed fleets: candidates disagree on their native path (e.g. DMR uses
+// /anthropic/v1/messages while vLLM uses /v1/messages). Restricting the proxy
+// to the full list would cause a 404 on whichever backend is selected but whose
+// path was not used. Instead we return the largest path-compatible subset.
+// Tie-break: prefer the subset whose path equals defaultPath; if no subset
+// matches, use the path whose first endpoint appears earliest in the original
+// endpoints slice. This ensures deterministic selection regardless of map
+// iteration order.
+//
+// If profileLookup is nil or the endpoint list is empty, returns defaultPath and
+// nil so the caller leaves everything unchanged.
+func (a *Application) resolvePassthroughTargetPath(endpoints []*domain.Endpoint, defaultPath string) (string, []*domain.Endpoint) {
 	if a.profileLookup == nil || len(endpoints) == 0 {
-		return defaultPath
+		return defaultPath, nil
 	}
 
-	var resolvedPath string
-	for _, endpoint := range endpoints {
-		support := a.profileLookup.GetAnthropicSupport(endpoint.Type)
-		if support == nil || support.MessagesPath == "" {
-			return defaultPath
+	// Build path→endpoints groups while recording the first-seen index for each
+	// path. Iterating the original slice preserves endpoint order so the
+	// first-seen index is stable across calls.
+	pathGroups := make(map[string][]*domain.Endpoint, len(endpoints))
+	firstSeen := make(map[string]int, len(endpoints)) // path → index of first endpoint in slice
+	for i, ep := range endpoints {
+		support := a.profileLookup.GetAnthropicSupport(ep.Type)
+		path := defaultPath
+		if support != nil && support.MessagesPath != "" {
+			path = support.MessagesPath
 		}
-		if resolvedPath == "" {
-			resolvedPath = support.MessagesPath
-			continue
+		if _, exists := firstSeen[path]; !exists {
+			firstSeen[path] = i
 		}
-		if support.MessagesPath != resolvedPath {
-			return defaultPath
+		pathGroups[path] = append(pathGroups[path], ep)
+	}
+
+	// Uniform fleet: all candidates agree on a single path.
+	if len(pathGroups) == 1 {
+		for path := range pathGroups {
+			// nil filtered list signals "keep original slice" to the caller.
+			return path, nil
 		}
 	}
 
-	return resolvedPath
+	// Mixed fleet: pick the largest subset. Tie-break order:
+	//   1. defaultPath wins (avoids surprising path changes for the majority case).
+	//   2. The path whose first endpoint appears earliest in the original slice
+	//      wins (deterministic, not dependent on map iteration order).
+	var bestPath string
+	var bestCount int
+	bestFirstSeen := -1
+
+	for path, group := range pathGroups {
+		count := len(group)
+		fs := firstSeen[path]
+		switch {
+		case count > bestCount:
+			bestPath, bestCount, bestFirstSeen = path, count, fs
+		case count == bestCount && path == defaultPath:
+			// defaultPath takes priority in a tie regardless of first-seen.
+			bestPath, bestFirstSeen = path, fs
+		case count == bestCount && bestPath != defaultPath && fs < bestFirstSeen:
+			// Neither candidate is defaultPath; earliest first-seen endpoint wins.
+			bestPath, bestFirstSeen = path, fs
+		}
+	}
+
+	return bestPath, pathGroups[bestPath]
 }
 
 // executeTranslationRequest handles the translation path where requests are converted
@@ -177,6 +227,19 @@ func (a *Application) executeTranslationRequest(
 
 	a.logRequestStart(pr, len(endpoints))
 
+	// For streaming requests, seed the context with an estimated input token count
+	// computed from the original (pre-translation) request body. This lets the
+	// streaming translator populate a non-zero input_tokens in message_start, matching
+	// the behaviour of vLLM and lmdeploy which both emit real input_tokens at that point.
+	// The estimate is overwritten by the actual upstream usage when it arrives.
+	if transformedReq.IsStreaming {
+		if estimator, ok := trans.(translator.InputTokenEstimator); ok && len(transformedReq.OriginalBody) > 0 {
+			estimate := estimator.EstimateInputTokens(transformedReq.OriginalBody)
+			ctx = context.WithValue(ctx, constants.ContextInputTokensKey, estimate)
+			r = r.WithContext(ctx)
+		}
+	}
+
 	// Execute proxy with appropriate response handling (streaming vs non-streaming)
 	var proxyErr error
 	if transformedReq.IsStreaming {
@@ -215,13 +278,28 @@ func (a *Application) tryPassthrough(
 
 	// Only pass endpoints whose backend natively supports the wire format.
 	// Mixed deployments (e.g. ollama + vllm) must not block passthrough for
-	// the capable subset — the proxy will route within that filtered list.
+	// the capable subset - the proxy will route within that filtered list.
+	//
+	// Additionally, exclude endpoints that declare a limitation matching a
+	// feature present in this specific request. Token-counting limitations
+	// (e.g. token_counting_404) use different names and are never affected.
+	reqFeatures := detectRequestFeatures(bodyBytes)
 	passthroughEndpoints := make([]*domain.Endpoint, 0, len(endpoints))
 	for _, ep := range endpoints {
 		support := a.profileLookup.GetAnthropicSupport(ep.Type)
-		if support != nil && support.Enabled {
-			passthroughEndpoints = append(passthroughEndpoints, ep)
+		if support == nil || !support.Enabled {
+			continue
 		}
+		if reqFeatures.toolUse && support.HasLimitation(domain.AnthropicLimitationNoToolUse) {
+			continue
+		}
+		if reqFeatures.extendedThinking && support.HasLimitation(domain.AnthropicLimitationNoExtendedThinking) {
+			continue
+		}
+		if reqFeatures.vision && support.HasLimitation(domain.AnthropicLimitationNoVision) {
+			continue
+		}
+		passthroughEndpoints = append(passthroughEndpoints, ep)
 	}
 
 	if !passthroughTrans.CanPassthrough(passthroughEndpoints, a.profileLookup) {
@@ -331,7 +409,7 @@ func (a *Application) translationHandler(trans translator.RequestTranslator) htt
 			return
 		}
 
-		// Passthrough was not used — fall back to full translation.
+		// Passthrough was not used - fall back to full translation.
 		mode := constants.TranslatorModeTranslation
 		fallbackReason := a.resolveTranslationFallback(trans)
 
@@ -369,15 +447,23 @@ func (a *Application) executeTranslatedNonStreamingRequest(
 		return fmt.Errorf("proxy request failed: %w", err)
 	}
 
-	// Parse OpenAI response
+	// Check for backend errors before attempting JSON parse. A reverse proxy or
+	// rate-limiter in front of the backend may return plain-text or HTML on 4xx/5xx,
+	// so parsing first would surface a misleading "failed to parse OpenAI response"
+	// error and lose the upstream status code (e.g. a plain-text 429 must stay 429).
+	if recorder.status >= 400 {
+		// Opportunistic parse: pass the map if the body is valid JSON so the
+		// error formatter can extract a message; pass nil otherwise and let
+		// extractAndLogBackendError fall back to its generic message.
+		var openaiErrResp map[string]interface{}
+		_ = json.Unmarshal(recorder.body.Bytes(), &openaiErrResp)
+		return a.handleNonStreamingBackendError(w, r, recorder, openaiErrResp, pr, trans)
+	}
+
+	// Success path: strict parse - a malformed 200 body is a gateway error.
 	var openaiResp map[string]interface{}
 	if jerr := json.Unmarshal(recorder.body.Bytes(), &openaiResp); jerr != nil {
 		return fmt.Errorf("failed to parse OpenAI response: %w", jerr)
-	}
-
-	// handle backend errors
-	if recorder.status >= 400 {
-		return a.handleNonStreamingBackendError(w, r, recorder, openaiResp, pr, trans)
 	}
 
 	// transform and write successful response
@@ -549,11 +635,20 @@ func (a *Application) executeTranslatedStreamingRequest(
 	pipeReader, pipeWriter := io.Pipe()
 	streamRecorder := newStreamingResponseRecorder(pipeWriter)
 
+	// Wrap the real client ResponseWriter so we can track whether any byte has
+	// actually been committed to the client (status line written or body written).
+	// This is distinct from streamRecorder.started, which only signals that the
+	// backend wrote into the pipe -- bytes may still be in the translator's buffer
+	// at that point, not yet on the wire to the client.
+	cw := newCommittedResponseWriter(w)
+
 	// run proxy in background while translation processes
 	proxyErrChan := a.startProxyGoroutine(ctx, r, endpoints, pr, streamRecorder, pipeWriter)
 
-	// panic recovery prevents goroutine leak, cleanup before re-panic
-	defer a.handleStreamingPanic(pipeReader, pipeWriter, proxyErrChan, pr, trans)
+	// panic recovery prevents goroutine leak; sends a 502 (or SSE error event
+	// if the stream has already started) to the client rather than re-panicking,
+	// which would produce a connection reset with no useful error for the client.
+	defer a.handleStreamingPanic(cw, pipeReader, pipeWriter, proxyErrChan, cw, pr, trans)
 
 	// Wait for headers before inspecting status. The select also handles context
 	// cancellation so we don't block forever if the proxy errors without writing.
@@ -566,18 +661,18 @@ func (a *Application) executeTranslatedStreamingRequest(
 
 	// handle backend errors before starting sse stream
 	if streamRecorder.status >= 400 {
-		a.handleStreamingBackendError(w, r, pipeReader, streamRecorder, proxyErrChan, pr, trans)
+		a.handleStreamingBackendError(cw, r, pipeReader, streamRecorder, proxyErrChan, pr, trans)
 		return nil
 	}
 
 	// copy olla headers before stream starts
-	a.copyOllaHeaders(streamRecorder, w)
-	a.setModelHeaderIfMissing(w, pr.model)
-	// Write sticky headers before the first write to w commits the response.
-	a.setStickyResponseHeadersFromRequest(w, r)
+	a.copyOllaHeaders(streamRecorder, cw)
+	a.setModelHeaderIfMissing(cw, pr.model)
+	// Write sticky headers before the first write to cw commits the response.
+	a.setStickyResponseHeadersFromRequest(cw, r)
 
 	// transform stream (blocks until done) and wait for proxy
-	return a.transformStreamAndWaitForProxy(ctx, pipeReader, w, r, proxyErrChan, trans)
+	return a.transformStreamAndWaitForProxy(ctx, pipeReader, cw, r, proxyErrChan, trans)
 }
 
 // writeStreamingNoEndpointsError writes error when no endpoints are available for streaming
@@ -627,20 +722,31 @@ func (a *Application) startProxyGoroutine(
 	return proxyErrChan
 }
 
-// handleStreamingPanic recovers from panic during streaming to prevent goroutine leak
+// handleStreamingPanic recovers from panic during streaming to prevent goroutine
+// leak and connection resets. Instead of re-panicking (which terminates the
+// connection abruptly and gives the client no useful error), it closes the pipe,
+// drains the error channel, and writes an appropriate error to the client.
+//
+// The committed flag on cw tracks whether any byte has actually been written to
+// the real client ResponseWriter (not just to the backend pipe). When committed,
+// net/http silently ignores a WriteHeader(502), so we emit a spec-valid Anthropic
+// SSE error event instead. When not committed, a plain HTTP 502 with a structured
+// body reaches the client correctly.
 func (a *Application) handleStreamingPanic(
+	w http.ResponseWriter,
 	pipeReader *io.PipeReader,
 	pipeWriter *io.PipeWriter,
 	proxyErrChan chan error,
+	cw *committedResponseWriter,
 	pr *proxyRequest,
 	trans translator.RequestTranslator,
 ) {
 	if r := recover(); r != nil {
-		// Close both ends of the pipe to unblock the goroutine
+		// Close both ends of the pipe to unblock the proxy goroutine.
 		pipeReader.Close()
 		pipeWriter.Close()
 
-		// Drain the error channel to prevent goroutine leak
+		// Drain the buffered error channel to release the proxy goroutine.
 		<-proxyErrChan
 
 		a.logger.Error("Panic during stream transformation",
@@ -648,8 +754,43 @@ func (a *Application) handleStreamingPanic(
 			"translator", trans.Name(),
 			"model", pr.model)
 
-		// Re-panic after cleanup to preserve the panic behavior
-		panic(r)
+		// If anything was already written to the real client, the response is
+		// committed and WriteHeader(502) is a no-op. Emitting a well-formed SSE
+		// error event is the only way to signal the failure without corrupting
+		// the stream with raw JSON.
+		if cw != nil && cw.committed.Load() {
+			a.writeSSEErrorEvent(w, "internal error during stream transformation")
+			return
+		}
+
+		// Nothing reached the client yet - response is uncommitted, so a plain
+		// HTTP 502 with a structured error body reaches the client correctly.
+		if ew, ok := trans.(translator.ErrorWriter); ok {
+			ew.WriteError(w, errors.New("internal error during stream transformation"), http.StatusBadGateway)
+		} else {
+			http.Error(w, "internal error during stream transformation", http.StatusBadGateway)
+		}
+	}
+}
+
+// writeSSEErrorEvent emits a spec-valid Anthropic SSE error event into an
+// already-committed text/event-stream response. This is the only safe way to
+// report a mid-stream failure; a WriteHeader call would be silently ignored by
+// net/http once the response is committed.
+func (a *Application) writeSSEErrorEvent(w http.ResponseWriter, message string) {
+	if w == nil {
+		return
+	}
+	payload := fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":%q}}`, message)
+	// Prefix with \n\n to guarantee a clean event boundary in case the panic
+	// occurred mid-write of a previous event. SSE parsers treat blank lines as
+	// field separators, so extra blank lines are harmless when already at a boundary.
+	sseEvent := fmt.Sprintf("\n\nevent: error\ndata: %s\n\n", payload)
+	_, _ = fmt.Fprint(w, sseEvent)
+	// Flush if the underlying writer supports it, so the client receives
+	// the event immediately rather than waiting for a buffer drain.
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
 	}
 }
 
@@ -818,12 +959,32 @@ func (a *Application) tokenCountHandler(trans translator.RequestTranslator) http
 			return
 		}
 
-		// Write successful response
+		// Serialise before touching the response writer. WriteHeader(200) is a
+		// one-way door - once sent the client sees a 200 even if serialisation
+		// subsequently fails, which results in a truncated or empty body with a
+		// misleading success status.
 		w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
-		w.WriteHeader(http.StatusOK)
 
-		if err := json.NewEncoder(w).Encode(resp); err != nil {
-			a.logger.Error("Failed to encode token count response", "error", err)
+		if serialiser, ok := trans.(translator.TokenCountSerializer); ok {
+			body, serErr := serialiser.SerialiseCountTokens(resp)
+			if serErr != nil {
+				a.logger.Error("Failed to serialise token count response", "error", serErr)
+				if errorWriter, ok := trans.(translator.ErrorWriter); ok {
+					errorWriter.WriteError(w, serErr, http.StatusInternalServerError)
+				} else {
+					http.Error(w, "internal error serialising token count", http.StatusInternalServerError)
+				}
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			if _, wErr := w.Write(body); wErr != nil { //nolint:gosec // body is serialised JSON, not user-controlled data
+				a.logger.Error("Failed to write token count response", "error", wErr)
+			}
+		} else {
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(resp); err != nil {
+				a.logger.Error("Failed to encode token count response", "error", err)
+			}
 		}
 	}
 }
@@ -882,6 +1043,100 @@ func (a *Application) recordTranslatorMetrics(
 	a.statsCollector.RecordTranslatorRequest(event)
 }
 
+// requestFeatures holds which Anthropic features are active in a specific request.
+// Used to decide which capable endpoints are eligible for passthrough.
+type requestFeatures struct {
+	toolUse          bool
+	extendedThinking bool
+	vision           bool
+}
+
+// detectRequestFeatures inspects the raw Anthropic request body with gjson to
+// determine which feature flags are active. It is deliberately cheap: gjson
+// does not allocate a full parse tree, and we only scan the fields we care about.
+//
+// Content blocks can be a plain string (scalar) or an array of typed objects.
+// The vision check handles both: a scalar string never contains image blocks,
+// so we only iterate when content is a JSON array.
+func detectRequestFeatures(body []byte) requestFeatures {
+	if len(body) == 0 {
+		return requestFeatures{}
+	}
+
+	var f requestFeatures
+
+	// Non-empty tools array → tool use is active.
+	if tools := gjson.GetBytes(body, "tools"); tools.IsArray() && len(tools.Array()) > 0 {
+		f.toolUse = true
+	}
+
+	// Presence of top-level "thinking" key → extended thinking is active.
+	if gjson.GetBytes(body, "thinking").Exists() {
+		f.extendedThinking = true
+	}
+
+	// Vision: any message content block with type=="image".
+	// messages.#.content yields the content field of every message.
+	// Each content entry may be a plain string (skip) or an array of blocks.
+	gjson.GetBytes(body, "messages.#.content").ForEach(func(_, contentVal gjson.Result) bool {
+		if !contentVal.IsArray() {
+			// Plain string content - no image blocks possible.
+			return true
+		}
+		contentVal.ForEach(func(_, block gjson.Result) bool {
+			if block.Get("type").Str == "image" {
+				f.vision = true
+				return false // stop iterating blocks
+			}
+			return true
+		})
+		return !f.vision // stop iterating messages once found
+	})
+
+	return f
+}
+
+// committedResponseWriter wraps the real client http.ResponseWriter and sets a
+// committed flag on the first call to Write or WriteHeader. The panic handler
+// reads this flag to decide whether to attempt a plain HTTP 502 (not yet committed)
+// or inject an SSE error event into the already-open stream (committed). Using the
+// real client write as the signal is correct; streamRecorder.started only tracks
+// whether the backend wrote into the pipe, which can be true before any byte has
+// reached the actual client.
+type committedResponseWriter struct {
+	http.ResponseWriter
+	committed atomic.Bool
+}
+
+func newCommittedResponseWriter(w http.ResponseWriter) *committedResponseWriter {
+	return &committedResponseWriter{ResponseWriter: w}
+}
+
+func (c *committedResponseWriter) WriteHeader(statusCode int) {
+	c.committed.Store(true)
+	c.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (c *committedResponseWriter) Write(b []byte) (int, error) {
+	c.committed.Store(true)
+	return c.ResponseWriter.Write(b)
+}
+
+// Flush marks the response as committed (bytes are en route to the client) and
+// forwards the flush to the underlying writer. Without this, http.ResponseController
+// cannot find http.Flusher on the wrapped writer, causing every SSE flush to return
+// "feature not supported" and the translated streaming path to 502.
+func (c *committedResponseWriter) Flush() {
+	c.committed.Store(true)
+	http.NewResponseController(c.ResponseWriter).Flush() //nolint:errcheck // best-effort flush; caller drives SSE cadence
+}
+
+// Unwrap returns the underlying ResponseWriter so that http.ResponseController can
+// reach optional interfaces (SetWriteDeadline, etc.) that we don't explicitly proxy.
+func (c *committedResponseWriter) Unwrap() http.ResponseWriter {
+	return c.ResponseWriter
+}
+
 // abstract header access for both response types
 type headerGetter interface {
 	Header() http.Header
@@ -919,8 +1174,15 @@ type streamingResponseRecorder struct {
 	writer       io.Writer
 	headers      http.Header
 	headersReady chan struct{}
-	closeOnce    sync.Once
 	status       int
+	closeOnce    sync.Once
+	// started is set true on the first Write, signalling that the upstream has
+	// begun emitting body bytes. The panic handler uses this to decide whether
+	// to inject an SSE error event into the already-open stream rather than
+	// attempting a plain HTTP 502 (which net/http silently ignores post-commit).
+	// atomic.Bool because Write is called from the proxy goroutine while
+	// handleStreamingPanic reads it from the handler goroutine.
+	started atomic.Bool
 }
 
 func newStreamingResponseRecorder(w io.Writer) *streamingResponseRecorder {
@@ -937,12 +1199,13 @@ func (r *streamingResponseRecorder) Header() http.Header {
 }
 
 // ensureHeadersReady closes headersReady exactly once. It is safe to call from
-// multiple goroutines and is idempotent — subsequent calls are no-ops.
+// multiple goroutines and is idempotent - subsequent calls are no-ops.
 func (r *streamingResponseRecorder) ensureHeadersReady() {
 	r.closeOnce.Do(func() { close(r.headersReady) })
 }
 
 func (r *streamingResponseRecorder) Write(data []byte) (int, error) {
+	r.started.Store(true)
 	r.ensureHeadersReady()
 	return r.writer.Write(data)
 }
@@ -954,6 +1217,6 @@ func (r *streamingResponseRecorder) WriteHeader(statusCode int) {
 }
 
 // Flush implements http.Flusher. The underlying io.Pipe is unbuffered
-// (writes block until read), so there is nothing to flush — this is
+// (writes block until read), so there is nothing to flush - this is
 // intentionally a no-op to satisfy http.ResponseController in proxy engines.
 func (r *streamingResponseRecorder) Flush() {}

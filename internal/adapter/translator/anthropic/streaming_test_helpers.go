@@ -24,7 +24,11 @@ func newTestTranslator() *Translator {
 	loggerCfg := &logger.Config{Level: "error", Theme: "default"}
 	log, _, _ := logger.New(loggerCfg)
 	styledLog := logger.NewPlainStyledLogger(log)
-	return NewTranslator(styledLog, createStreamingTestConfig())
+	tr, err := NewTranslator(styledLog, createStreamingTestConfig())
+	if err != nil {
+		panic("newTestTranslator: " + err.Error())
+	}
+	return tr
 }
 
 // createStreamingTestConfig creates a minimal config for streaming tests.
@@ -90,6 +94,40 @@ func finishChunkWithUsage(messageID, finishReason string, promptTokens, completi
 // doneChunk returns the standard OpenAI stream termination marker.
 func doneChunk() string {
 	return "data: [DONE]\n\n"
+}
+
+// usageOnlyChunk creates an OpenAI SSE chunk with choices:[] and a populated usage
+// object. This is the format vLLM (and other backends that respect include_usage=true)
+// use to deliver final token counts as a separate terminal chunk rather than attaching
+// them to the finish chunk. The message ID is included for completeness; clients
+// correlate by stream position rather than by ID.
+func usageOnlyChunk(messageID string, promptTokens, completionTokens int) string {
+	return fmt.Sprintf(
+		"data: {\"id\":\"%s\",\"choices\":[],\"usage\":{\"prompt_tokens\":%d,\"completion_tokens\":%d,\"total_tokens\":%d}}\n\n",
+		messageID, promptTokens, completionTokens, promptTokens+completionTokens,
+	)
+}
+
+// reasoningChunk creates an OpenAI SSE chunk carrying reasoning text using the
+// "reasoning" field name (Ollama / LM Studio / Lemonade convention).
+func reasoningChunk(messageID, model, reasoning string) string {
+	if model != "" {
+		return fmt.Sprintf("data: {\"id\":\"%s\",\"model\":\"%s\",\"choices\":[{\"delta\":{\"reasoning\":\"%s\"},\"index\":0}]}\n\n",
+			messageID, model, reasoning)
+	}
+	return fmt.Sprintf("data: {\"id\":\"%s\",\"choices\":[{\"delta\":{\"reasoning\":\"%s\"},\"index\":0}]}\n\n",
+		messageID, reasoning)
+}
+
+// reasoningContentChunk creates an OpenAI SSE chunk carrying reasoning text using the
+// "reasoning_content" field name (vLLM / SGLang / DeepSeek convention).
+func reasoningContentChunk(messageID, model, reasoning string) string {
+	if model != "" {
+		return fmt.Sprintf("data: {\"id\":\"%s\",\"model\":\"%s\",\"choices\":[{\"delta\":{\"reasoning_content\":\"%s\"},\"index\":0}]}\n\n",
+			messageID, model, reasoning)
+	}
+	return fmt.Sprintf("data: {\"id\":\"%s\",\"choices\":[{\"delta\":{\"reasoning_content\":\"%s\"},\"index\":0}]}\n\n",
+		messageID, reasoning)
 }
 
 // modelChunk creates the first chunk with model information.
@@ -395,6 +433,42 @@ func assertUsageTokens(t *testing.T, events []map[string]interface{}, expectedIn
 	require.True(t, ok, "message_delta should have usage with input/output tokens")
 	assert.Equal(t, float64(expectedInput), input, "input_tokens should match")
 	assert.Equal(t, float64(expectedOutput), output, "output_tokens should match")
+}
+
+// assertThinkingContent validates that thinking text appears in a thinking_delta event.
+func assertThinkingContent(t *testing.T, body string, thinking string) {
+	t.Helper()
+	assert.Contains(t, body, fmt.Sprintf(`"thinking":"%s"`, thinking))
+}
+
+// assertThinkingBlockTransitionOrder validates that a thinking block stops before any
+// text or tool block starts. Anthropic requires thinking blocks to precede content.
+func assertThinkingBlockTransitionOrder(t *testing.T, events []map[string]interface{}) {
+	t.Helper()
+
+	thinkingStopIdx := -1
+	firstContentOrToolStartIdx := -1
+
+	for i, event := range events {
+		switch event["_event_type"] {
+		case "content_block_stop":
+			// Find the stop for the thinking block (always opened first, so index 0).
+			if idx, ok := getContentBlockIndex(event); ok && idx == 0 && thinkingStopIdx == -1 {
+				// Confirm it was actually the thinking block by checking the corresponding start.
+				thinkingStopIdx = i
+			}
+		case "content_block_start":
+			bt, ok := getContentBlockType(event)
+			if ok && bt != contentTypeThinking && firstContentOrToolStartIdx == -1 {
+				firstContentOrToolStartIdx = i
+			}
+		}
+	}
+
+	if thinkingStopIdx > -1 && firstContentOrToolStartIdx > -1 {
+		assert.Less(t, thinkingStopIdx, firstContentOrToolStartIdx,
+			"thinking block must be stopped before any text/tool block starts")
+	}
 }
 
 // assertBlockTransitionOrder validates that text block stops before tool block starts.

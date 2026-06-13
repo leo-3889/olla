@@ -1,0 +1,108 @@
+# Olla config template for the /claude-code-e2e skill.
+#
+# Rendered at runtime into test/regression/tmp/ with these placeholders
+# substituted (the skill does the substitution, never edit the rendered copy):
+#   __OLLA_PORT__    - loopback port Olla listens on
+#   __OLLAMA_URL__   - the real Ollama endpoint (--ollama-endpoint)
+#   __PASSTHROUGH__  - true (native Anthropic passthrough) | false (forced translation)
+#
+# One real Ollama endpoint, one Olla instance. The skill renders this twice -
+# once with __PASSTHROUGH__=true, once =false - and restarts Olla between the
+# two legs so both the passthrough and the OpenAI<->Anthropic translation paths
+# are exercised against the same backend and model.
+
+server:
+  host: "127.0.0.1"
+  port: __OLLA_PORT__
+  read_timeout: 300s          # gemma-class models on CPU can be slow to first token
+  read_header_timeout: 10s
+  write_timeout: 0s           # 0 = no write deadline, required for SSE streaming
+  shutdown_timeout: 5s
+  request_logging: true
+  request_limits:
+    # Claude Code system prompts + tool schemas are large; keep this generous.
+    max_body_size: 10485760
+    max_header_size: 524288
+  rate_limits:
+    # Wide open: this harness is a correctness gate, not a rate-limit test.
+    global_requests_per_minute: 100000
+    per_ip_requests_per_minute: 50000
+    health_requests_per_minute: 100000
+    burst_size: 1000
+    cleanup_interval: 5m
+    trust_proxy_headers: false
+    trusted_proxy_cidrs: ["127.0.0.0/8"]
+
+proxy:
+  engine: "olla"
+  profile: "auto"
+  load_balancer: "priority"
+  stream_buffer_size: 8192
+  connection_timeout: 10s
+  response_timeout: 300s       # long generations through a local model
+  read_timeout: 300s
+  response_header_timeout: 30s
+  retry:
+    enabled: true
+    on_connection_failure: true
+    max_attempts: 0
+  sticky_sessions:
+    # Off on purpose: Claude Code resends full history each turn, so pinning
+    # adds a variable without adding coverage for this gate.
+    enabled: false
+
+discovery:
+  type: "static"
+  refresh_interval: 10s
+  health_check:
+    initial_delay: 1s
+  static:
+    endpoints:
+      - url: "__OLLAMA_URL__"
+        name: "ollama-regression"
+        type: "ollama"
+        priority: 100
+        model_url: "/api/tags"
+        health_check_url: "/"
+        check_interval: 5s
+        check_timeout: 3s
+
+  model_discovery:
+    # Fast interval so the model is discoverable within the skill's 60s
+    # readiness window on a cold boot (matches check_interval).
+    enabled: true
+    interval: 5s
+    timeout: 10s
+    concurrent_workers: 2
+    retry_attempts: 2
+    retry_backoff: 1s
+
+model_registry:
+  type: "memory"
+  enable_unifier: true
+  unification:
+    enabled: true
+    stale_threshold: 24h
+    cleanup_interval: 10m
+  routing_strategy:
+    type: "optimistic"
+    options:
+      fallback_behavior: "all"
+      discovery_timeout: 5s
+      discovery_refresh_on_miss: false
+
+translators:
+  anthropic:
+    enabled: true
+    passthrough_enabled: __PASSTHROUGH__
+    max_message_size: 10485760
+    inspector:
+      enabled: false
+
+logging:
+  level: "info"
+  format: "text"
+  output: "stdout"
+
+engineering:
+  show_nerdstats: false

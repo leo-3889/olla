@@ -510,7 +510,7 @@ Not all features translate perfectly:
 
 **Anthropic → OpenAI Limitations**:
 
-- Extended thinking: Not supported (Anthropic-specific feature)
+- Extended thinking control: the request-side `thinking`/`budget_tokens` is ignored. Reasoning *output* is preserved though, surfaced as `thinking` blocks from the backend's `reasoning`/`reasoning_content` field.
 - Prompt caching: Not supported (Anthropic-specific feature)
 - Some advanced parameters may not have OpenAI equivalents
 

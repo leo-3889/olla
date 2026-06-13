@@ -14,7 +14,7 @@ import (
 )
 
 func TestRequestValidation_RequiredFields(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 	ctx := context.Background()
 
 	t.Run("missing_model", func(t *testing.T) {
@@ -59,7 +59,7 @@ func TestRequestValidation_RequiredFields(t *testing.T) {
 }
 
 func TestRequestValidation_ParameterRanges(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 	ctx := context.Background()
 
 	t.Run("negative_max_tokens", func(t *testing.T) {
@@ -221,7 +221,7 @@ func TestRequestValidation_ParameterRanges(t *testing.T) {
 }
 
 func TestRequestValidation_ValidParameters(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 	ctx := context.Background()
 
 	t.Run("valid_temperature_boundary", func(t *testing.T) {
@@ -292,7 +292,7 @@ func TestRequestValidation_ValidParameters(t *testing.T) {
 }
 
 func TestRequestSizeLimit(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 	ctx := context.Background()
 
 	t.Run("request_exceeding_10MB", func(t *testing.T) {
@@ -346,7 +346,7 @@ func TestRequestSizeLimit(t *testing.T) {
 }
 
 func TestUnknownFieldsTolerated(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 	ctx := context.Background()
 
 	t.Run("request_with_unknown_field", func(t *testing.T) {
@@ -390,7 +390,7 @@ func TestUnknownFieldsTolerated(t *testing.T) {
 }
 
 func TestSecurityFeaturesCombined(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 	ctx := context.Background()
 
 	t.Run("invalid_params_with_unknown_fields", func(t *testing.T) {

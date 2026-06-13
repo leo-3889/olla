@@ -30,8 +30,14 @@ Headers: `Content-Type: application/json`, `x-api-key: validate`,
    valid order: `message_start` → `content_block_start` →
    `content_block_delta`(×N) → `content_block_stop` → `message_delta` →
    `message_stop`; deltas assemble to non-empty text.
-4. `GET /olla/anthropic/v1/models` → 200, Anthropic-format model list
-   (non-empty `data[]`).
+4. `GET /olla/anthropic/v1/models` → 200, real Anthropic wire format:
+   - Top-level envelope has `has_more` (boolean) and `first_id`/`last_id`.
+   - `data[]` is non-empty.
+   - Each entry has `type: "model"` (not `"chat"` — the official Anthropic SDK
+     uses this as a deserialise discriminator; a wrong value breaks client
+     compatibility), a non-empty `display_name`, and `created_at` as an ISO
+     8601 string.
+   FAIL if any of the above are missing or wrong.
 5. `POST /olla/anthropic/v1/messages/count_tokens` with the standard body →
    200 with `input_tokens > 0`.
 6. Invalid body (`{"model":"test-model"}` - no messages/max_tokens) → 4xx

@@ -27,14 +27,18 @@ import (
 
 // mockTranslator implements RequestTranslator for testing
 type mockTranslator struct {
-	name                   string
-	transformRequestFunc   func(ctx context.Context, r *http.Request) (*translator.TransformedRequest, error)
-	transformResponseFunc  func(ctx context.Context, openaiResp interface{}, original *http.Request) (interface{}, error)
-	transformStreamingFunc func(ctx context.Context, openaiStream io.Reader, w http.ResponseWriter, original *http.Request) error
-	writeErrorFunc         func(w http.ResponseWriter, err error, statusCode int)
-	pathProvider           string
-	implementsErrorWriter  bool
-	implementsPathProvider bool
+	name                      string
+	transformRequestFunc      func(ctx context.Context, r *http.Request) (*translator.TransformedRequest, error)
+	transformResponseFunc     func(ctx context.Context, openaiResp interface{}, original *http.Request) (interface{}, error)
+	transformStreamingFunc    func(ctx context.Context, openaiStream io.Reader, w http.ResponseWriter, original *http.Request) error
+	writeErrorFunc            func(w http.ResponseWriter, err error, statusCode int)
+	countTokensFunc           func(ctx context.Context, r *http.Request) (*translator.TokenCountResponse, error)
+	serialiseCountTokensFunc  func(resp *translator.TokenCountResponse) ([]byte, error)
+	pathProvider              string
+	implementsErrorWriter     bool
+	implementsPathProvider    bool
+	implementsTokenCounter    bool
+	implementsTokenSerializer bool
 }
 
 func (m *mockTranslator) Name() string {
@@ -94,6 +98,20 @@ func (m *mockTranslator) WriteError(w http.ResponseWriter, err error, statusCode
 	panic("WriteError called on translator that doesn't implement ErrorWriter")
 }
 
+func (m *mockTranslator) CountTokens(ctx context.Context, r *http.Request) (*translator.TokenCountResponse, error) {
+	if m.implementsTokenCounter && m.countTokensFunc != nil {
+		return m.countTokensFunc(ctx, r)
+	}
+	panic("CountTokens called on translator that doesn't implement TokenCounter")
+}
+
+func (m *mockTranslator) SerialiseCountTokens(resp *translator.TokenCountResponse) ([]byte, error) {
+	if m.implementsTokenSerializer && m.serialiseCountTokensFunc != nil {
+		return m.serialiseCountTokensFunc(resp)
+	}
+	panic("SerialiseCountTokens called on translator that doesn't implement TokenCountSerializer")
+}
+
 // mockProxyService implements ProxyService for testing
 type mockProxyService struct {
 	proxyFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, endpoints []*domain.Endpoint, stats *ports.RequestStats, logger logger.StyledLogger) error
@@ -134,6 +152,128 @@ func (m *mockProxyService) ProxyRequestToEndpoints(
 	w.Header().Set(constants.HeaderXOllaModel, "test-model")
 	w.WriteHeader(http.StatusOK)
 	return json.NewEncoder(w).Encode(response)
+}
+
+// TestTranslationHandler_PlainTextBackendError verifies that when a backend returns
+// a non-JSON 4xx/5xx body (e.g. a plain-text 429 from a rate-limiter), the handler
+// preserves the upstream status code and emits a structured Anthropic error rather
+// than surfacing a misleading "failed to parse OpenAI response" 502.
+func TestTranslationHandler_PlainTextBackendError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		backendStatus  int
+		backendBody    string
+		backendCT      string
+		expectedStatus int
+		expectedType   string
+	}{
+		{
+			name:           "plain_text_429",
+			backendStatus:  http.StatusTooManyRequests,
+			backendBody:    "Rate limit exceeded. Please try again later.",
+			backendCT:      "text/plain",
+			expectedStatus: http.StatusTooManyRequests,
+			expectedType:   "rate_limit_error",
+		},
+		{
+			name:           "html_503",
+			backendStatus:  http.StatusServiceUnavailable,
+			backendBody:    "<html><body>Service Unavailable</body></html>",
+			backendCT:      "text/html",
+			expectedStatus: http.StatusServiceUnavailable,
+			expectedType:   "overloaded_error", // mock writeErrorFunc maps 503 → overloaded_error
+		},
+		{
+			name:          "json_400_preserved",
+			backendStatus: http.StatusBadRequest,
+			backendBody:   `{"error":{"message":"Invalid temperature value","type":"invalid_request_error"}}`,
+			backendCT:     "application/json",
+			// Existing behaviour must be preserved: message extracted from JSON.
+			expectedStatus: http.StatusBadRequest,
+			expectedType:   "invalid_request_error",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			mockLogger := &mockStyledLogger{}
+
+			trans := &mockTranslator{
+				name:                  "anthropic",
+				implementsErrorWriter: true,
+				writeErrorFunc: func(w http.ResponseWriter, err error, statusCode int) {
+					errorType := "api_error"
+					switch statusCode {
+					case http.StatusBadRequest:
+						errorType = "invalid_request_error"
+					case http.StatusTooManyRequests:
+						errorType = "rate_limit_error"
+					case http.StatusServiceUnavailable:
+						errorType = "overloaded_error"
+					}
+					w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
+					w.WriteHeader(statusCode)
+					_ = json.NewEncoder(w).Encode(map[string]interface{}{
+						"type": "error",
+						"error": map[string]interface{}{
+							"type":    errorType,
+							"message": err.Error(),
+						},
+					})
+				},
+			}
+
+			proxyService := &mockProxyService{
+				proxyFunc: func(ctx context.Context, w http.ResponseWriter, r *http.Request, endpoints []*domain.Endpoint, stats *ports.RequestStats, rlog logger.StyledLogger) error {
+					w.Header().Set(constants.HeaderContentType, tt.backendCT)
+					w.WriteHeader(tt.backendStatus)
+					_, err := w.Write([]byte(tt.backendBody))
+					return err
+				},
+			}
+
+			app := &Application{
+				logger:           mockLogger,
+				proxyService:     proxyService,
+				statsCollector:   &mockStatsCollector{},
+				repository:       &mockEndpointRepository{},
+				inspectorChain:   inspector.NewChain(mockLogger),
+				profileFactory:   &mockProfileFactory{},
+				discoveryService: &mockDiscoveryServiceForTranslation{},
+				Config:           &config.Config{},
+			}
+
+			reqBody, _ := json.Marshal(map[string]interface{}{
+				"model":      "test-model",
+				"max_tokens": 100,
+				"messages":   []map[string]interface{}{{"role": "user", "content": "hello"}},
+			})
+
+			req := httptest.NewRequest("POST", "/olla/anthropic/v1/messages", bytes.NewReader(reqBody))
+			req.Header.Set(constants.HeaderContentType, constants.ContentTypeJSON)
+			rec := httptest.NewRecorder()
+
+			handler := app.translationHandler(trans)
+			handler.ServeHTTP(rec, req)
+
+			assert.Equal(t, tt.expectedStatus, rec.Code,
+				"upstream status code must be preserved, not flattened to 502")
+
+			var errBody map[string]interface{}
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &errBody),
+				"error body must be valid JSON")
+			assert.Equal(t, "error", errBody["type"])
+
+			errObj, ok := errBody["error"].(map[string]interface{})
+			require.True(t, ok)
+			assert.Equal(t, tt.expectedType, errObj["type"],
+				"error type must match the expected Anthropic error type for this status")
+		})
+	}
 }
 
 func TestTranslationHandler_NonStreaming(t *testing.T) {
@@ -704,6 +844,8 @@ func (m *mockTranslatorWithoutErrorWriter) TransformStreamingResponse(ctx contex
 }
 
 func TestTranslationHandler_StreamingPanicRecovery(t *testing.T) {
+	t.Parallel()
+
 	mockLogger := &mockStyledLogger{}
 
 	panicTrans := &mockTranslator{
@@ -712,7 +854,7 @@ func TestTranslationHandler_StreamingPanicRecovery(t *testing.T) {
 		writeErrorFunc: func(w http.ResponseWriter, err error, statusCode int) {
 			w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 			w.WriteHeader(statusCode)
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": err.Error(),
 			})
 		},
@@ -781,18 +923,24 @@ func TestTranslationHandler_StreamingPanicRecovery(t *testing.T) {
 	req := httptest.NewRequest("POST", "/test", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatal("Expected panic to be propagated after cleanup")
-		}
-
-		panicMsg := fmt.Sprintf("%v", r)
-		assert.Contains(t, panicMsg, "simulated panic during stream transformation",
-			"Panic message should contain original panic text")
-	}()
-
+	// The handler must NOT re-panic. A re-panic resets the TCP connection,
+	// giving the client no indication of what went wrong.
+	//
+	// The proxy writes one SSE event into the pipe, but the translator panics
+	// immediately without reading from it and writing anything to the real client
+	// ResponseWriter. The committedResponseWriter therefore has committed=false,
+	// and the handler correctly falls back to a plain HTTP 502 rather than an SSE
+	// error event. This is the correct behaviour: no bytes reached the client, so
+	// the response is not committed and a proper error status can be sent.
 	handler.ServeHTTP(rec, req)
+
+	// The panic must not propagate as a connection reset. Because the translator
+	// panicked before writing to the client, the response is uncommitted and a
+	// 502 with a structured error body is the correct outcome.
+	assert.Equal(t, http.StatusBadGateway, rec.Code,
+		"status must be 502 when panic fires before any bytes reach the client")
+	assert.NotContains(t, rec.Body.String(), "event: error",
+		"no SSE event should appear when the response was not committed")
 }
 
 // Verifies that:
@@ -1570,7 +1718,7 @@ func TestExecuteTranslatedStreamingRequest_ProxyErrorBeforeWrite(t *testing.T) {
 
 	select {
 	case <-done:
-		// Handler returned — no deadlock. The response status must indicate an error.
+		// Handler returned - no deadlock. The response status must indicate an error.
 		assert.GreaterOrEqual(t, rec.Code, http.StatusBadRequest,
 			"expected an error status when proxy fails before writing headers")
 	case <-ctx.Done():
@@ -1657,7 +1805,7 @@ func TestExecuteTranslatedStreamingRequest_ContextCancellationUnblocks(t *testin
 	// correctly unblocks the select, the handler returns well before this deadline.
 	select {
 	case <-done:
-		// Returned after cancellation — correct behaviour.
+		// Returned after cancellation - correct behaviour.
 	case <-time.After(3 * time.Second):
 		t.Fatal("handler did not unblock after context cancellation")
 	}
@@ -1755,4 +1903,355 @@ func TestExecuteTranslatedStreamingRequest_SuccessfulFlow(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "Hello", "SSE payload should be forwarded")
 	assert.NotEmpty(t, rec.Header().Get(constants.HeaderXOllaRequestID),
 		"X-Olla-Request-ID should be copied to the client response")
+}
+
+// TestHandleStreamingPanic_Writes502 verifies that a panic inside the streaming
+// path produces a 502 response to the client rather than re-panicking (which
+// would close the connection without sending any error).
+func TestHandleStreamingPanic_Writes502(t *testing.T) {
+	t.Parallel()
+
+	mockLogger := &mockStyledLogger{}
+	app := &Application{logger: mockLogger}
+
+	trans := &mockTranslator{
+		name:                  "panicking-translator",
+		implementsErrorWriter: true,
+		writeErrorFunc: func(w http.ResponseWriter, err error, statusCode int) {
+			w.WriteHeader(statusCode)
+		},
+	}
+
+	// Set up a pipe and a buffered error channel as the real code does.
+	pipeReader, pipeWriter := io.Pipe()
+	proxyErrChan := make(chan error, 1)
+
+	// Pre-fill the error channel so the drain in handleStreamingPanic does not block.
+	proxyErrChan <- nil
+
+	rec := httptest.NewRecorder()
+
+	// committedResponseWriter with committed=false simulates a panic before any
+	// byte was written to the real client - response is uncommitted.
+	cw := newCommittedResponseWriter(rec)
+
+	// Call handleStreamingPanic directly, simulating the deferred call after a panic.
+	// We wrap in a function that sets up a panic so recover() fires.
+	func() {
+		defer app.handleStreamingPanic(cw, pipeReader, pipeWriter, proxyErrChan, cw, &proxyRequest{
+			requestLogger: mockLogger,
+		}, trans)
+		panic("simulated streaming panic")
+	}()
+
+	// The panic must NOT propagate - if it did, the test would fail here.
+	assert.Equal(t, http.StatusBadGateway, rec.Code,
+		"streaming panic must produce 502 not a connection reset")
+}
+
+// TestHandleStreamingPanic_AfterStreamStarted_EmitsSSEError verifies that when a
+// panic fires after the upstream has already written body bytes, the handler emits
+// a well-formed Anthropic SSE error event rather than attempting a plain HTTP 502
+// (which net/http silently ignores once the response is committed).
+func TestHandleStreamingPanic_AfterStreamStarted_EmitsSSEError(t *testing.T) {
+	t.Parallel()
+
+	mockLogger := &mockStyledLogger{}
+	app := &Application{logger: mockLogger}
+
+	trans := &mockTranslator{
+		name:                  "panicking-translator",
+		implementsErrorWriter: true,
+		writeErrorFunc: func(w http.ResponseWriter, err error, statusCode int) {
+			w.WriteHeader(statusCode)
+		},
+	}
+
+	pipeReader, pipeWriter := io.Pipe()
+	proxyErrChan := make(chan error, 1)
+	proxyErrChan <- nil
+
+	rec := httptest.NewRecorder()
+
+	// committedResponseWriter with committed=true simulates the state after at
+	// least one byte has been written to the real client ResponseWriter.
+	cw := newCommittedResponseWriter(rec)
+	cw.committed.Store(true)
+
+	func() {
+		defer app.handleStreamingPanic(cw, pipeReader, pipeWriter, proxyErrChan, cw, &proxyRequest{
+			requestLogger: mockLogger,
+		}, trans)
+		panic("simulated mid-stream panic")
+	}()
+
+	body := rec.Body.String()
+	// Status must remain 200 - WriteHeader(502) is a no-op after the first Write.
+	assert.Equal(t, http.StatusOK, rec.Code,
+		"status must stay 200 when the panic fires after the stream has started")
+	assert.Contains(t, body, "event: error",
+		"a spec-valid SSE error line must be appended mid-stream")
+	assert.Contains(t, body, "data: ",
+		"error event must include a data line")
+	assert.Contains(t, body, "api_error",
+		"Anthropic error type must appear in the SSE data payload")
+	assert.Contains(t, body, "internal error during stream transformation",
+		"error message must appear in the SSE data payload")
+	// Ensure no raw JSON is injected outside the SSE envelope.
+	assert.NotContains(t, body, `{"error":`,
+		"raw JSON error must not be injected outside the SSE envelope")
+}
+
+// TestStreamingPanic_BeforeWrite_Returns502 exercises the full translation handler
+// end-to-end with a panic that fires before any SSE data is written to the client.
+// The response must be HTTP 502 with an Anthropic-formatted JSON error body.
+func TestStreamingPanic_BeforeWrite_Returns502(t *testing.T) {
+	t.Parallel()
+
+	mockLogger := &mockStyledLogger{}
+
+	// The translator panics inside TransformStreamingResponse before writing
+	// anything to w. Because no bytes reach the client, the response is
+	// uncommitted and a 502 can be written.
+	panicTrans := &mockTranslator{
+		name:                  "early-panic-translator",
+		implementsErrorWriter: true,
+		writeErrorFunc: func(w http.ResponseWriter, err error, statusCode int) {
+			w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
+			w.WriteHeader(statusCode)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"type": "error",
+				"error": map[string]interface{}{
+					"type":    "api_error",
+					"message": err.Error(),
+				},
+			})
+		},
+		transformRequestFunc: func(ctx context.Context, r *http.Request) (*translator.TransformedRequest, error) {
+			return &translator.TransformedRequest{
+				OpenAIRequest: map[string]interface{}{
+					"model":  "test-model",
+					"stream": true,
+					"messages": []interface{}{
+						map[string]interface{}{"role": "user", "content": "test"},
+					},
+				},
+				ModelName:   "test-model",
+				IsStreaming: true,
+			}, nil
+		},
+		transformStreamingFunc: func(ctx context.Context, openaiStream io.Reader, w http.ResponseWriter, original *http.Request) error {
+			// Panic before writing anything to w - stream is not started.
+			panic("panic before any write")
+		},
+	}
+
+	// Proxy does NOT write any body data (no Write call, only WriteHeader), so
+	// streamRecorder.started remains false when the panic fires.
+	proxyService := &mockProxyService{
+		proxyFunc: func(ctx context.Context, w http.ResponseWriter, r *http.Request, endpoints []*domain.Endpoint, stats *ports.RequestStats, rlog logger.StyledLogger) error {
+			w.Header().Set(constants.HeaderContentType, "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			// No Write call - started remains false.
+			return nil
+		},
+	}
+
+	app := &Application{
+		logger:           mockLogger,
+		proxyService:     proxyService,
+		statsCollector:   &mockStatsCollector{},
+		repository:       &mockEndpointRepository{},
+		inspectorChain:   inspector.NewChain(mockLogger),
+		profileFactory:   &mockProfileFactory{},
+		discoveryService: &mockDiscoveryServiceForTranslation{},
+		Config:           &config.Config{},
+	}
+
+	handler := app.translationHandler(panicTrans)
+
+	reqBody, _ := json.Marshal(map[string]interface{}{
+		"model":  "test-model",
+		"stream": true,
+		"messages": []interface{}{
+			map[string]interface{}{"role": "user", "content": "test"},
+		},
+	})
+	req := httptest.NewRequest("POST", "/test", bytes.NewReader(reqBody))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadGateway, rec.Code,
+		"502 must be returned when the panic fires before any bytes are written")
+
+	var errBody map[string]interface{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &errBody),
+		"error body must be valid JSON")
+	assert.Equal(t, "error", errBody["type"],
+		"Anthropic error envelope type must be 'error'")
+	errObj, ok := errBody["error"].(map[string]interface{})
+	require.True(t, ok, "error object must be present")
+	assert.Equal(t, "api_error", errObj["type"])
+}
+
+// TestCommittedResponseWriter_FlushSetsCommitted verifies that Flush() marks the response
+// as committed. Without this the translated SSE path calls http.NewResponseController(cw).Flush()
+// which can't find http.Flusher on the wrapper, returns "feature not supported", and the
+// streaming handler treats the flush failure as a transform error (502).
+func TestCommittedResponseWriter_FlushSetsCommitted(t *testing.T) {
+	t.Parallel()
+
+	rec := httptest.NewRecorder()
+	cw := newCommittedResponseWriter(rec)
+
+	if cw.committed.Load() {
+		t.Fatal("committed must be false before any write")
+	}
+
+	rc := http.NewResponseController(cw)
+	if err := rc.Flush(); err != nil {
+		t.Fatalf("Flush via ResponseController must succeed, got: %v", err)
+	}
+
+	if !cw.committed.Load() {
+		t.Fatal("committed must be true after Flush()")
+	}
+}
+
+// TestCommittedResponseWriter_Unwrap verifies that the underlying ResponseWriter is
+// reachable via Unwrap so ResponseController can discover optional interfaces
+// (SetWriteDeadline, etc.) beyond what committedResponseWriter explicitly proxies.
+func TestCommittedResponseWriter_Unwrap(t *testing.T) {
+	t.Parallel()
+
+	rec := httptest.NewRecorder()
+	cw := newCommittedResponseWriter(rec)
+
+	if cw.Unwrap() != rec {
+		t.Fatal("Unwrap must return the exact underlying ResponseWriter")
+	}
+}
+
+// TestTokenCountHandler_SerialiseFailureReturns500 verifies that when a translator
+// implements TokenCountSerializer but SerialiseCountTokens returns an error, the
+// handler must NOT commit a 200 before the failure. Before the fix, WriteHeader(200)
+// was called unconditionally before serialisation, so the client received a 200 with
+// an empty or partial body.
+func TestTokenCountHandler_SerialiseFailureReturns500(t *testing.T) {
+	t.Parallel()
+
+	mockLogger := &mockStyledLogger{}
+	serErr := errors.New("json serialisation kaboom")
+
+	trans := &mockTranslator{
+		name:                      "anthropic",
+		implementsErrorWriter:     true,
+		implementsTokenCounter:    true,
+		implementsTokenSerializer: true,
+		writeErrorFunc: func(w http.ResponseWriter, err error, statusCode int) {
+			w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
+			w.WriteHeader(statusCode)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"type": "error",
+				"error": map[string]interface{}{
+					"type":    "api_error",
+					"message": err.Error(),
+				},
+			})
+		},
+		countTokensFunc: func(_ context.Context, _ *http.Request) (*translator.TokenCountResponse, error) {
+			return &translator.TokenCountResponse{InputTokens: 42}, nil
+		},
+		serialiseCountTokensFunc: func(_ *translator.TokenCountResponse) ([]byte, error) {
+			return nil, serErr
+		},
+	}
+
+	app := &Application{
+		logger: mockLogger,
+	}
+
+	handler := app.tokenCountHandler(trans)
+
+	reqBody, _ := json.Marshal(map[string]interface{}{
+		"model":    "test-model",
+		"messages": []interface{}{map[string]interface{}{"role": "user", "content": "hi"}},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/olla/anthropic/v1/messages/count_tokens", bytes.NewReader(reqBody))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	// The status must not be 200 - serialisation failed before any bytes were committed.
+	if rec.Code == http.StatusOK {
+		t.Errorf("expected non-200 status when serialisation fails, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500, got %d", rec.Code)
+	}
+}
+
+// TestTokenCountHandler_SerialiseSuccess verifies the happy path: successful
+// serialisation writes the body with a 200 status.
+func TestTokenCountHandler_SerialiseSuccess(t *testing.T) {
+	t.Parallel()
+
+	mockLogger := &mockStyledLogger{}
+
+	trans := &mockTranslator{
+		name:                      "anthropic",
+		implementsTokenCounter:    true,
+		implementsTokenSerializer: true,
+		countTokensFunc: func(_ context.Context, _ *http.Request) (*translator.TokenCountResponse, error) {
+			return &translator.TokenCountResponse{InputTokens: 17}, nil
+		},
+		serialiseCountTokensFunc: func(resp *translator.TokenCountResponse) ([]byte, error) {
+			return json.Marshal(map[string]int{"input_tokens": resp.InputTokens})
+		},
+	}
+
+	app := &Application{logger: mockLogger}
+	handler := app.tokenCountHandler(trans)
+
+	reqBody, _ := json.Marshal(map[string]interface{}{
+		"model":    "test-model",
+		"messages": []interface{}{map[string]interface{}{"role": "user", "content": "hi"}},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/olla/anthropic/v1/messages/count_tokens", bytes.NewReader(reqBody))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]int
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, 17, body["input_tokens"])
+}
+
+// TestCommittedResponseWriter_WriteAndWriteHeaderSetCommitted confirms the existing
+// committed-flag behaviour for Write and WriteHeader is unaffected by the new methods.
+func TestCommittedResponseWriter_WriteAndWriteHeaderSetCommitted(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Write", func(t *testing.T) {
+		t.Parallel()
+		rec := httptest.NewRecorder()
+		cw := newCommittedResponseWriter(rec)
+		_, err := cw.Write([]byte("hello"))
+		require.NoError(t, err)
+		if !cw.committed.Load() {
+			t.Fatal("committed must be true after Write()")
+		}
+	})
+
+	t.Run("WriteHeader", func(t *testing.T) {
+		t.Parallel()
+		rec := httptest.NewRecorder()
+		cw := newCommittedResponseWriter(rec)
+		cw.WriteHeader(http.StatusOK)
+		if !cw.committed.Load() {
+			t.Fatal("committed must be true after WriteHeader()")
+		}
+	})
 }

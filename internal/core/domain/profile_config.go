@@ -133,6 +133,15 @@ type ContextPattern struct {
 	Context int64  `yaml:"context"`
 }
 
+// Limitation name constants for features that may be absent on a given backend.
+// The passthrough endpoint filter uses exact-name matching against these values,
+// so token-counting limitations (which use different names) are never affected.
+const (
+	AnthropicLimitationNoToolUse          = "no_tool_use"
+	AnthropicLimitationNoExtendedThinking = "no_extended_thinking"
+	AnthropicLimitationNoVision           = "no_vision"
+)
+
 // AnthropicSupportConfig declares native Anthropic Messages API support for a
 // backend platform. This enables the passthrough optimisation: when a backend
 // natively understands the Anthropic wire format, requests can be forwarded
@@ -145,7 +154,7 @@ type ContextPattern struct {
 //	    enabled: true
 //	    messages_path: "/v1/messages"
 //	    token_count: true
-//	    min_version: "2023-06-01"
+//	    min_version: "b4847"
 //	    limitations:
 //	      - "no_extended_thinking"
 //	      - "max_tokens_4096"
@@ -154,15 +163,16 @@ type AnthropicSupportConfig struct {
 	// requests (e.g. "/v1/messages"). Required when Enabled is true.
 	MessagesPath string `yaml:"messages_path"`
 
-	// MinVersion is the minimum anthropic-version header value the backend
-	// requires. If the incoming request specifies an older version, the
-	// translator falls back to the translation path. Use the standard
-	// Anthropic version date format (e.g. "2023-06-01").
+	// MinVersion is the backend build version that introduced native Anthropic
+	// support (e.g. "b4847", "0.14.0", "0.4.1"). Informational only; not
+	// currently enforced at runtime.
 	MinVersion string `yaml:"min_version,omitempty"`
 
 	// Limitations lists Anthropic features this backend does NOT support.
-	// Used by CanPassthrough to decide whether a particular request can be
-	// sent directly or must go through translation instead.
+	// Enforced by the passthrough endpoint filter for messages-affecting
+	// limitations (no_tool_use, no_extended_thinking, no_vision). Endpoints
+	// that declare a limitation matching an active request feature are excluded
+	// from the passthrough subset and fall back to translation.
 	// Common values: "no_extended_thinking", "no_tool_use", "no_vision",
 	// "max_tokens_4096".
 	Limitations []string `yaml:"limitations,omitempty"`

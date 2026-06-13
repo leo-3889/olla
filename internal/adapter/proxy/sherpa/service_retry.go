@@ -127,7 +127,11 @@ func (s *Service) proxyToSingleEndpoint(ctx context.Context, w http.ResponseWrit
 	streamStart := time.Now()
 	stats.FirstDataMs = time.Since(stats.StartTime).Milliseconds()
 
-	buffer := s.bufferPool.Get()
+	buffer, poolErr := s.bufferPool.Get()
+	if poolErr != nil {
+		s.RecordFailure(ctx, endpoint, time.Since(stats.StartTime), poolErr)
+		return fmt.Errorf("sherpa: stream buffer unavailable: %w", poolErr)
+	}
 	defer s.bufferPool.Put(buffer)
 
 	// Separate client and upstream contexts for proper cancellation handling

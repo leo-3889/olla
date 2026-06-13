@@ -86,6 +86,16 @@ func (t *Translator) TransformResponse(ctx context.Context, openaiResp interface
 func (t *Translator) convertResponseContent(message map[string]interface{}, finishReason string) ([]ContentBlock, string) {
 	var content []ContentBlock
 
+	// Prepend a thinking block when the backend includes chain-of-thought reasoning.
+	// "reasoning" is used by Ollama/LM Studio/Lemonade; "reasoning_content" by vLLM/SGLang/DeepSeek.
+	// Local backends do not produce a cryptographic signature, so we omit the signature field.
+	if reasoning := extractNonStreamingReasoning(message); reasoning != "" {
+		content = append(content, ContentBlock{
+			Type:     contentTypeThinking,
+			Thinking: reasoning,
+		})
+	}
+
 	// Handle text content
 	if textContent, ok := message["content"].(string); ok && textContent != "" {
 		content = append(content, ContentBlock{
@@ -168,6 +178,20 @@ func (t *Translator) convertToToolUse(toolCall map[string]interface{}) *ContentB
 		Name:  name,
 		Input: input,
 	}
+}
+
+// extractNonStreamingReasoning returns the non-empty reasoning text from an OpenAI message,
+// checking both field name variants used across backends:
+//   - "reasoning"         - Ollama, LM Studio, Lemonade
+//   - "reasoning_content" - vLLM, SGLang, DeepSeek
+func extractNonStreamingReasoning(message map[string]interface{}) string {
+	if v, ok := message["reasoning"].(string); ok && v != "" {
+		return v
+	}
+	if v, ok := message["reasoning_content"].(string); ok && v != "" {
+		return v
+	}
+	return ""
 }
 
 // map openai token counts to anthropic names

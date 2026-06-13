@@ -24,8 +24,11 @@ a check without mutating mock state, mark it skip with a note).
 5. Ollama native non-stream: `POST /olla/ollama/api/chat`
    (`"stream":false`) → 200, `done: true`, `message.content` non-empty,
    `prompt_eval_count`/`eval_count` > 0.
-6. Malformed body to `/olla/proxy/v1/chat/completions` (`{"model":`) → 4xx
-   (FAIL if 5xx or hang).
+6. Malformed body to `/olla/proxy/v1/chat/completions` (`{"model":`) → must
+   not 5xx and must not hang; record the observed status (2xx or 4xx are both
+   acceptable). Olla is a transparent proxy and delegates body validation to
+   the backend by design — it opportunistically extracts the model field and,
+   on failure, forwards to a fallback backend. Only a 5xx or a hang is a FAIL.
 
 ## Nightly additions
 

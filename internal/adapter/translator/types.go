@@ -56,6 +56,21 @@ type TokenCounter interface {
 	CountTokens(ctx context.Context, r *http.Request) (*TokenCountResponse, error)
 }
 
+// optional interface for translators that need to control the wire serialisation
+// of their token count response. When implemented, the handler uses SerialiseCountTokens
+// instead of encoding TokenCountResponse directly, allowing translators to emit only
+// the fields their spec defines (e.g. Anthropic: {"input_tokens":N} only).
+type TokenCountSerializer interface {
+	SerialiseCountTokens(resp *TokenCountResponse) ([]byte, error)
+}
+
+// optional interface for translators that can cheaply estimate input token count
+// from a pre-buffered original request body. Used to seed input_tokens in streaming
+// message_start events before the upstream usage chunk arrives.
+type InputTokenEstimator interface {
+	EstimateInputTokens(originalBodyBytes []byte) int
+}
+
 // represents token count result
 type TokenCountResponse struct {
 	InputTokens  int `json:"input_tokens"`

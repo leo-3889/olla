@@ -21,7 +21,7 @@ func createTestLogger() logger.StyledLogger {
 }
 
 func TestTransformRequest_SimpleMessage(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	anthropicReq := AnthropicRequest{
 		Model:     "claude-3-5-sonnet-20241022",
@@ -60,7 +60,7 @@ func TestTransformRequest_SimpleMessage(t *testing.T) {
 }
 
 func TestTransformRequest_WithSystemPrompt(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	anthropicReq := AnthropicRequest{
 		Model:     "claude-3-5-sonnet-20241022",
@@ -98,7 +98,7 @@ func TestTransformRequest_WithSystemPrompt(t *testing.T) {
 }
 
 func TestTransformRequest_WithTools(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	anthropicReq := AnthropicRequest{
 		Model:     "claude-3-5-sonnet-20241022",
@@ -157,7 +157,7 @@ func TestTransformRequest_WithTools(t *testing.T) {
 }
 
 func TestTransformRequest_MultipleTools(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	anthropicReq := AnthropicRequest{
 		Model:     "claude-3-5-sonnet-20241022",
@@ -212,7 +212,7 @@ func TestTransformRequest_MultipleTools(t *testing.T) {
 }
 
 func TestConvertToolChoice(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	testCases := []struct {
 		name            string
@@ -276,7 +276,7 @@ func TestConvertToolChoice(t *testing.T) {
 }
 
 func TestConvertToolChoice_EdgeCases(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	t.Run("unknown_string_defaults_to_auto", func(t *testing.T) {
 		result, err := translator.convertToolChoice("unknown")
@@ -309,7 +309,7 @@ func TestConvertToolChoice_EdgeCases(t *testing.T) {
 }
 
 func TestConvertMessages_ToolUseAndResult(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	anthropicReq := AnthropicRequest{
 		Model:     "claude-3-5-sonnet-20241022",
@@ -400,7 +400,7 @@ func TestConvertMessages_ToolUseAndResult(t *testing.T) {
 }
 
 func TestTransformRequest_ComplexContent(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	anthropicReq := AnthropicRequest{
 		Model:     "claude-3-5-sonnet-20241022",
@@ -442,7 +442,7 @@ func TestTransformRequest_ComplexContent(t *testing.T) {
 }
 
 func TestTransformRequest_MultipleMessages(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	anthropicReq := AnthropicRequest{
 		Model:     "claude-3-5-sonnet-20241022",
@@ -492,7 +492,7 @@ func TestTransformRequest_MultipleMessages(t *testing.T) {
 }
 
 func TestTransformRequest_EmptyContent(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	t.Run("empty_string_content", func(t *testing.T) {
 		anthropicReq := AnthropicRequest{
@@ -555,7 +555,7 @@ func TestTransformRequest_EmptyContent(t *testing.T) {
 }
 
 func TestTransformRequest_InvalidJSON(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	t.Run("malformed_json", func(t *testing.T) {
 		req := &http.Request{
@@ -578,7 +578,7 @@ func TestTransformRequest_InvalidJSON(t *testing.T) {
 }
 
 func TestTransformRequest_OptionalParameters(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	temp := 0.7
 	topP := 0.9
@@ -621,7 +621,7 @@ func TestTransformRequest_OptionalParameters(t *testing.T) {
 }
 
 func TestTransformRequest_AssistantWithOnlyToolCalls(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	anthropicReq := AnthropicRequest{
 		Model:     "claude-3-5-sonnet-20241022",
@@ -668,7 +668,7 @@ func TestTransformRequest_AssistantWithOnlyToolCalls(t *testing.T) {
 }
 
 func TestTransformRequest_UserWithOnlyToolResults(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	anthropicReq := AnthropicRequest{
 		Model:     "claude-3-5-sonnet-20241022",
@@ -708,7 +708,7 @@ func TestTransformRequest_UserWithOnlyToolResults(t *testing.T) {
 }
 
 func TestTransformRequest_ToolResultWithStructuredContent(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	anthropicReq := AnthropicRequest{
 		Model:     "claude-3-5-sonnet-20241022",
@@ -759,7 +759,7 @@ func TestTransformRequest_ToolResultWithStructuredContent(t *testing.T) {
 }
 
 func TestTransformRequest_MultipleToolCalls(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	anthropicReq := AnthropicRequest{
 		Model:     "claude-3-5-sonnet-20241022",
@@ -824,7 +824,7 @@ func TestTransformRequest_MultipleToolCalls(t *testing.T) {
 }
 
 func TestConvertToolUse_InvalidData(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	t.Run("missing_id", func(t *testing.T) {
 		block := map[string]interface{}{
@@ -861,7 +861,7 @@ func TestConvertToolUse_InvalidData(t *testing.T) {
 }
 
 func TestTransformRequest_NoMessages(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	anthropicReq := AnthropicRequest{
 		Model:     "claude-3-5-sonnet-20241022",
@@ -882,7 +882,7 @@ func TestTransformRequest_NoMessages(t *testing.T) {
 }
 
 func TestTransformRequest_ToolChoiceObjectForm(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	anthropicReq := AnthropicRequest{
 		Model:     "claude-3-5-sonnet-20241022",
@@ -929,7 +929,7 @@ func TestTransformRequest_ToolChoiceObjectForm(t *testing.T) {
 }
 
 func TestTransformRequest_MixedTextAndToolResults(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	anthropicReq := AnthropicRequest{
 		Model:     "claude-3-5-sonnet-20241022",
@@ -966,16 +966,19 @@ func TestTransformRequest_MixedTextAndToolResults(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, messages, 2)
 
-	assert.Equal(t, "user", messages[0]["role"])
-	assert.Equal(t, "Here's the result:", messages[0]["content"])
+	// tool messages must come before the user text so they sit immediately after
+	// the assistant tool_calls message; OpenAI-compatible backends reject any
+	// other role between them.
+	assert.Equal(t, "tool", messages[0]["role"])
+	assert.Equal(t, "tool_mixed", messages[0]["tool_call_id"])
+	assert.Equal(t, "Data from tool", messages[0]["content"])
 
-	assert.Equal(t, "tool", messages[1]["role"])
-	assert.Equal(t, "tool_mixed", messages[1]["tool_call_id"])
-	assert.Equal(t, "Data from tool", messages[1]["content"])
+	assert.Equal(t, "user", messages[1]["role"])
+	assert.Equal(t, "Here's the result:", messages[1]["content"])
 }
 
 func TestConvertSystemPrompt_AllFormats(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	t.Run("string_format", func(t *testing.T) {
 		result := translator.convertSystemPrompt("You are a helpful assistant")
@@ -1070,7 +1073,7 @@ func TestConvertSystemPrompt_AllFormats(t *testing.T) {
 }
 
 func TestTransformRequest_SystemPromptWithContentBlocks(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	anthropicReq := AnthropicRequest{
 		Model:     "claude-3-5-sonnet-20241022",
@@ -1115,7 +1118,7 @@ func TestTransformRequest_SystemPromptWithContentBlocks(t *testing.T) {
 }
 
 func TestTransformRequest_StronglyTypedSystemPrompt(t *testing.T) {
-	translator := NewTranslator(createTestLogger(), createTestConfig())
+	translator := mustNewTranslator(createTestLogger(), createTestConfig())
 
 	req := AnthropicRequest{
 		Model:     "claude-3-5-sonnet-20241022",
@@ -1149,4 +1152,259 @@ func TestTransformRequest_StronglyTypedSystemPrompt(t *testing.T) {
 
 	assert.Equal(t, "user", messages[1]["role"])
 	assert.Equal(t, "What's 2+2?", messages[1]["content"])
+}
+
+// TestConvertUserMessage_ToolResultPrecedesText verifies that when a user turn carries
+// both tool_result blocks and a text block (the typical agentic pattern used by Claude
+// Code), the resulting OpenAI messages are ordered tool(s) first, user text last.
+//
+// OpenAI-compatible backends require tool messages to sit immediately after the
+// assistant tool_calls message; inserting a user message between them returns 400.
+func TestConvertUserMessage_ToolResultPrecedesText(t *testing.T) {
+	t.Parallel()
+	tr := mustNewTranslator(createTestLogger(), createTestConfig())
+
+	anthropicReq := AnthropicRequest{
+		Model:     "claude-3-5-sonnet-20241022",
+		MaxTokens: 1024,
+		Messages: []AnthropicMessage{
+			{
+				Role: "assistant",
+				Content: []interface{}{
+					map[string]interface{}{
+						"type": "tool_use",
+						"id":   "toolu_agentic",
+						"name": "bash",
+						"input": map[string]interface{}{
+							"command": "ls",
+						},
+					},
+				},
+			},
+			{
+				// Claude Code sends [tool_result, text] on virtually every agentic turn.
+				Role: "user",
+				Content: []interface{}{
+					map[string]interface{}{
+						"type":        "tool_result",
+						"tool_use_id": "toolu_agentic",
+						"content":     "file1.go file2.go",
+					},
+					map[string]interface{}{
+						"type": "text",
+						"text": "That worked great.",
+					},
+				},
+			},
+		},
+	}
+
+	body, err := json.Marshal(anthropicReq)
+	require.NoError(t, err)
+
+	req := &http.Request{
+		Body: io.NopCloser(bytes.NewReader(body)),
+	}
+
+	result, err := tr.TransformRequest(context.Background(), req)
+	require.NoError(t, err)
+
+	messages, ok := result.OpenAIRequest["messages"].([]map[string]interface{})
+	require.True(t, ok)
+	// assistant(tool_calls), tool(result), user(text)
+	require.Len(t, messages, 3)
+
+	assert.Equal(t, "assistant", messages[0]["role"])
+
+	assert.Equal(t, "tool", messages[1]["role"],
+		"tool result must immediately follow the assistant message")
+	assert.Equal(t, "toolu_agentic", messages[1]["tool_call_id"])
+	assert.Equal(t, "file1.go file2.go", messages[1]["content"])
+
+	assert.Equal(t, "user", messages[2]["role"],
+		"user text must come after the tool result")
+	assert.Equal(t, "That worked great.", messages[2]["content"])
+}
+
+// TestConvertUserMessage_MultipleToolResultsPrecedeText verifies that multiple tool
+// results in a single user turn all appear before the user text block.
+func TestConvertUserMessage_MultipleToolResultsPrecedeText(t *testing.T) {
+	t.Parallel()
+	tr := mustNewTranslator(createTestLogger(), createTestConfig())
+
+	msgs := []AnthropicMessage{
+		{
+			Role: "user",
+			Content: []interface{}{
+				map[string]interface{}{
+					"type":        "tool_result",
+					"tool_use_id": "tool_r1",
+					"content":     "result one",
+				},
+				map[string]interface{}{
+					"type":        "tool_result",
+					"tool_use_id": "tool_r2",
+					"content":     "result two",
+				},
+				map[string]interface{}{
+					"type": "text",
+					"text": "Here is what I got.",
+				},
+			},
+		},
+	}
+
+	result, err := tr.convertMessages(msgs, nil)
+	require.NoError(t, err)
+	require.Len(t, result, 3)
+
+	assert.Equal(t, "tool", result[0]["role"])
+	assert.Equal(t, "tool_r1", result[0]["tool_call_id"])
+
+	assert.Equal(t, "tool", result[1]["role"])
+	assert.Equal(t, "tool_r2", result[1]["tool_call_id"])
+
+	assert.Equal(t, "user", result[2]["role"])
+	assert.Equal(t, "Here is what I got.", result[2]["content"])
+}
+
+// TestConvertUserMessage_TextOnlyUnchanged verifies that a text-only user message
+// (no tool_result blocks) is not affected by the reordering.
+func TestConvertUserMessage_TextOnlyUnchanged(t *testing.T) {
+	t.Parallel()
+	tr := mustNewTranslator(createTestLogger(), createTestConfig())
+
+	msgs := []AnthropicMessage{
+		{
+			Role:    "user",
+			Content: "Just a plain question.",
+		},
+	}
+
+	result, err := tr.convertMessages(msgs, nil)
+	require.NoError(t, err)
+	require.Len(t, result, 1)
+
+	assert.Equal(t, "user", result[0]["role"])
+	assert.Equal(t, "Just a plain question.", result[0]["content"])
+}
+
+// TestConvertUserMessage_IsError_True verifies that a tool_result block with
+// is_error:true gets an "Error: " prefix prepended to the content string.
+func TestConvertUserMessage_IsError_True(t *testing.T) {
+	t.Parallel()
+	tr := mustNewTranslator(createTestLogger(), createTestConfig())
+
+	msgs := []AnthropicMessage{
+		{
+			Role: "user",
+			Content: []interface{}{
+				map[string]interface{}{
+					"type":        "tool_result",
+					"tool_use_id": "toolu_err",
+					"content":     "file not found",
+					"is_error":    true,
+				},
+			},
+		},
+	}
+
+	result, err := tr.convertMessages(msgs, nil)
+	require.NoError(t, err)
+	// tool message comes first (before optional user text message)
+	require.NotEmpty(t, result)
+
+	toolMsg := result[0]
+	assert.Equal(t, "tool", toolMsg["role"])
+	content, _ := toolMsg["content"].(string)
+	assert.Equal(t, "Error: file not found", content,
+		"is_error:true must prepend 'Error: ' to the content")
+}
+
+// TestConvertUserMessage_IsError_AlreadyPrefixed verifies that double-prefixing is
+// avoided when the content already starts with "Error" (case-insensitive).
+func TestConvertUserMessage_IsError_AlreadyPrefixed(t *testing.T) {
+	t.Parallel()
+	tr := mustNewTranslator(createTestLogger(), createTestConfig())
+
+	msgs := []AnthropicMessage{
+		{
+			Role: "user",
+			Content: []interface{}{
+				map[string]interface{}{
+					"type":        "tool_result",
+					"tool_use_id": "toolu_dup",
+					"content":     "Error: already prefixed message",
+					"is_error":    true,
+				},
+			},
+		},
+	}
+
+	result, err := tr.convertMessages(msgs, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, result)
+
+	toolMsg := result[0]
+	content, _ := toolMsg["content"].(string)
+	assert.Equal(t, "Error: already prefixed message", content,
+		"content already starting with 'Error' must not be double-prefixed")
+}
+
+// TestConvertUserMessage_IsError_False verifies that is_error:false leaves content unchanged.
+func TestConvertUserMessage_IsError_False(t *testing.T) {
+	t.Parallel()
+	tr := mustNewTranslator(createTestLogger(), createTestConfig())
+
+	msgs := []AnthropicMessage{
+		{
+			Role: "user",
+			Content: []interface{}{
+				map[string]interface{}{
+					"type":        "tool_result",
+					"tool_use_id": "toolu_ok",
+					"content":     "result data",
+					"is_error":    false,
+				},
+			},
+		},
+	}
+
+	result, err := tr.convertMessages(msgs, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, result)
+
+	toolMsg := result[0]
+	content, _ := toolMsg["content"].(string)
+	assert.Equal(t, "result data", content,
+		"is_error:false must leave content unchanged")
+}
+
+// TestConvertUserMessage_IsError_Absent verifies that omitting is_error leaves content unchanged.
+func TestConvertUserMessage_IsError_Absent(t *testing.T) {
+	t.Parallel()
+	tr := mustNewTranslator(createTestLogger(), createTestConfig())
+
+	msgs := []AnthropicMessage{
+		{
+			Role: "user",
+			Content: []interface{}{
+				map[string]interface{}{
+					"type":        "tool_result",
+					"tool_use_id": "toolu_absent",
+					"content":     "normal result",
+					// no is_error field
+				},
+			},
+		},
+	}
+
+	result, err := tr.convertMessages(msgs, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, result)
+
+	toolMsg := result[0]
+	content, _ := toolMsg["content"].(string)
+	assert.Equal(t, "normal result", content,
+		"absent is_error must leave content unchanged")
 }

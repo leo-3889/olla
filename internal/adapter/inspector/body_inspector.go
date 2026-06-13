@@ -27,7 +27,7 @@ const (
 	// when "model" appears after large fields (e.g. a multi-megabyte "messages" array);
 	// 8 MB accommodates typical vision payloads while staying well within practical limits.
 	// Requests where "model" is absent or appears beyond this ceiling will not be routed by
-	// model name — capability-based or default routing applies instead.
+	// model name - capability-based or default routing applies instead.
 	modelScanSize = 8 * 1024 * 1024
 )
 
@@ -80,7 +80,7 @@ func (bi *BodyInspector) Inspect(ctx context.Context, r *http.Request, profile *
 	// them. This handles the case where "messages" (with large base64 images) precedes "model".
 	if r.ContentLength > bi.maxBodySize {
 		// captured is a locally-allocated bytes.Buffer (not from a sync.Pool), so
-		// captured.Bytes() is safe to use directly without an extra copy — unlike the
+		// captured.Bytes() is safe to use directly without an extra copy - unlike the
 		// small-body path below which must copy buffer.Bytes() to avoid pool aliasing
 		// once the deferred Reset()/Put() runs.
 		captured := &bytes.Buffer{}
@@ -108,7 +108,10 @@ func (bi *BodyInspector) Inspect(ctx context.Context, r *http.Request, profile *
 		return nil
 	}
 
-	buffer := bi.bufferPool.Get()
+	buffer, err := bi.bufferPool.Get()
+	if err != nil {
+		return fmt.Errorf("body inspector: buffer pool exhausted: %w", err)
+	}
 	defer func() {
 		buffer.Reset()
 		bi.bufferPool.Put(buffer)
@@ -164,7 +167,7 @@ func (bi *BodyInspector) extractModelName(body []byte) string {
 		return ""
 	}
 
-	// Fast path: complete JSON — unmarshal directly.
+	// Fast path: complete JSON - unmarshal directly.
 	var req modelRequest
 	if err := json.Unmarshal(body, &req); err == nil && req.Model != "" {
 		return bi.normalizeModelName(req.Model)
@@ -230,7 +233,7 @@ func extractTopLevelModelFieldFromReader(r io.Reader) string {
 
 		key, ok := keyTok.(string)
 		if !ok {
-			// Malformed JSON — key position must be a string.
+			// Malformed JSON - key position must be a string.
 			return ""
 		}
 
@@ -244,14 +247,14 @@ func extractTopLevelModelFieldFromReader(r io.Reader) string {
 			if err := json.Unmarshal(val, &modelStr); err == nil && modelStr != "" {
 				return modelStr
 			}
-			// Value wasn't a string — keep scanning.
+			// Value wasn't a string - keep scanning.
 			continue
 		}
 
 		// Skip the value for this key using token-level iteration so we never buffer
 		// a large nested value (e.g. a messages array containing base64 images).
 		if err := skipValueTokens(dec); err != nil {
-			// Truncated JSON or I/O error — stop scanning.
+			// Truncated JSON or I/O error - stop scanning.
 			return ""
 		}
 	}
@@ -269,11 +272,11 @@ func skipValueTokens(dec *json.Decoder) error {
 	}
 	delim, ok := tok.(json.Delim)
 	if !ok {
-		// Scalar value (string, number, bool, null) — already consumed.
+		// Scalar value (string, number, bool, null) - already consumed.
 		return nil
 	}
 	if delim != '{' && delim != '[' {
-		// Unexpected closing delimiter at value position — treat as error.
+		// Unexpected closing delimiter at value position - treat as error.
 		return fmt.Errorf("unexpected closing delimiter %v", delim)
 	}
 	// Track open/close depth to handle arbitrarily nested structures.

@@ -1,0 +1,42 @@
+package format
+
+import (
+	"testing"
+	"time"
+)
+
+func TestDuration2(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		d    time.Duration
+		want string
+	}{
+		// Sub-hour values
+		{"30 seconds", 30 * time.Second, "30s"},
+		{"5 minutes", 5 * time.Minute, "5m"},
+		{"90 minutes", 90 * time.Minute, "1h 30m"},
+		// Sub-day values
+		{"1 hour", 1 * time.Hour, "1h 0m"},
+		{"23 hours", 23 * time.Hour, "23h 0m"},
+		// Exact multiples of 24 hours - these triggered the divide-by-zero panic.
+		{"24 hours", 24 * time.Hour, "1d 0h"},
+		{"48 hours", 48 * time.Hour, "2d 0h"},
+		{"72 hours", 72 * time.Hour, "3d 0h"},
+		// Non-multiples that produced wrong values before the fix.
+		{"25 hours", 25 * time.Hour, "1d 1h"},
+		{"31 hours", 31 * time.Hour, "1d 7h"},
+		{"49 hours", 49 * time.Hour, "2d 1h"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := Duration2(tc.d)
+			if got != tc.want {
+				t.Errorf("Duration2(%v) = %q, want %q", tc.d, got, tc.want)
+			}
+		})
+	}
+}

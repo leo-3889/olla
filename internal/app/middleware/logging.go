@@ -127,7 +127,9 @@ func EnhancedLoggingMiddleware(styledLogger logger.StyledLogger) func(http.Handl
 			// Add to context for propagation
 			ctx := context.WithValue(r.Context(), RequestIDKey, requestID)
 
-			// Create a base logger with request ID
+			// Create a base logger with request ID. slog.With allocates; it runs
+			// regardless of level because the logger is stored in context for handlers
+			// that may log at any level. This is unavoidable and is not gated.
 			baseLogger := slog.Default().With(constants.ContextRequestIdKey, requestID)
 			ctx = context.WithValue(ctx, LoggerKey, baseLogger)
 
@@ -137,47 +139,66 @@ func EnhancedLoggingMiddleware(styledLogger logger.StyledLogger) func(http.Handl
 			// Wrap response writer to capture metrics
 			wrapped := &responseWriter{ResponseWriter: w, status: 200}
 
-			// Log request start - use Debug for proxy requests to reduce noise
-			// Proxy requests will log their own "Request received" at INFO level
-			logFields := []any{
-				"method", r.Method,
-				"path", r.URL.Path,
-				"remote_addr", r.RemoteAddr,
-				"user_agent", r.UserAgent(),
-				"request_bytes", requestSize,
-				"request_size_formatted", formatBytes(requestSize),
-			}
-
-			if IsProxyRequest(r.URL.Path) {
-				// For proxy requests, just log at debug level since handler will log INFO
-				baseLogger.Debug("HTTP request started", logFields...)
+			// Gate field construction on whether the record will actually be emitted.
+			// On the proxy hot path at the default info level, Debug records are discarded
+			// by the handler — building the []any slice and calling formatBytes 2x per
+			// request is pure waste. Non-proxy requests log at Info, so they only pay the
+			// cost when info-level logging is actually enabled.
+			isProxy := IsProxyRequest(r.URL.Path)
+			if isProxy {
+				if baseLogger.Enabled(ctx, slog.LevelDebug) {
+					baseLogger.Debug("HTTP request started",
+						"method", r.Method,
+						"path", r.URL.Path,
+						"remote_addr", r.RemoteAddr,
+						"user_agent", r.UserAgent(),
+						"request_bytes", requestSize,
+						"request_size_formatted", formatBytes(requestSize),
+					)
+				}
 			} else {
-				// For non-proxy requests (health, status, etc), log at INFO
-				baseLogger.Info("Request started", logFields...)
+				if baseLogger.Enabled(ctx, slog.LevelInfo) {
+					baseLogger.Info("Request started",
+						"method", r.Method,
+						"path", r.URL.Path,
+						"remote_addr", r.RemoteAddr,
+						"user_agent", r.UserAgent(),
+						"request_bytes", requestSize,
+						"request_size_formatted", formatBytes(requestSize),
+					)
+				}
 			}
 
 			next.ServeHTTP(wrapped, r.WithContext(ctx))
 
 			duration := time.Since(start)
 
-			// Log request completion - use Debug for proxy requests to reduce noise
-			completionFields := []any{
-				"method", r.Method,
-				"path", r.URL.Path,
-				"status", wrapped.status,
-				"duration_ms", duration.Milliseconds(),
-				"duration_formatted", duration.String(),
-				"request_bytes", requestSize,
-				"response_bytes", wrapped.size,
-				"size_flow", fmt.Sprintf("%s -> %s", formatBytes(requestSize), formatBytes(wrapped.size)),
-			}
-
-			if IsProxyRequest(r.URL.Path) {
-				// For proxy requests, just log at debug level since handler will log INFO
-				baseLogger.Debug("HTTP request completed", completionFields...)
+			if isProxy {
+				if baseLogger.Enabled(ctx, slog.LevelDebug) {
+					baseLogger.Debug("HTTP request completed",
+						"method", r.Method,
+						"path", r.URL.Path,
+						"status", wrapped.status,
+						"duration_ms", duration.Milliseconds(),
+						"duration_formatted", duration.String(),
+						"request_bytes", requestSize,
+						"response_bytes", wrapped.size,
+						"size_flow", fmt.Sprintf("%s -> %s", formatBytes(requestSize), formatBytes(wrapped.size)),
+					)
+				}
 			} else {
-				// For non-proxy requests, log at INFO
-				baseLogger.Info("Request completed", completionFields...)
+				if baseLogger.Enabled(ctx, slog.LevelInfo) {
+					baseLogger.Info("Request completed",
+						"method", r.Method,
+						"path", r.URL.Path,
+						"status", wrapped.status,
+						"duration_ms", duration.Milliseconds(),
+						"duration_formatted", duration.String(),
+						"request_bytes", requestSize,
+						"response_bytes", wrapped.size,
+						"size_flow", fmt.Sprintf("%s -> %s", formatBytes(requestSize), formatBytes(wrapped.size)),
+					)
+				}
 			}
 		})
 	}
@@ -209,26 +230,29 @@ func AccessLoggingMiddleware(styledLogger logger.StyledLogger) func(http.Handler
 
 			duration := time.Since(start)
 
-			// Create detailed context for file logging only
-			detailedCtx := context.WithValue(r.Context(), logger.DefaultDetailedCookie, true)
-
-			// Log detailed access information (file only)
+			// Access logs route to a dedicated file handler (keyed by DefaultDetailedCookie).
+			// Build fields only when the handler is enabled to avoid allocating the
+			// format.RFC3339 string, redactQuery output, and the variadic slice on every
+			// request when the file sink is not configured.
 			baseLogger := slog.Default()
-			baseLogger.InfoContext(detailedCtx, "Access log",
-				"timestamp", start.Format(time.RFC3339),
-				"request_id", requestID,
-				"remote_addr", r.RemoteAddr,
-				"method", r.Method,
-				"path", r.URL.Path,
-				"query", redactQuery(r.URL.RawQuery),
-				"status", wrapped.status,
-				"request_bytes", requestSize,
-				"response_bytes", wrapped.size,
-				"duration_ms", duration.Milliseconds(),
-				"user_agent", r.UserAgent(),
-				"referer", r.Referer(),
-				"content_type", r.Header.Get(constants.HeaderContentType),
-				"accept", r.Header.Get(constants.HeaderAccept))
+			detailedCtx := context.WithValue(r.Context(), logger.DefaultDetailedCookie, true)
+			if baseLogger.Enabled(detailedCtx, slog.LevelInfo) {
+				baseLogger.InfoContext(detailedCtx, "Access log",
+					"timestamp", start.Format(time.RFC3339),
+					"request_id", requestID,
+					"remote_addr", r.RemoteAddr,
+					"method", r.Method,
+					"path", r.URL.Path,
+					"query", redactQuery(r.URL.RawQuery),
+					"status", wrapped.status,
+					"request_bytes", requestSize,
+					"response_bytes", wrapped.size,
+					"duration_ms", duration.Milliseconds(),
+					"user_agent", r.UserAgent(),
+					"referer", r.Referer(),
+					"content_type", r.Header.Get(constants.HeaderContentType),
+					"accept", r.Header.Get(constants.HeaderAccept))
+			}
 		})
 	}
 }
