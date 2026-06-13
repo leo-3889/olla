@@ -283,7 +283,11 @@ func doGetModels(t *testing.T, handler http.HandlerFunc) []byte {
 	rr := httptest.NewRecorder()
 	handler(rr, req)
 	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+		// t.Errorf rather than t.Fatalf: this helper is called from goroutines
+		// in the concurrency test, and t.Fatalf calls runtime.Goexit which only
+		// exits the calling goroutine, silently leaving the parent test passing.
+		t.Errorf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+		return nil
 	}
 	// Return a copy so the recorder's buffer can be reused.
 	out := make([]byte, rr.Body.Len())

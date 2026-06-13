@@ -148,7 +148,7 @@ func BenchmarkWriteEvent_TextDelta(b *testing.B) {
 
 // BenchmarkWriteEvent_TextDelta_MapBaseline is a reference benchmark that uses the old
 // map[string]interface{} approach so the before/after is visible in a single run.
-// It is not wired into any production path — delete after measurements are taken.
+// It is not wired into any production path - delete after measurements are taken.
 func BenchmarkWriteEvent_TextDelta_MapBaseline(b *testing.B) {
 	tr := newTestTranslator()
 	rec := httptest.NewRecorder()
@@ -209,25 +209,30 @@ func TestWriteEvent_ConcurrentPoolSafety(t *testing.T) {
 // Run with: go test -bench=BenchmarkProcessStreamLine_TextChunk -benchmem -count=5
 func BenchmarkProcessStreamLine_TextChunk(b *testing.B) {
 	tr := newTestTranslator()
-	rec := httptest.NewRecorder()
-	rc := http.NewResponseController(rec)
-	state := &StreamingState{
-		messageID:        "msg-bench",
-		contentBlocks:    make([]ContentBlock, 0, 4),
-		toolCallBuffers:  make(map[int]*strings.Builder),
-		toolIndexToBlock: make(map[int]int),
-		messageStartSent: true,
-	}
-	// Prime a text block so the hot path skips block_start overhead.
-	state.currentBlock = &ContentBlock{Type: contentTypeText, Text: ""}
-	state.currentIndex = 0
-	state.contentBlocks = append(state.contentBlocks, *state.currentBlock)
 
 	line := `data: {"id":"chatcmpl-b","model":"claude-3-5-sonnet-20241022","choices":[{"delta":{"content":"hello"},"index":0}]}`
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		_ = tr.processStreamLine(line, state, rec, rc)
+		// Recreate recorder and state each iteration so alloc counts reflect a
+		// single-call steady state and mutable fields don't bleed between runs.
+		rec := httptest.NewRecorder()
+		rc := http.NewResponseController(rec)
+		state := &StreamingState{
+			messageID:        "msg-bench",
+			contentBlocks:    make([]ContentBlock, 0, 4),
+			toolCallBuffers:  make(map[int]*strings.Builder),
+			toolIndexToBlock: make(map[int]int),
+			messageStartSent: true,
+		}
+		// Prime a text block so the hot path skips block_start overhead.
+		state.currentBlock = &ContentBlock{Type: contentTypeText, Text: ""}
+		state.currentIndex = 0
+		state.contentBlocks = append(state.contentBlocks, *state.currentBlock)
+
+		if err := tr.processStreamLine(line, state, rec, rc); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
