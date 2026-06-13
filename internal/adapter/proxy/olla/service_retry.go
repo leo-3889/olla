@@ -140,6 +140,7 @@ func (s *Service) proxyToSingleEndpoint(ctx context.Context, w http.ResponseWrit
 
 	buffer, poolErr := s.bufferPool.Get()
 	if poolErr != nil {
+		s.RecordFailure(ctx, endpoint, time.Since(stats.StartTime), poolErr)
 		return fmt.Errorf("olla: stream buffer unavailable: %w", poolErr)
 	}
 	defer s.bufferPool.Put(buffer)
