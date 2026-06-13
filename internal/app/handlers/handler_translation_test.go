@@ -27,14 +27,18 @@ import (
 
 // mockTranslator implements RequestTranslator for testing
 type mockTranslator struct {
-	name                   string
-	transformRequestFunc   func(ctx context.Context, r *http.Request) (*translator.TransformedRequest, error)
-	transformResponseFunc  func(ctx context.Context, openaiResp interface{}, original *http.Request) (interface{}, error)
-	transformStreamingFunc func(ctx context.Context, openaiStream io.Reader, w http.ResponseWriter, original *http.Request) error
-	writeErrorFunc         func(w http.ResponseWriter, err error, statusCode int)
-	pathProvider           string
-	implementsErrorWriter  bool
-	implementsPathProvider bool
+	name                      string
+	transformRequestFunc      func(ctx context.Context, r *http.Request) (*translator.TransformedRequest, error)
+	transformResponseFunc     func(ctx context.Context, openaiResp interface{}, original *http.Request) (interface{}, error)
+	transformStreamingFunc    func(ctx context.Context, openaiStream io.Reader, w http.ResponseWriter, original *http.Request) error
+	writeErrorFunc            func(w http.ResponseWriter, err error, statusCode int)
+	countTokensFunc           func(ctx context.Context, r *http.Request) (*translator.TokenCountResponse, error)
+	serialiseCountTokensFunc  func(resp *translator.TokenCountResponse) ([]byte, error)
+	pathProvider              string
+	implementsErrorWriter     bool
+	implementsPathProvider    bool
+	implementsTokenCounter    bool
+	implementsTokenSerializer bool
 }
 
 func (m *mockTranslator) Name() string {
@@ -92,6 +96,20 @@ func (m *mockTranslator) WriteError(w http.ResponseWriter, err error, statusCode
 		return
 	}
 	panic("WriteError called on translator that doesn't implement ErrorWriter")
+}
+
+func (m *mockTranslator) CountTokens(ctx context.Context, r *http.Request) (*translator.TokenCountResponse, error) {
+	if m.implementsTokenCounter && m.countTokensFunc != nil {
+		return m.countTokensFunc(ctx, r)
+	}
+	panic("CountTokens called on translator that doesn't implement TokenCounter")
+}
+
+func (m *mockTranslator) SerialiseCountTokens(resp *translator.TokenCountResponse) ([]byte, error) {
+	if m.implementsTokenSerializer && m.serialiseCountTokensFunc != nil {
+		return m.serialiseCountTokensFunc(resp)
+	}
+	panic("SerialiseCountTokens called on translator that doesn't implement TokenCountSerializer")
 }
 
 // mockProxyService implements ProxyService for testing
@@ -1700,7 +1718,7 @@ func TestExecuteTranslatedStreamingRequest_ProxyErrorBeforeWrite(t *testing.T) {
 
 	select {
 	case <-done:
-		// Handler returned — no deadlock. The response status must indicate an error.
+		// Handler returned - no deadlock. The response status must indicate an error.
 		assert.GreaterOrEqual(t, rec.Code, http.StatusBadRequest,
 			"expected an error status when proxy fails before writing headers")
 	case <-ctx.Done():
@@ -1787,7 +1805,7 @@ func TestExecuteTranslatedStreamingRequest_ContextCancellationUnblocks(t *testin
 	// correctly unblocks the select, the handler returns well before this deadline.
 	select {
 	case <-done:
-		// Returned after cancellation — correct behaviour.
+		// Returned after cancellation - correct behaviour.
 	case <-time.After(3 * time.Second):
 		t.Fatal("handler did not unblock after context cancellation")
 	}
@@ -1914,7 +1932,7 @@ func TestHandleStreamingPanic_Writes502(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	// committedResponseWriter with committed=false simulates a panic before any
-	// byte was written to the real client — response is uncommitted.
+	// byte was written to the real client - response is uncommitted.
 	cw := newCommittedResponseWriter(rec)
 
 	// Call handleStreamingPanic directly, simulating the deferred call after a panic.
@@ -1926,7 +1944,7 @@ func TestHandleStreamingPanic_Writes502(t *testing.T) {
 		panic("simulated streaming panic")
 	}()
 
-	// The panic must NOT propagate — if it did, the test would fail here.
+	// The panic must NOT propagate - if it did, the test would fail here.
 	assert.Equal(t, http.StatusBadGateway, rec.Code,
 		"streaming panic must produce 502 not a connection reset")
 }
@@ -1968,7 +1986,7 @@ func TestHandleStreamingPanic_AfterStreamStarted_EmitsSSEError(t *testing.T) {
 	}()
 
 	body := rec.Body.String()
-	// Status must remain 200 — WriteHeader(502) is a no-op after the first Write.
+	// Status must remain 200 - WriteHeader(502) is a no-op after the first Write.
 	assert.Equal(t, http.StatusOK, rec.Code,
 		"status must stay 200 when the panic fires after the stream has started")
 	assert.Contains(t, body, "event: error",
@@ -2023,7 +2041,7 @@ func TestStreamingPanic_BeforeWrite_Returns502(t *testing.T) {
 			}, nil
 		},
 		transformStreamingFunc: func(ctx context.Context, openaiStream io.Reader, w http.ResponseWriter, original *http.Request) error {
-			// Panic before writing anything to w — stream is not started.
+			// Panic before writing anything to w - stream is not started.
 			panic("panic before any write")
 		},
 	}
@@ -2034,7 +2052,7 @@ func TestStreamingPanic_BeforeWrite_Returns502(t *testing.T) {
 		proxyFunc: func(ctx context.Context, w http.ResponseWriter, r *http.Request, endpoints []*domain.Endpoint, stats *ports.RequestStats, rlog logger.StyledLogger) error {
 			w.Header().Set(constants.HeaderContentType, "text/event-stream")
 			w.WriteHeader(http.StatusOK)
-			// No Write call — started remains false.
+			// No Write call - started remains false.
 			return nil
 		},
 	}
@@ -2113,6 +2131,102 @@ func TestCommittedResponseWriter_Unwrap(t *testing.T) {
 	if cw.Unwrap() != rec {
 		t.Fatal("Unwrap must return the exact underlying ResponseWriter")
 	}
+}
+
+// TestTokenCountHandler_SerialiseFailureReturns500 verifies that when a translator
+// implements TokenCountSerializer but SerialiseCountTokens returns an error, the
+// handler must NOT commit a 200 before the failure. Before the fix, WriteHeader(200)
+// was called unconditionally before serialisation, so the client received a 200 with
+// an empty or partial body.
+func TestTokenCountHandler_SerialiseFailureReturns500(t *testing.T) {
+	t.Parallel()
+
+	mockLogger := &mockStyledLogger{}
+	serErr := errors.New("json serialisation kaboom")
+
+	trans := &mockTranslator{
+		name:                      "anthropic",
+		implementsErrorWriter:     true,
+		implementsTokenCounter:    true,
+		implementsTokenSerializer: true,
+		writeErrorFunc: func(w http.ResponseWriter, err error, statusCode int) {
+			w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
+			w.WriteHeader(statusCode)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"type": "error",
+				"error": map[string]interface{}{
+					"type":    "api_error",
+					"message": err.Error(),
+				},
+			})
+		},
+		countTokensFunc: func(_ context.Context, _ *http.Request) (*translator.TokenCountResponse, error) {
+			return &translator.TokenCountResponse{InputTokens: 42}, nil
+		},
+		serialiseCountTokensFunc: func(_ *translator.TokenCountResponse) ([]byte, error) {
+			return nil, serErr
+		},
+	}
+
+	app := &Application{
+		logger: mockLogger,
+	}
+
+	handler := app.tokenCountHandler(trans)
+
+	reqBody, _ := json.Marshal(map[string]interface{}{
+		"model":    "test-model",
+		"messages": []interface{}{map[string]interface{}{"role": "user", "content": "hi"}},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/olla/anthropic/v1/messages/count_tokens", bytes.NewReader(reqBody))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	// The status must not be 200 - serialisation failed before any bytes were committed.
+	if rec.Code == http.StatusOK {
+		t.Errorf("expected non-200 status when serialisation fails, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500, got %d", rec.Code)
+	}
+}
+
+// TestTokenCountHandler_SerialiseSuccess verifies the happy path: successful
+// serialisation writes the body with a 200 status.
+func TestTokenCountHandler_SerialiseSuccess(t *testing.T) {
+	t.Parallel()
+
+	mockLogger := &mockStyledLogger{}
+
+	trans := &mockTranslator{
+		name:                      "anthropic",
+		implementsTokenCounter:    true,
+		implementsTokenSerializer: true,
+		countTokensFunc: func(_ context.Context, _ *http.Request) (*translator.TokenCountResponse, error) {
+			return &translator.TokenCountResponse{InputTokens: 17}, nil
+		},
+		serialiseCountTokensFunc: func(resp *translator.TokenCountResponse) ([]byte, error) {
+			return json.Marshal(map[string]int{"input_tokens": resp.InputTokens})
+		},
+	}
+
+	app := &Application{logger: mockLogger}
+	handler := app.tokenCountHandler(trans)
+
+	reqBody, _ := json.Marshal(map[string]interface{}{
+		"model":    "test-model",
+		"messages": []interface{}{map[string]interface{}{"role": "user", "content": "hi"}},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/olla/anthropic/v1/messages/count_tokens", bytes.NewReader(reqBody))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]int
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, 17, body["input_tokens"])
 }
 
 // TestCommittedResponseWriter_WriteAndWriteHeaderSetCommitted confirms the existing

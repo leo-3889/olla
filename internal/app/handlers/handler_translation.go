@@ -278,7 +278,7 @@ func (a *Application) tryPassthrough(
 
 	// Only pass endpoints whose backend natively supports the wire format.
 	// Mixed deployments (e.g. ollama + vllm) must not block passthrough for
-	// the capable subset — the proxy will route within that filtered list.
+	// the capable subset - the proxy will route within that filtered list.
 	//
 	// Additionally, exclude endpoints that declare a limitation matching a
 	// feature present in this specific request. Token-counting limitations
@@ -409,7 +409,7 @@ func (a *Application) translationHandler(trans translator.RequestTranslator) htt
 			return
 		}
 
-		// Passthrough was not used — fall back to full translation.
+		// Passthrough was not used - fall back to full translation.
 		mode := constants.TranslatorModeTranslation
 		fallbackReason := a.resolveTranslationFallback(trans)
 
@@ -460,7 +460,7 @@ func (a *Application) executeTranslatedNonStreamingRequest(
 		return a.handleNonStreamingBackendError(w, r, recorder, openaiErrResp, pr, trans)
 	}
 
-	// Success path: strict parse — a malformed 200 body is a gateway error.
+	// Success path: strict parse - a malformed 200 body is a gateway error.
 	var openaiResp map[string]interface{}
 	if jerr := json.Unmarshal(recorder.body.Bytes(), &openaiResp); jerr != nil {
 		return fmt.Errorf("failed to parse OpenAI response: %w", jerr)
@@ -763,7 +763,7 @@ func (a *Application) handleStreamingPanic(
 			return
 		}
 
-		// Nothing reached the client yet — response is uncommitted, so a plain
+		// Nothing reached the client yet - response is uncommitted, so a plain
 		// HTTP 502 with a structured error body reaches the client correctly.
 		if ew, ok := trans.(translator.ErrorWriter); ok {
 			ew.WriteError(w, errors.New("internal error during stream transformation"), http.StatusBadGateway)
@@ -959,24 +959,32 @@ func (a *Application) tokenCountHandler(trans translator.RequestTranslator) http
 			return
 		}
 
-		// Write successful response. Use the translator's own serialiser when
-		// available so each translator emits exactly the fields its spec defines.
-		// Anthropic count_tokens returns {"input_tokens":N} only; a generic encoder
-		// would include output_tokens and total_tokens which are not part of the spec.
+		// Serialise before touching the response writer. WriteHeader(200) is a
+		// one-way door - once sent the client sees a 200 even if serialisation
+		// subsequently fails, which results in a truncated or empty body with a
+		// misleading success status.
 		w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
-		w.WriteHeader(http.StatusOK)
 
 		if serialiser, ok := trans.(translator.TokenCountSerializer); ok {
 			body, serErr := serialiser.SerialiseCountTokens(resp)
 			if serErr != nil {
 				a.logger.Error("Failed to serialise token count response", "error", serErr)
+				if errorWriter, ok := trans.(translator.ErrorWriter); ok {
+					errorWriter.WriteError(w, serErr, http.StatusInternalServerError)
+				} else {
+					http.Error(w, "internal error serialising token count", http.StatusInternalServerError)
+				}
 				return
 			}
+			w.WriteHeader(http.StatusOK)
 			if _, wErr := w.Write(body); wErr != nil { //nolint:gosec // body is serialised JSON, not user-controlled data
 				a.logger.Error("Failed to write token count response", "error", wErr)
 			}
-		} else if err := json.NewEncoder(w).Encode(resp); err != nil {
-			a.logger.Error("Failed to encode token count response", "error", err)
+		} else {
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(resp); err != nil {
+				a.logger.Error("Failed to encode token count response", "error", err)
+			}
 		}
 	}
 }
@@ -1072,7 +1080,7 @@ func detectRequestFeatures(body []byte) requestFeatures {
 	// Each content entry may be a plain string (skip) or an array of blocks.
 	gjson.GetBytes(body, "messages.#.content").ForEach(func(_, contentVal gjson.Result) bool {
 		if !contentVal.IsArray() {
-			// Plain string content — no image blocks possible.
+			// Plain string content - no image blocks possible.
 			return true
 		}
 		contentVal.ForEach(func(_, block gjson.Result) bool {
@@ -1191,7 +1199,7 @@ func (r *streamingResponseRecorder) Header() http.Header {
 }
 
 // ensureHeadersReady closes headersReady exactly once. It is safe to call from
-// multiple goroutines and is idempotent — subsequent calls are no-ops.
+// multiple goroutines and is idempotent - subsequent calls are no-ops.
 func (r *streamingResponseRecorder) ensureHeadersReady() {
 	r.closeOnce.Do(func() { close(r.headersReady) })
 }
@@ -1209,6 +1217,6 @@ func (r *streamingResponseRecorder) WriteHeader(statusCode int) {
 }
 
 // Flush implements http.Flusher. The underlying io.Pipe is unbuffered
-// (writes block until read), so there is nothing to flush — this is
+// (writes block until read), so there is nothing to flush - this is
 // intentionally a no-op to satisfy http.ResponseController in proxy engines.
 func (r *streamingResponseRecorder) Flush() {}
