@@ -222,6 +222,16 @@ func (t *Translator) processStreamLine(line string, state *StreamingState, w htt
 		state.model = chunk.Model
 	}
 
+	// Capture usage before the empty-choices guard. vLLM (and others that honour
+	// include_usage=true) emit the final usage as a standalone chunk with
+	// choices:[] and a populated usage object. Processing choices first and
+	// returning early would silently discard those real token counts, leaving
+	// message_delta with the pre-stream estimate or output_tokens:0.
+	if u := chunk.Usage; u != nil {
+		state.inputTokens = u.PromptTokens
+		state.outputTokens = u.CompletionTokens
+	}
+
 	if len(chunk.Choices) == 0 {
 		return nil
 	}
@@ -231,12 +241,6 @@ func (t *Translator) processStreamLine(line string, state *StreamingState, w htt
 	// capture finish_reason for later stop_reason mapping; nil or empty means absent
 	if fr := choice.FinishReason; fr != nil && *fr != "" {
 		state.lastFinishReason = *fr
-	}
-
-	// grab usage stats if present (usually in the final chunk)
-	if u := chunk.Usage; u != nil {
-		state.inputTokens = u.PromptTokens
-		state.outputTokens = u.CompletionTokens
 	}
 
 	delta := choice.Delta

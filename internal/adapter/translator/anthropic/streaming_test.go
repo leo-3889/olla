@@ -1090,6 +1090,67 @@ func TestTransformStreamingResponse_LateArgDeltaDropped(t *testing.T) {
 	assertToolPresent(t, body, "call_late_target", "second_tool")
 }
 
+// TestTransformStreamingResponse_UsageOnlyFinalChunk verifies that a terminal chunk
+// with choices:[] and a populated usage object -- the format emitted by vLLM and
+// other backends that honour include_usage=true -- is correctly captured and reflected
+// in the message_delta usage. Previously the empty-choices guard returned early before
+// reading chunk.Usage, so message_delta kept the pre-stream estimate or showed
+// output_tokens:0.
+func TestTransformStreamingResponse_UsageOnlyFinalChunk(t *testing.T) {
+	t.Parallel()
+	tr := newTestTranslator()
+
+	// Stream layout:
+	//   1. text chunk (carries model name)
+	//   2. finish chunk (no usage, just the finish reason)
+	//   3. usage-only chunk with choices:[] (the backend's include_usage terminal chunk)
+	//   4. [DONE]
+	//
+	// The usage in step 3 must win over any estimate seeded earlier.
+	stream := mockOpenAIStream([]string{
+		textChunk("chatcmpl-uonly", "claude-3-5-sonnet-20241022", "Hi"),
+		finishChunk("chatcmpl-uonly", "stop"),
+		usageOnlyChunk("chatcmpl-uonly", 37, 14),
+		doneChunk(),
+	})
+
+	recorder := httptest.NewRecorder()
+	require.NoError(t, tr.TransformStreamingResponse(context.Background(), stream, recorder, nil))
+
+	events := parseAnthropicEvents(t, recorder.Body.String())
+
+	// Real token counts must appear in message_delta, not 0 or a stale estimate.
+	assertUsageTokens(t, events, 37, 14)
+}
+
+// TestTransformStreamingResponse_UsageOnlyChunkOverridesEstimate verifies that the
+// real backend usage in a terminal choices:[] chunk overwrites a non-zero estimate
+// that was seeded into context before the stream started. This guards against the
+// common case where the estimate is close but not exact.
+func TestTransformStreamingResponse_UsageOnlyChunkOverridesEstimate(t *testing.T) {
+	t.Parallel()
+	tr := newTestTranslator()
+
+	stream := mockOpenAIStream([]string{
+		textChunk("chatcmpl-override", "claude-3-5-sonnet-20241022", "Hello"),
+		finishChunk("chatcmpl-override", "stop"),
+		usageOnlyChunk("chatcmpl-override", 55, 20),
+		doneChunk(),
+	})
+
+	// Seed a non-zero estimate that differs from the real usage.
+	const seedTokens = 10
+	ctx := context.WithValue(context.Background(), constants.ContextInputTokensKey, seedTokens)
+
+	recorder := httptest.NewRecorder()
+	require.NoError(t, tr.TransformStreamingResponse(ctx, stream, recorder, nil))
+
+	events := parseAnthropicEvents(t, recorder.Body.String())
+
+	// Real counts from the usage-only chunk must replace the seeded estimate.
+	assertUsageTokens(t, events, 55, 20)
+}
+
 // TestTransformStreamingResponse_RepeatedToolIDNameDoesNotReinit verifies that when
 // a backend repeats the tool id + name on continuation chunks (alongside args), only
 // a single content_block_start is emitted for that tool. Re-initialising would close

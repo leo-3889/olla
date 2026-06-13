@@ -96,6 +96,18 @@ func doneChunk() string {
 	return "data: [DONE]\n\n"
 }
 
+// usageOnlyChunk creates an OpenAI SSE chunk with choices:[] and a populated usage
+// object. This is the format vLLM (and other backends that respect include_usage=true)
+// use to deliver final token counts as a separate terminal chunk rather than attaching
+// them to the finish chunk. The message ID is included for completeness; clients
+// correlate by stream position rather than by ID.
+func usageOnlyChunk(messageID string, promptTokens, completionTokens int) string {
+	return fmt.Sprintf(
+		"data: {\"id\":\"%s\",\"choices\":[],\"usage\":{\"prompt_tokens\":%d,\"completion_tokens\":%d,\"total_tokens\":%d}}\n\n",
+		messageID, promptTokens, completionTokens, promptTokens+completionTokens,
+	)
+}
+
 // reasoningChunk creates an OpenAI SSE chunk carrying reasoning text using the
 // "reasoning" field name (Ollama / LM Studio / Lemonade convention).
 func reasoningChunk(messageID, model, reasoning string) string {
