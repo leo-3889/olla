@@ -16,7 +16,7 @@ import (
 
 // openAIChunk is the typed representation of an incoming OpenAI SSE data line.
 // Using a typed struct instead of map[string]interface{} avoids per-chunk map
-// allocations and interface boxing — the dominant allocator on the streaming hot path.
+// allocations and interface boxing - the dominant allocator on the streaming hot path.
 type openAIChunk struct {
 	Usage   *openAIUsage   `json:"usage"`
 	Model   string         `json:"model"`
@@ -61,7 +61,7 @@ type openAIUsage struct {
 // sseDeltaEvent is the hot-path content_block_delta envelope.
 // Field order is chosen for struct packing (interface{} + string + int fits without
 // padding on amd64). JSON tag order (delta, index, type) differs from field
-// declaration order — clients parse JSON by key, not position, so this is safe.
+// declaration order; clients parse JSON by key, not position, so this is safe.
 type sseDeltaEvent struct {
 	Delta interface{} `json:"delta"` // sseTextDelta | sseThinkingDelta | sseInputJSONDelta
 	Type  string      `json:"type"`
@@ -91,7 +91,7 @@ type sseInputJSONDelta struct {
 
 // errInterleavedToolArguments signals that args arrived for a tool block that was
 // already stopped and closed on the wire. Corrupt tool input is worse than a failed
-// stream — the client can retry a clean failure, but cannot recover silent data loss.
+// stream; the client can retry a clean failure, but cannot recover silent data loss.
 var errInterleavedToolArguments = errors.New("tool arguments received for already-stopped block")
 
 // tracks state while streaming - buffers partial data, blocks in progress
@@ -336,7 +336,7 @@ func (t *Translator) handleContentDelta(content string, state *StreamingState, w
 		}
 	}
 
-	// send delta event for each chunk — typed struct avoids a per-chunk map allocation
+	// send delta event for each chunk - typed struct avoids a per-chunk map allocation
 	if err := t.writeEvent(w, "content_block_delta", sseDeltaEvent{
 		Delta: sseTextDelta{Text: content, Type: "text_delta"},
 		Index: state.currentIndex,
@@ -500,7 +500,7 @@ func (t *Translator) initializeToolBlock(id, name string, toolIndex int, state *
 // Three cases:
 //   - Block not yet initialised: buffer only; initializeToolBlock will flush on init.
 //   - Block is the current open block: emit input_json_delta normally.
-//   - Block was already stopped: corrupt wire state — emit an SSE error event and
+//   - Block was already stopped: corrupt wire state - emit an SSE error event and
 //     return errInterleavedToolArguments so the stream is aborted cleanly.
 func (t *Translator) sendToolArgumentsDelta(args string, toolIndex int, state *StreamingState, w http.ResponseWriter, rc *http.ResponseController) error {
 	// Always buffer regardless of block state so finalisation stays correct.
@@ -515,7 +515,7 @@ func (t *Translator) sendToolArgumentsDelta(args string, toolIndex int, state *S
 	}
 
 	// Interleaved or late delivery: args for a block that is already stopped.
-	// Corrupt tool input is worse than a failed stream — abort with a spec-valid error event.
+	// Corrupt tool input is worse than a failed stream - abort with a spec-valid error event.
 	if state.currentBlock == nil || blockIndex != state.currentIndex {
 		msg := fmt.Sprintf("tool arguments received for already-stopped block (tool_index=%d, block_index=%d)", toolIndex, blockIndex)
 		_ = t.writeEvent(w, "error", map[string]interface{}{
@@ -548,7 +548,7 @@ func (t *Translator) handleToolCallsDelta(toolCalls []openAIToolCall, state *Str
 	}
 
 	for _, tc := range toolCalls {
-		// absent index field defaults to 0 — the first and usually only tool call
+		// absent index field defaults to 0 - the first and usually only tool call
 		toolIndex := 0
 		if tc.Index != nil {
 			toolIndex = *tc.Index
@@ -627,7 +627,7 @@ func (t *Translator) finalizeStream(state *StreamingState, w http.ResponseWriter
 	// that don't set include_usage), output_tokens stays 0 from initialisation.
 	// Synthesise an estimate from accumulated content so Anthropic clients (including
 	// Claude Code) receive a plausible non-zero value rather than 0.
-	// The chars/4 heuristic matches the count_tokens estimator — acceptable precision
+	// The chars/4 heuristic matches the count_tokens estimator - acceptable precision
 	// for a fallback. Real backend usage always takes precedence; this branch only fires
 	// when state.outputTokens is still 0 after the full stream has been consumed.
 	if state.outputTokens == 0 {
@@ -748,7 +748,7 @@ func (t *Translator) createMessageStart(state *StreamingState) map[string]interf
 // Uses the translator's buffer pool to avoid a heap allocation per event.
 // The SSE frame format is: "event: <name>\ndata: <json>\n\n".
 // The pooled buffer is reset and returned before this function returns, so
-// there is no aliasing risk — w receives a copy via its own internal write path.
+// there is no aliasing risk - w receives a copy via its own internal write path.
 func (t *Translator) writeEvent(w http.ResponseWriter, event string, data interface{}) error {
 	buf, err := t.bufferPool.Get()
 	if err != nil {
@@ -766,7 +766,7 @@ func (t *Translator) writeEvent(w http.ResponseWriter, event string, data interf
 		dataJSON = dataJSON[:len(dataJSON)-1]
 	}
 
-	// Write the SSE frame in three direct writes — cheaper than fmt.Fprintf's
+	// Write the SSE frame in three direct writes - cheaper than fmt.Fprintf's
 	// format string parsing and avoids a string concatenation allocation.
 	var writeErr error
 	if _, writeErr = io.WriteString(w, "event: "); writeErr == nil {

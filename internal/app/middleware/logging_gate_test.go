@@ -63,7 +63,7 @@ func TestEnhancedLogging_Gate(t *testing.T) {
 		if rr.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d", rr.Code)
 		}
-		// The request-ID header must still be set — it is outside the log gate.
+		// The request-ID header must still be set - it is outside the log gate.
 		if rr.Header().Get("X-Olla-Request-ID") == "" {
 			t.Error("X-Olla-Request-ID header must be set even when debug logging is suppressed")
 		}
@@ -96,7 +96,7 @@ func TestEnhancedLogging_Gate(t *testing.T) {
 	})
 
 	// NonProxyPath_InfoLevel: non-proxy requests log at Info, which IS enabled at
-	// the default level — both "Request started" and "Request completed" must appear.
+	// the default level - both "Request started" and "Request completed" must appear.
 	t.Run("NonProxyPath_InfoLevel", func(t *testing.T) {
 		ch := &countingHandler{minLevel: slog.LevelInfo}
 		setDefaultLogger(t, ch)

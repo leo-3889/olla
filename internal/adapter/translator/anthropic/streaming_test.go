@@ -1187,7 +1187,7 @@ func TestTransformStreamingResponse_RepeatedToolIDNameDoesNotReinit(t *testing.T
 	// The single tool block must carry the correct id and name.
 	assertToolPresent(t, body, "call_rep", "rep_tool")
 
-	// All input_json_delta events must reference block index 0 — no spurious block 1.
+	// All input_json_delta events must reference block index 0 - no spurious block 1.
 	deltas := findEventsByType(events, "content_block_delta")
 	require.NotEmpty(t, deltas, "expected at least one input_json_delta")
 	for _, d := range deltas {
@@ -1209,7 +1209,7 @@ func TestTransformStreamingResponse_SynthesisedOutputTokensWhenNoBackendUsage(t 
 	t.Parallel()
 	tr := newTestTranslator()
 
-	// Stream with several content chunks but no usage chunk at all — the common case
+	// Stream with several content chunks but no usage chunk at all - the common case
 	// for most OpenAI-compatible backends that do not support include_usage.
 	content := "Hello, world! This is synthesised." // 34 chars -> 34/4 = 8
 	stream := mockOpenAIStream([]string{

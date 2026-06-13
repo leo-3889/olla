@@ -20,7 +20,7 @@ func TestDuration2(t *testing.T) {
 		// Sub-day values
 		{"1 hour", 1 * time.Hour, "1h 0m"},
 		{"23 hours", 23 * time.Hour, "23h 0m"},
-		// Exact multiples of 24 hours — these triggered the divide-by-zero panic.
+		// Exact multiples of 24 hours - these triggered the divide-by-zero panic.
 		{"24 hours", 24 * time.Hour, "1d 0h"},
 		{"48 hours", 48 * time.Hour, "2d 0h"},
 		{"72 hours", 72 * time.Hour, "3d 0h"},

@@ -66,7 +66,7 @@ func TestLitePool_Get_ErrorOnNilFactory(t *testing.T) {
 	p := &Pool[*int]{
 		pool: sync.Pool{
 			New: func() any {
-				// Return a typed nil (*int)(nil) — not the same as untyped nil in an
+				// Return a typed nil (*int)(nil) - not the same as untyped nil in an
 				// interface, which is what isNilValue is specifically designed to catch.
 				var n *int
 				return n
@@ -93,7 +93,7 @@ func TestLitePool_Get_ErrorOnNilFactory(t *testing.T) {
 func TestLitePool_Get_InterfaceTyped_UntypedNil(t *testing.T) {
 	t.Parallel()
 
-	// Pool[any] with a New that returns untyped nil — simulates a stateful factory that
+	// Pool[any] with a New that returns untyped nil - simulates a stateful factory that
 	// has exhausted its resource. sync.Pool can also return nil when New is not set and
 	// the pool is empty, but setting New here makes the behaviour deterministic.
 	p := &Pool[any]{
