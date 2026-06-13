@@ -53,14 +53,25 @@ func (c *anthropicModelsCache) set(fingerprint string, body []byte) {
 }
 
 // modelSetFingerprint builds a stable, cheap change-detection key from the
-// set of healthy model IDs. Sorting ensures the key is order-independent.
+// set of models as they will be emitted to clients.
+//
+// The response uses the first alias as the emitted id, not UnifiedModel.ID, so
+// the fingerprint must include the emitted value. Without this, an alias change
+// (e.g. a version suffix update) while the underlying IDs are stable would leave
+// stale alias strings in the cache until the next model-set change. Each entry is
+// "id:emittedID" so that changes to either field invalidate the cache.
+// Sorting ensures the key is order-independent.
 func modelSetFingerprint(models []*domain.UnifiedModel) string {
 	if len(models) == 0 {
 		return ""
 	}
 	ids := make([]string, 0, len(models))
 	for _, m := range models {
-		ids = append(ids, m.ID)
+		emitted := m.ID
+		if len(m.Aliases) > 0 {
+			emitted = m.Aliases[0].Name
+		}
+		ids = append(ids, m.ID+":"+emitted)
 	}
 	sort.Strings(ids)
 	return strings.Join(ids, ",")

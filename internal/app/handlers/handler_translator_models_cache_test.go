@@ -179,6 +179,93 @@ func TestModelSetFingerprint(t *testing.T) {
 	}
 }
 
+// TestModelSetFingerprint_AliasChange verifies that the fingerprint changes when an
+// alias changes even if the underlying model IDs are stable. Without this, the cache
+// would serve stale emitted IDs (first alias) for the lifetime of the unchanged ID set.
+func TestModelSetFingerprint_AliasChange(t *testing.T) {
+	t.Parallel()
+
+	before := []*domain.UnifiedModel{
+		{
+			ID:      "model/internal",
+			Aliases: []domain.AliasEntry{{Name: "my-model-v1", Source: "test"}},
+		},
+	}
+	after := []*domain.UnifiedModel{
+		{
+			ID:      "model/internal",                                           // same underlying ID
+			Aliases: []domain.AliasEntry{{Name: "my-model-v2", Source: "test"}}, // alias changed
+		},
+	}
+
+	if modelSetFingerprint(before) == modelSetFingerprint(after) {
+		t.Error("fingerprint must differ when the first alias (emitted id) changes")
+	}
+}
+
+// TestAnthropicModelsCache_InvalidatesOnAliasChange verifies that when only an alias
+// changes (underlying ID stable), the cache is invalidated and the new alias is served.
+func TestAnthropicModelsCache_InvalidatesOnAliasChange(t *testing.T) {
+	t.Parallel()
+
+	reg := &mutableTranslatorRegistry{
+		models: []*domain.UnifiedModel{
+			{
+				ID:              "internal/model",
+				Aliases:         []domain.AliasEntry{{Name: "model-v1", Source: "test"}},
+				SourceEndpoints: []domain.SourceEndpoint{{EndpointURL: "http://localhost:8080"}},
+			},
+		},
+	}
+
+	app := &Application{
+		logger:           &mockStyledLogger{},
+		modelRegistry:    reg,
+		discoveryService: &mockDiscoveryService{},
+		repository:       &mockEndpointRepository{},
+	}
+
+	trans := mustNewAnthropicTranslator(t)
+	handler := app.translatorModelsHandler(trans)
+
+	// First call: cache miss, builds with model-v1.
+	body1 := doGetModels(t, handler)
+	data1 := decodeModelsData(t, body1)
+	if len(data1) != 1 {
+		t.Fatalf("expected 1 model, got %d", len(data1))
+	}
+	firstID1, ok := data1[0].(map[string]interface{})["id"].(string)
+	if !ok {
+		t.Fatal("expected id to be a string")
+	}
+	if firstID1 != "model-v1" {
+		t.Errorf("expected emitted id %q, got %q", "model-v1", firstID1)
+	}
+
+	// Simulate a discovery cycle that updates only the alias (same underlying ID).
+	reg.mu.Lock()
+	reg.models[0] = &domain.UnifiedModel{
+		ID:              "internal/model", // unchanged
+		Aliases:         []domain.AliasEntry{{Name: "model-v2", Source: "test"}},
+		SourceEndpoints: []domain.SourceEndpoint{{EndpointURL: "http://localhost:8080"}},
+	}
+	reg.mu.Unlock()
+
+	// Second call: fingerprint changed due to alias change, must rebuild.
+	body2 := doGetModels(t, handler)
+	data2 := decodeModelsData(t, body2)
+	if len(data2) != 1 {
+		t.Fatalf("expected 1 model after alias update, got %d", len(data2))
+	}
+	firstID2, ok := data2[0].(map[string]interface{})["id"].(string)
+	if !ok {
+		t.Fatal("expected id to be a string")
+	}
+	if firstID2 != "model-v2" {
+		t.Errorf("cache not invalidated on alias change: expected %q, got %q", "model-v2", firstID2)
+	}
+}
+
 // mustNewAnthropicTranslator creates an Anthropic translator for test use.
 func mustNewAnthropicTranslator(t *testing.T) translator.RequestTranslator {
 	t.Helper()
