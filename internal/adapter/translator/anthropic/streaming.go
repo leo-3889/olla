@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,11 @@ import (
 	"github.com/thushan/olla/internal/core/constants"
 	"github.com/thushan/olla/internal/util"
 )
+
+// errInterleavedToolArguments signals that args arrived for a tool block that was
+// already stopped and closed on the wire. Corrupt tool input is worse than a failed
+// stream — the client can retry a clean failure, but cannot recover silent data loss.
+var errInterleavedToolArguments = errors.New("tool arguments received for already-stopped block")
 
 // tracks state while streaming - buffers partial data, blocks in progress
 type StreamingState struct {
@@ -56,6 +62,9 @@ func (t *Translator) TransformStreamingResponse(ctx context.Context, openaiStrea
 	streamErr := t.transformStreamingSync(ctx, openaiStream, w, rc, state)
 
 	if streamErr != nil {
+		// Return immediately for all stream errors. For errInterleavedToolArguments the
+		// SSE error event is already on the wire; emitting message_delta/message_stop after
+		// an error event is invalid per the Anthropic spec.
 		return streamErr
 	}
 
@@ -95,6 +104,10 @@ func (t *Translator) transformStreamingSync(ctx context.Context, openaiStream io
 
 		line := scanner.Text()
 		if err := t.processStreamLine(line, state, w, rc); err != nil {
+			// Interleaved tool args corrupt the client's tool input; abort the stream.
+			if errors.Is(err, errInterleavedToolArguments) {
+				return err
+			}
 			t.logger.Error("Error processing stream line", "error", err)
 			continue // keep going, don't fail entire stream on one bad line
 		}
@@ -308,7 +321,10 @@ func (t *Translator) closeCurrentBlock(state *StreamingState, w http.ResponseWri
 	return nil
 }
 
-// initializeToolBlock creates and sends a new tool_use block start event
+// initializeToolBlock creates and sends a new tool_use block start event.
+// If args arrived before the id+name chunk (pre-init buffering), flushes the
+// buffer as a single input_json_delta immediately after content_block_start so
+// the pre-init case is lossless.
 func (t *Translator) initializeToolBlock(id, name string, toolIndex int, state *StreamingState, w http.ResponseWriter, rc *http.ResponseController) error {
 	// close whatever block is currently open before starting a new one; both text
 	// and prior tool blocks must be stopped before the next block_start is emitted.
@@ -339,33 +355,64 @@ func (t *Translator) initializeToolBlock(id, name string, toolIndex int, state *
 		return err
 	}
 
-	return rc.Flush()
+	if err := rc.Flush(); err != nil {
+		return fmt.Errorf("flush failed: %w", err)
+	}
+
+	// Flush any args that arrived before the id+name chunk opened this block.
+	// Without this the pre-init buffer is silently discarded on the wire.
+	if buf, exists := state.toolCallBuffers[toolIndex]; exists && buf.Len() > 0 {
+		buffered := buf.String()
+		if err := t.writeEvent(w, "content_block_delta", map[string]interface{}{
+			"type":  "content_block_delta",
+			"index": state.currentIndex,
+			"delta": map[string]interface{}{
+				"type":         "input_json_delta",
+				"partial_json": buffered,
+			},
+		}); err != nil {
+			return err
+		}
+		if err := rc.Flush(); err != nil {
+			return fmt.Errorf("flush failed: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // sendToolArgumentsDelta buffers and emits a partial_json delta for the given tool index.
 //
-// The SSE index must track the tool's own content block, not the currently open block.
-// When arguments arrive for a tool that has already been stopped (late or interleaved
-// delivery), we still buffer the data so finaliseStream can reconstruct the complete
-// input, but we skip the SSE emission. Emitting a delta for a stopped block is invalid
-// on the wire and matches vLLM's own guard (it checks state.tool_use_id == tool_use_id).
+// Three cases:
+//   - Block not yet initialised: buffer only; initializeToolBlock will flush on init.
+//   - Block is the current open block: emit input_json_delta normally.
+//   - Block was already stopped: corrupt wire state — emit an SSE error event and
+//     return errInterleavedToolArguments so the stream is aborted cleanly.
 func (t *Translator) sendToolArgumentsDelta(args string, toolIndex int, state *StreamingState, w http.ResponseWriter, rc *http.ResponseController) error {
 	// Always buffer regardless of block state so finalisation stays correct.
 	state.toolCallBuffers[toolIndex].WriteString(args)
 
 	blockIndex, mapped := state.toolIndexToBlock[toolIndex]
 	if !mapped {
-		// Arguments arrived before the id+name chunk opened the block; buffer only.
+		// Args arrived before id+name chunk; initializeToolBlock flushes the buffer.
 		t.logger.Debug("Tool args received before block initialised, buffering only",
 			"tool_index", toolIndex)
 		return nil
 	}
 
-	// Only emit if this tool's block is still the currently open one.
+	// Interleaved or late delivery: args for a block that is already stopped.
+	// Corrupt tool input is worse than a failed stream — abort with a spec-valid error event.
 	if state.currentBlock == nil || blockIndex != state.currentIndex {
-		t.logger.Debug("Skipping delta for already-stopped tool block",
-			"tool_index", toolIndex, "block_index", blockIndex, "current_index", state.currentIndex)
-		return nil
+		msg := fmt.Sprintf("tool arguments received for already-stopped block (tool_index=%d, block_index=%d)", toolIndex, blockIndex)
+		_ = t.writeEvent(w, "error", map[string]interface{}{
+			"type": "error",
+			"error": map[string]interface{}{
+				"type":    "api_error",
+				"message": msg,
+			},
+		})
+		_ = rc.Flush()
+		return errInterleavedToolArguments
 	}
 
 	if err := t.writeEvent(w, "content_block_delta", map[string]interface{}{
@@ -463,8 +510,10 @@ func (t *Translator) finalizeStream(state *StreamingState, w http.ResponseWriter
 			"stop_sequence": nil,
 		},
 		"usage": map[string]interface{}{
-			"input_tokens":  state.inputTokens,
-			"output_tokens": state.outputTokens,
+			"input_tokens":                state.inputTokens,
+			"output_tokens":               state.outputTokens,
+			"cache_creation_input_tokens": 0,
+			"cache_read_input_tokens":     0,
 		},
 	}); err != nil {
 		return err
@@ -535,14 +584,18 @@ func (t *Translator) createMessageStart(state *StreamingState) map[string]interf
 	return map[string]interface{}{
 		"type": "message_start",
 		"message": map[string]interface{}{
-			"id":      state.messageID,
-			"type":    "message",
-			"role":    "assistant",
-			"model":   state.model,
-			"content": []interface{}{},
+			"id":            state.messageID,
+			"type":          "message",
+			"role":          "assistant",
+			"model":         state.model,
+			"content":       []interface{}{},
+			"stop_reason":   nil,
+			"stop_sequence": nil,
 			"usage": map[string]interface{}{
-				"input_tokens":  state.inputTokens,
-				"output_tokens": 0,
+				"input_tokens":                state.inputTokens,
+				"output_tokens":               0,
+				"cache_creation_input_tokens": 0,
+				"cache_read_input_tokens":     0,
 			},
 		},
 	}

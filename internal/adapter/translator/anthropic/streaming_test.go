@@ -455,9 +455,9 @@ func TestTransformStreamingResponse_InterleavedToolArguments(t *testing.T) {
 	translator := newTestTranslator()
 
 	// Interleaved tool starts followed by interleaved args. Under the single-active-block
-	// invariant, toolStart(1) closes block 0 before opening block 1. Any subsequent args
-	// for tool 0 (whose block is already stopped) are buffered internally for finalisation
-	// but are NOT emitted on the SSE wire. This matches vLLM's guard on tool_use_id.
+	// invariant, toolStart(1) closes block 0 before opening block 1. Args for tool 0
+	// arriving after its block was stopped trigger an SSE error event and abort the stream;
+	// corrupt tool input is worse than a clean failure the client can retry.
 	stream := mockOpenAIStream([]string{
 		toolStartChunk("chatcmpl-int", 0, "call_A", "toolA"),
 		toolStartChunk("chatcmpl-int", 1, "call_B", "toolB"),
@@ -470,22 +470,141 @@ func TestTransformStreamingResponse_InterleavedToolArguments(t *testing.T) {
 		doneChunk(),
 	})
 
-	recorder := executeTransform(t, translator, stream)
+	recorder := httptest.NewRecorder()
+	err := translator.TransformStreamingResponse(context.Background(), stream, recorder, nil)
+	// stream must be aborted with the sentinel error
+	require.ErrorIs(t, err, errInterleavedToolArguments)
+
 	body := recorder.Body.String()
 
-	// Both tool IDs and names must still appear (from content_block_start events).
+	// Both tool starts must have been emitted before the abort.
 	assertToolPresent(t, body, "call_A", "toolA")
 	assertToolPresent(t, body, "call_B", "toolB")
 
-	// args for tool 1 (the active block) must be on the wire.
-	assert.Contains(t, body, `456`)
+	// SSE error event must be on the wire.
+	assert.Contains(t, body, "event: error")
+	assert.Contains(t, body, `"type":"error"`)
+	assert.Contains(t, body, `"type":"api_error"`)
 
-	// args for tool 0 arrived after its block was stopped; no SSE delta emitted.
-	assert.NotContains(t, body, `123`)
+	// message_delta and message_stop must NOT appear after the error event.
+	assert.NotContains(t, body, "event: message_delta")
+	assert.NotContains(t, body, "event: message_stop")
+}
 
+// TestTransformStreamingResponse_PreInitBufferedArgsFlush verifies that args
+// arriving before the id+name chunk are emitted as the first input_json_delta
+// immediately after content_block_start, making the pre-init case lossless.
+func TestTransformStreamingResponse_PreInitBufferedArgsFlush(t *testing.T) {
+	t.Parallel()
+	tr := newTestTranslator()
+
+	// Construct a stream where the args chunk for tool 0 arrives before the
+	// toolStart (id+name) chunk.  This simulates a backend that delivers function
+	// arguments in the first delta before the function metadata chunk.
+	preInitArgs := `{\\\"prefix\\\"`
+	laterArgs := `:\\\"value\\\"}`
+
+	// Build the raw SSE bytes manually so we can put the args chunk first.
+	stream := mockOpenAIStream([]string{
+		toolArgsChunk("chatcmpl-preinit", 0, preInitArgs), // args arrive before id+name
+		toolStartChunk("chatcmpl-preinit", 0, "call_pre", "pre_tool"),
+		toolArgsChunk("chatcmpl-preinit", 0, laterArgs),
+		finishChunk("chatcmpl-preinit", "tool_calls"),
+		doneChunk(),
+	})
+
+	recorder := executeTransform(t, tr, stream)
+	body := recorder.Body.String()
 	events := parseAnthropicEvents(t, body)
-	assertContentBlockCount(t, events, 2)
+
+	// Tool block must be present.
+	assertToolPresent(t, body, "call_pre", "pre_tool")
+
+	// Both the pre-init and later args must appear in input_json_delta events.
+	assert.Contains(t, body, "prefix")
+	assert.Contains(t, body, "value")
+
+	// There must be at least two input_json_delta events: one for the pre-init
+	// flush and one (or more) for the later args.
+	deltas := findEventsByType(events, "content_block_delta")
+	require.GreaterOrEqual(t, len(deltas), 2, "expected at least 2 deltas: pre-init flush + later args")
+
+	// All deltas must reference the single tool block (index 0).
+	for _, d := range deltas {
+		idx, ok := getContentBlockIndex(d)
+		require.True(t, ok)
+		assert.Equal(t, 0, idx, "all deltas should reference block 0")
+	}
+
 	assertBlocksClosed(t, events)
+}
+
+// TestTransformStreamingResponse_MessageStartCacheFields verifies that message_start
+// carries the cache_creation_input_tokens and cache_read_input_tokens fields (both 0).
+func TestTransformStreamingResponse_MessageStartCacheFields(t *testing.T) {
+	t.Parallel()
+	tr := newTestTranslator()
+
+	stream := mockOpenAIStream([]string{
+		textChunk("chatcmpl-cache", "claude-3-5-sonnet-20241022", "Hi"),
+		finishChunk("chatcmpl-cache", "stop"),
+		doneChunk(),
+	})
+
+	recorder := httptest.NewRecorder()
+	require.NoError(t, tr.TransformStreamingResponse(context.Background(), stream, recorder, nil))
+
+	events := parseAnthropicEvents(t, recorder.Body.String())
+
+	start := getEventByType(events, "message_start")
+	require.NotNil(t, start)
+	message, ok := start["message"].(map[string]interface{})
+	require.True(t, ok)
+	usage, ok := message["usage"].(map[string]interface{})
+	require.True(t, ok)
+
+	_, hasCacheCreate := usage["cache_creation_input_tokens"]
+	_, hasCacheRead := usage["cache_read_input_tokens"]
+	assert.True(t, hasCacheCreate, "message_start usage must include cache_creation_input_tokens")
+	assert.True(t, hasCacheRead, "message_start usage must include cache_read_input_tokens")
+	assert.Equal(t, float64(0), usage["cache_creation_input_tokens"])
+	assert.Equal(t, float64(0), usage["cache_read_input_tokens"])
+
+	// stop_reason and stop_sequence must be present in the message object
+	_, hasStopReason := message["stop_reason"]
+	_, hasStopSeq := message["stop_sequence"]
+	assert.True(t, hasStopReason, "message_start message must include stop_reason")
+	assert.True(t, hasStopSeq, "message_start message must include stop_sequence")
+}
+
+// TestTransformStreamingResponse_MessageDeltaCacheFields verifies that message_delta
+// carries the cache_creation_input_tokens and cache_read_input_tokens fields (both 0).
+func TestTransformStreamingResponse_MessageDeltaCacheFields(t *testing.T) {
+	t.Parallel()
+	tr := newTestTranslator()
+
+	stream := mockOpenAIStream([]string{
+		textChunk("chatcmpl-deltacache", "claude-3-5-sonnet-20241022", "Hi"),
+		finishChunkWithUsage("chatcmpl-deltacache", "stop", 5, 3),
+		doneChunk(),
+	})
+
+	recorder := httptest.NewRecorder()
+	require.NoError(t, tr.TransformStreamingResponse(context.Background(), stream, recorder, nil))
+
+	events := parseAnthropicEvents(t, recorder.Body.String())
+
+	delta := getEventByType(events, "message_delta")
+	require.NotNil(t, delta)
+	usage, ok := delta["usage"].(map[string]interface{})
+	require.True(t, ok)
+
+	_, hasCacheCreate := usage["cache_creation_input_tokens"]
+	_, hasCacheRead := usage["cache_read_input_tokens"]
+	assert.True(t, hasCacheCreate, "message_delta usage must include cache_creation_input_tokens")
+	assert.True(t, hasCacheRead, "message_delta usage must include cache_read_input_tokens")
+	assert.Equal(t, float64(0), usage["cache_creation_input_tokens"])
+	assert.Equal(t, float64(0), usage["cache_read_input_tokens"])
 }
 
 func TestTransformStreamingResponse_ToolTextToolTransitions(t *testing.T) {
@@ -683,16 +802,14 @@ func TestTransformStreamingResponse_EmptyToolCallsArray(t *testing.T) {
 func TestTransformStreamingResponse_ManyTools(t *testing.T) {
 	translator := newTestTranslator()
 
-	// create stream with 15 tools
+	// create stream with 15 tools, sending each start then its own args immediately
+	// (sequential, not interleaved) so no block is already stopped when args arrive.
 	chunks := []string{
 		textChunk("chatcmpl-many", "claude-3-5-sonnet-20241022", "Processing many tools"),
 	}
 
-	// add 15 tools with interleaved arguments
 	for i := range 15 {
 		chunks = append(chunks, toolStartChunk("chatcmpl-many", i, fmt.Sprintf("call_%d", i), fmt.Sprintf("tool_%d", i)))
-	}
-	for i := range 15 {
 		chunks = append(chunks, toolArgsChunk("chatcmpl-many", i, fmt.Sprintf(`{\\\"n\\\":%d}`, i)))
 	}
 
@@ -936,52 +1053,39 @@ func TestTransformStreamingResponse_TextThenToolExactSequence(t *testing.T) {
 	assert.Equal(t, 1, toolIdx)
 }
 
-// TestTransformStreamingResponse_LateArgDeltaDropped verifies that a delta arriving
-// for a tool whose block has already been stopped is not emitted on the wire, does
-// not corrupt the index of the subsequent block, and does not panic.
+// TestTransformStreamingResponse_LateArgDeltaDropped verifies that a late delta
+// arriving for a tool whose block has already been stopped aborts the stream with
+// errInterleavedToolArguments and emits a spec-valid SSE error event. The stream
+// must not emit message_delta or message_stop after the error.
 func TestTransformStreamingResponse_LateArgDeltaDropped(t *testing.T) {
 	t.Parallel()
 	tr := newTestTranslator()
 
 	// tool 0 starts and gets an arg, then tool 1 starts (which closes tool 0),
-	// then a late arg arrives for tool 0 -- must be silently dropped.
+	// then a late arg arrives for tool 0 -- must abort the stream.
 	stream := mockOpenAIStream([]string{
 		toolStartChunk("chatcmpl-late", 0, "call_early", "first_tool"),
 		toolArgsChunk("chatcmpl-late", 0, `{\\\"a\\\":1}`),
 		toolStartChunk("chatcmpl-late", 1, "call_late_target", "second_tool"),
-		toolArgsChunk("chatcmpl-late", 0, `{\\\"late\\\":true}`), // late for tool 0
+		toolArgsChunk("chatcmpl-late", 0, `{\\\"late\\\":true}`), // late for tool 0 -- aborts
 		toolArgsChunk("chatcmpl-late", 1, `{\\\"b\\\":2}`),
 		finishChunk("chatcmpl-late", "tool_calls"),
 		doneChunk(),
 	})
 
-	recorder := executeTransform(t, tr, stream)
+	recorder := httptest.NewRecorder()
+	err := tr.TransformStreamingResponse(context.Background(), stream, recorder, nil)
+	require.ErrorIs(t, err, errInterleavedToolArguments)
+
 	body := recorder.Body.String()
-	events := parseAnthropicEvents(t, body)
 
-	// stream must complete without panicking
-	require.NotEmpty(t, events)
+	// SSE error event must be present and no finalise events must follow.
+	assert.Contains(t, body, "event: error")
+	assert.Contains(t, body, `"type":"api_error"`)
+	assert.NotContains(t, body, "event: message_delta")
+	assert.NotContains(t, body, "event: message_stop")
 
-	assertBlocksClosed(t, events)
-	assertContentBlockCount(t, events, 2)
-
-	// late arg for tool 0 ({\"late\":true}) must not appear on the wire as a delta
-	assert.NotContains(t, body, `"partial_json":"{\\\"late`)
-	assert.NotContains(t, body, `true`)
-
-	// tool 1's args must be present (the partial_json chunk)
-	assert.Contains(t, body, `second_tool`)
-	// tool 1 has a delta event with its args
-	deltas := findEventsByType(events, "content_block_delta")
-	require.NotEmpty(t, deltas, "at least one delta must be emitted for tool 1")
-
-	// no delta should reference a stopped block; all deltas must use their
-	// owning block's index, not bleed onto the currently open block.
-	for _, d := range deltas {
-		idx, ok := getContentBlockIndex(d)
-		require.True(t, ok)
-		// tool 0's only valid delta (args arriving while still open) is at index 0;
-		// tool 1's deltas must be at index 1; no delta should be at index > 1.
-		assert.LessOrEqual(t, idx, 1, "no delta should reference a block index beyond the two opened blocks")
-	}
+	// Both tool block starts (emitted before the abort) must be present.
+	assertToolPresent(t, body, "call_early", "first_tool")
+	assertToolPresent(t, body, "call_late_target", "second_tool")
 }
