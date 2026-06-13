@@ -734,7 +734,7 @@ func TestStopChecking_DoubleInvoke(t *testing.T) {
 		t.Fatalf("StartChecking: %v", err)
 	}
 
-	// Two concurrent stops — neither should panic.
+	// Two concurrent stops - neither should panic.
 	var wg sync.WaitGroup
 	wg.Add(2)
 	for range 2 {
@@ -747,7 +747,7 @@ func TestStopChecking_DoubleInvoke(t *testing.T) {
 }
 
 // panicRepository panics on GetAll after a configurable number of successful calls,
-// then returns normally — used to verify the healthCheckLoop survives a tick panic.
+// then returns normally - used to verify the healthCheckLoop survives a tick panic.
 type panicRepository struct {
 	*mockRepository
 	callsUntilPanic int
@@ -796,7 +796,7 @@ func TestHealthCheckLoop_SurvivesPanic(t *testing.T) {
 	// Wait long enough for two ticks (the first panics, the second must succeed).
 	time.Sleep(120 * time.Millisecond)
 
-	// isRunning must still be true — the loop survived the panic.
+	// isRunning must still be true - the loop survived the panic.
 	if !checker.isRunning.Load() {
 		t.Error("isRunning is false after tick panic; loop likely died")
 	}
@@ -811,4 +811,83 @@ func TestHealthCheckLoop_SurvivesPanic(t *testing.T) {
 	}
 
 	_ = checker.StopChecking(ctx)
+}
+
+// blockingHTTPClient blocks in Do until the request context is cancelled, then
+// records that cancellation was observed. Used to verify that in-flight checks
+// are cancelled when the loop context is cancelled rather than running to their
+// full timeout.
+type blockingHTTPClient struct {
+	cancelled chan struct{} // closed when a Do call observes ctx cancellation
+}
+
+func (b *blockingHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	<-req.Context().Done()
+	select {
+	case <-b.cancelled:
+	default:
+		close(b.cancelled)
+	}
+	return nil, req.Context().Err()
+}
+
+// TestHealthCheckLoop_CancelledContextAbortsInFlightChecks verifies that when the
+// loop context is cancelled, any in-flight health check context is also cancelled
+// rather than running to its full per-tick timeout. Before the fix, checkCtx was
+// derived from context.Background() so cancelling the loop ctx had no effect on
+// the check in progress.
+func TestHealthCheckLoop_CancelledContextAbortsInFlightChecks(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping shutdown-cancellation test in short mode")
+	}
+	t.Parallel()
+
+	loggerCfg := &logger.Config{Level: "error", Theme: "default"}
+	log, cleanup, _ := logger.New(loggerCfg)
+	defer cleanup()
+	styledLogger := logger.NewPlainStyledLogger(log)
+
+	repo := newMockRepository()
+
+	testURL, _ := url.Parse("http://localhost:19999")
+	healthURL, _ := url.Parse("http://localhost:19999/health")
+	ep := &domain.Endpoint{
+		Name:           "blocking-ep",
+		URL:            testURL,
+		HealthCheckURL: healthURL,
+		CheckTimeout:   5 * time.Second,
+		URLString:      testURL.String(),
+	}
+	repo.mu.Lock()
+	repo.endpoints[testURL.String()] = ep
+	repo.mu.Unlock()
+
+	blocking := &blockingHTTPClient{cancelled: make(chan struct{})}
+	checker := NewHTTPHealthChecker(repo, styledLogger, blocking)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Drive a single performHealthChecks tick directly from a goroutine, then
+	// cancel the ctx immediately. We skip the ticker so the test is deterministic.
+	started := make(chan struct{})
+	go func() {
+		close(started)
+		// Per-tick timeout must also be short so cancellation is observable.
+		checkCtx, checkCancel := context.WithTimeout(ctx, 5*time.Second)
+		defer checkCancel()
+		checker.performHealthChecks(checkCtx)
+	}()
+
+	// Wait for the goroutine to start, then cancel.
+	<-started
+	cancel()
+
+	// The in-flight Do call should observe the cancellation well within the
+	// per-tick timeout (5 s). Allow 500 ms as a generous but bounded window.
+	select {
+	case <-blocking.cancelled:
+		// pass - in-flight check was cancelled
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("in-flight health check was not cancelled within 500ms after loop context was cancelled")
+	}
 }

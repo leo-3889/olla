@@ -150,7 +150,7 @@ func (c *HTTPHealthChecker) healthCheckLoop(ctx context.Context) {
 			return
 		case <-c.ticker.C:
 			// Wrap per-tick work in its own recover so a panic in
-			// performHealthChecks does not kill the goroutine — the loop
+			// performHealthChecks does not kill the goroutine - the loop
 			// continues and the next tick fires normally.
 			func() {
 				defer func() {
@@ -159,7 +159,10 @@ func (c *HTTPHealthChecker) healthCheckLoop(ctx context.Context) {
 							"panic", r)
 					}
 				}()
-				checkCtx, cancel := context.WithTimeout(context.Background(), DefaultHealthCheckInterval/2)
+				// Derive from the loop's own context so in-flight checks are
+				// cancelled when the checker shuts down, rather than running
+				// to their full timeout against an already-stopped service.
+				checkCtx, cancel := context.WithTimeout(ctx, DefaultHealthCheckInterval/2)
 				defer cancel()
 				c.performHealthChecks(checkCtx)
 			}()
@@ -316,7 +319,7 @@ func (c *HTTPHealthChecker) checkEndpoint(ctx context.Context, endpoint *domain.
 
 	// Trigger unhealthy callback only when an endpoint becomes non-routable from a
 	// routable state. Busy and Warming are still routable, so a Healthy→Busy transition
-	// must not evict sticky sessions — that would defeat KV-cache affinity entirely.
+	// must not evict sticky sessions - that would defeat KV-cache affinity entirely.
 	// Unknown→Unhealthy is intentionally excluded: nothing could have been pinned to an
 	// endpoint that was never routable, so there is nothing to purge.
 	if statusChanged && !newStatus.IsRoutable() && oldStatus.IsRoutable() {
