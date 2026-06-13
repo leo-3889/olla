@@ -244,14 +244,24 @@ func (t *Translator) processStreamLine(line string, state *StreamingState, w htt
 	// reasoning / reasoning_content are the per-backend field names for chain-of-thought.
 	// Ollama, LM Studio, and Lemonade use "reasoning"; vLLM, SGLang, and DeepSeek use
 	// "reasoning_content". Treat them as equivalent and prefer whichever is non-empty.
+	//
+	// Some OpenAI-compatible adapters coalesce reasoning + content (or + tool_calls) into
+	// a single chunk. We must not return early after handling reasoning: fall through so
+	// content and tool_calls in the same chunk are also processed. handleContentDelta and
+	// initializeToolBlock both call closeCurrentBlock before opening a new one, so the
+	// thinking block is correctly stopped before the text or tool block opens.
 	reasoning := extractReasoningFieldTyped(delta)
 	if reasoning != "" {
-		return t.handleReasoningDelta(reasoning, state, w, rc)
+		if err := t.handleReasoningDelta(reasoning, state, w, rc); err != nil {
+			return err
+		}
 	}
 
 	// Content is a pointer so we can distinguish absent/null (nil) from empty string.
 	if delta.Content != nil && *delta.Content != "" {
-		return t.handleContentDelta(*delta.Content, state, w, rc)
+		if err := t.handleContentDelta(*delta.Content, state, w, rc); err != nil {
+			return err
+		}
 	}
 
 	if len(delta.ToolCalls) > 0 {
@@ -545,10 +555,18 @@ func (t *Translator) handleToolCallsDelta(toolCalls []openAIToolCall, state *Str
 			state.toolCallBuffers[toolIndex] = &strings.Builder{}
 		}
 
-		// start block when we get id + name
+		// Start a new block when we receive id + name for the first time for this tool index.
+		// Some backends repeat id + name on every continuation chunk alongside the args;
+		// re-initialising would close the live block and open a duplicate, corrupting the
+		// tool input. The toolIndexToBlock mapping is the authoritative "already started" signal.
 		if tc.ID != "" && tc.Function.Name != "" {
-			if err := t.initializeToolBlock(tc.ID, tc.Function.Name, toolIndex, state, w, rc); err != nil {
-				return err
+			if _, alreadyInit := state.toolIndexToBlock[toolIndex]; !alreadyInit {
+				if err := t.initializeToolBlock(tc.ID, tc.Function.Name, toolIndex, state, w, rc); err != nil {
+					return err
+				}
+			} else {
+				t.logger.Debug("Ignoring repeated id+name for already-initialised tool block",
+					"tool_index", toolIndex, "tool_id", tc.ID, "tool_name", tc.Function.Name)
 			}
 		}
 

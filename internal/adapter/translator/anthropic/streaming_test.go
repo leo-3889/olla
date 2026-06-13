@@ -1089,3 +1089,53 @@ func TestTransformStreamingResponse_LateArgDeltaDropped(t *testing.T) {
 	assertToolPresent(t, body, "call_early", "first_tool")
 	assertToolPresent(t, body, "call_late_target", "second_tool")
 }
+
+// TestTransformStreamingResponse_RepeatedToolIDNameDoesNotReinit verifies that when
+// a backend repeats the tool id + name on continuation chunks (alongside args), only
+// a single content_block_start is emitted for that tool. Re-initialising would close
+// the active block and open a duplicate, replaying already-buffered args.
+func TestTransformStreamingResponse_RepeatedToolIDNameDoesNotReinit(t *testing.T) {
+	t.Parallel()
+	tr := newTestTranslator()
+
+	// First chunk: id + name + partial args (some backends send all three together).
+	// Second chunk: id + name AGAIN + more args (the bug trigger).
+	// Third chunk: args only (normal continuation).
+	firstChunk := `data: {"id":"chatcmpl-repeat","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_rep","type":"function","function":{"name":"rep_tool","arguments":"{\\\"a\\\":"}}]},"index":0}]}` + "\n\n"
+	repeatChunk := `data: {"id":"chatcmpl-repeat","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_rep","type":"function","function":{"name":"rep_tool","arguments":"1,"}}]},"index":0}]}` + "\n\n"
+	finalChunk := `data: {"id":"chatcmpl-repeat","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\\"b\\\":2}"}}]},"index":0}]}` + "\n\n"
+
+	stream := mockOpenAIStream([]string{
+		firstChunk,
+		repeatChunk,
+		finalChunk,
+		finishChunk("chatcmpl-repeat", "tool_calls"),
+		doneChunk(),
+	})
+
+	recorder := httptest.NewRecorder()
+	require.NoError(t, tr.TransformStreamingResponse(context.Background(), stream, recorder, nil))
+
+	body := recorder.Body.String()
+	events := parseAnthropicEvents(t, body)
+
+	// Exactly one tool block must have been started, not two.
+	assertContentBlockCount(t, events, 1)
+	assertBlocksClosed(t, events)
+
+	// The single tool block must carry the correct id and name.
+	assertToolPresent(t, body, "call_rep", "rep_tool")
+
+	// All input_json_delta events must reference block index 0 — no spurious block 1.
+	deltas := findEventsByType(events, "content_block_delta")
+	require.NotEmpty(t, deltas, "expected at least one input_json_delta")
+	for _, d := range deltas {
+		idx, ok := getContentBlockIndex(d)
+		require.True(t, ok)
+		assert.Equal(t, 0, idx, "all deltas must reference block 0")
+	}
+
+	// Three arg chunks must have produced at least three input_json_delta events.
+	// This confirms args from all chunks were emitted, not dropped on the repeated id+name.
+	require.GreaterOrEqual(t, len(deltas), 3, "expected one delta per arg chunk")
+}

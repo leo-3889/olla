@@ -61,10 +61,13 @@ func TestProcessStreamLine_RoleOnlyDelta(t *testing.T) {
 	assertEventCount(t, events, "content_block_stop", 0)
 }
 
-// TestProcessStreamLine_ReasoningBeatsContent verifies the priority rule:
-// when a delta carries both "reasoning" and "content", reasoning wins and only
-// a thinking_delta is emitted. Content is silently dropped for that chunk.
-// This matches the extractReasoningField short-circuit behaviour.
+// TestProcessStreamLine_ReasoningBeatsContent verifies that when a single delta
+// carries both "reasoning" and "content", BOTH are emitted rather than dropping
+// the content. Some OpenAI-compatible adapters coalesce reasoning + content into
+// one chunk; the old early-return behaviour silently lost the content.
+//
+// Correct output: thinking block (opened and closed) followed by text block, with
+// the thinking block stop emitted before the text block start.
 func TestProcessStreamLine_ReasoningBeatsContent(t *testing.T) {
 	t.Parallel()
 	tr := newTestTranslator()
@@ -82,18 +85,30 @@ func TestProcessStreamLine_ReasoningBeatsContent(t *testing.T) {
 	body := recorder.Body.String()
 	events := parseAnthropicEvents(t, body)
 
-	// must produce a thinking_delta, not a text_delta
+	// Both the thinking and the text must be present.
 	assert.Contains(t, body, `"thinking":"think"`)
-	assert.NotContains(t, body, `"text":"text"`)
+	assert.Contains(t, body, `"text":"text"`)
 
-	// only one content_block_delta: the thinking one
-	assertEventCount(t, events, "content_block_delta", 1)
+	// Two content_block_deltas: one thinking_delta, one text_delta.
+	assertEventCount(t, events, "content_block_delta", 2)
 
 	deltas := findEventsByType(events, "content_block_delta")
-	require.Len(t, deltas, 1)
-	delta, ok := deltas[0]["delta"].(map[string]interface{})
+	require.Len(t, deltas, 2)
+
+	firstDelta, ok := deltas[0]["delta"].(map[string]interface{})
 	require.True(t, ok)
-	assert.Equal(t, "thinking_delta", delta["type"])
+	assert.Equal(t, "thinking_delta", firstDelta["type"], "first delta must be thinking_delta")
+
+	secondDelta, ok := deltas[1]["delta"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "text_delta", secondDelta["type"], "second delta must be text_delta")
+
+	// Two blocks (thinking + text), both properly closed.
+	assertContentBlockCount(t, events, 2)
+	assertBlocksClosed(t, events)
+
+	// Thinking block must be fully stopped before the text block opens.
+	assertThinkingBlockTransitionOrder(t, events)
 }
 
 // TestProcessStreamLine_ReasoningContentFieldName verifies the alternative field
@@ -331,6 +346,49 @@ func TestProcessStreamLine_FinishReasonNullVsAbsent(t *testing.T) {
 
 	events := parseAnthropicEvents(t, recorder.Body.String())
 	assertStopReason(t, events, "end_turn")
+}
+
+// TestProcessStreamLine_ReasoningAndToolCallsInOneChunk verifies that when a single
+// delta carries both "reasoning" and "tool_calls", both are processed. The thinking
+// block must be fully stopped before the tool_use block opens.
+func TestProcessStreamLine_ReasoningAndToolCallsInOneChunk(t *testing.T) {
+	t.Parallel()
+	tr := newTestTranslator()
+
+	// Manually craft a chunk that includes both reasoning and tool_calls in one delta.
+	// This simulates a backend that coalesces chain-of-thought with a tool invocation.
+	combinedChunk := `data: {"id":"chatcmpl-rtc","model":"deepseek-r1","choices":[{"delta":{"reasoning":"I will call a tool","tool_calls":[{"index":0,"id":"call_rtc","type":"function","function":{"name":"search","arguments":""}}]},"index":0}]}` + "\n\n"
+
+	stream := mockOpenAIStream([]string{
+		combinedChunk,
+		toolArgsChunk("chatcmpl-rtc", 0, `{\\\"q\\\":\\\"test\\\"}`),
+		finishChunk("chatcmpl-rtc", "tool_calls"),
+		doneChunk(),
+	})
+
+	recorder := httptest.NewRecorder()
+	require.NoError(t, tr.TransformStreamingResponse(context.Background(), stream, recorder, nil))
+
+	body := recorder.Body.String()
+	events := parseAnthropicEvents(t, body)
+
+	// Both thinking content and the tool must be present.
+	assert.Contains(t, body, `"thinking":"I will call a tool"`)
+	assertToolPresent(t, body, "call_rtc", "search")
+
+	// Two blocks: thinking and tool_use, both properly closed.
+	assertContentBlockCount(t, events, 2)
+	assertBlocksClosed(t, events)
+
+	// Thinking block must be stopped before the tool_use block opens.
+	assertThinkingBlockTransitionOrder(t, events)
+
+	starts := findEventsByType(events, "content_block_start")
+	require.Len(t, starts, 2)
+	thinkingType, _ := getContentBlockType(starts[0])
+	assert.Equal(t, contentTypeThinking, thinkingType, "first block must be thinking")
+	toolType, _ := getContentBlockType(starts[1])
+	assert.Equal(t, contentTypeToolUse, toolType, "second block must be tool_use")
 }
 
 // validateStreamingParseTests is a compile-time guard — if any of the above
