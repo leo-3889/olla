@@ -89,12 +89,33 @@ func estimateTokensFromRequest(req *AnthropicRequest) int {
 		totalChars += countMessageChars(&msg)
 	}
 
+	// Claude Code sends 10-20k tokens of tool schemas per request; omitting tools
+	// causes a large systematic undercount that misseeds message_start input_tokens.
+	for i := range req.Tools {
+		totalChars += countToolDefinitionChars(&req.Tools[i])
+	}
+
 	tokenCount := totalChars / 4
 	if tokenCount < 1 {
 		tokenCount = 1
 	}
 
 	return tokenCount
+}
+
+// countToolDefinitionChars estimates character cost of a single tool definition.
+// Counts name + description + JSON-marshalled input schema, matching the chars/4 heuristic.
+func countToolDefinitionChars(tool *AnthropicTool) int {
+	if tool == nil {
+		return 0
+	}
+	n := len(tool.Name) + len(tool.Description)
+	if tool.InputSchema != nil {
+		if schemaJSON, err := json.Marshal(tool.InputSchema); err == nil {
+			n += len(schemaJSON)
+		}
+	}
+	return n
 }
 
 // system prompt char counting

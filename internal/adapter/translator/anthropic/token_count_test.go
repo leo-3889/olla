@@ -7,6 +7,9 @@ import (
 	"io"
 	"net/http"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCountTokens(t *testing.T) {
@@ -521,6 +524,84 @@ func BenchmarkCountTokens(b *testing.B) {
 		req.Header.Set("Content-Type", "application/json")
 		_, _ = trans.CountTokens(context.Background(), req)
 	}
+}
+
+// TestEstimateInputTokens_WithTools verifies that tool definitions are included in the
+// character estimate. Claude Code sends large tool schemas (10-20k tokens each), so
+// omitting them causes a large systematic undercount.
+func TestEstimateInputTokens_WithTools(t *testing.T) {
+	t.Parallel()
+
+	baseReq := AnthropicRequest{
+		Model:     "claude-3-5-sonnet-20241022",
+		MaxTokens: 1024,
+		Messages: []AnthropicMessage{
+			{Role: "user", Content: "What is the weather?"},
+		},
+	}
+
+	reqWithTools := baseReq
+	reqWithTools.Tools = []AnthropicTool{
+		{
+			Name:        "get_weather",
+			Description: "Retrieves current weather for a given location.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"location": map[string]interface{}{
+						"type":        "string",
+						"description": "City and state, e.g. Sydney, NSW",
+					},
+				},
+				"required": []string{"location"},
+			},
+		},
+	}
+
+	baseCount := estimateTokensFromRequest(&baseReq)
+	withToolsCount := estimateTokensFromRequest(&reqWithTools)
+
+	assert.Greater(t, withToolsCount, baseCount,
+		"request with tools must yield a larger token estimate than the same request without")
+}
+
+// TestEstimateInputTokens_ToolOnlyDeltaMatchesCharsDiv4 verifies that the tool schema
+// contribution to the estimate is roughly len(schema JSON) / 4.
+func TestEstimateInputTokens_ToolOnlyDeltaMatchesCharsDiv4(t *testing.T) {
+	t.Parallel()
+
+	schema := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"query": map[string]interface{}{"type": "string"},
+		},
+	}
+	tool := AnthropicTool{
+		Name:        "search",
+		Description: "Search the web",
+		InputSchema: schema,
+	}
+
+	// Manually compute expected char count for the tool.
+	schemaJSON, err := json.Marshal(schema)
+	require.NoError(t, err)
+	expectedChars := len(tool.Name) + len(tool.Description) + len(schemaJSON)
+	expectedTokens := expectedChars / 4
+
+	got := countToolDefinitionChars(&tool)
+	assert.Equal(t, expectedChars, got, "countToolDefinitionChars must match name+description+schema len")
+
+	// estimateTokensFromRequest for a tools-only request (empty messages, single tool)
+	// must be at least expectedTokens.
+	req := AnthropicRequest{
+		Model:     "test",
+		MaxTokens: 1,
+		Messages:  []AnthropicMessage{{Role: "user", Content: "hi"}},
+		Tools:     []AnthropicTool{tool},
+	}
+	total := estimateTokensFromRequest(&req)
+	assert.GreaterOrEqual(t, total, expectedTokens,
+		"total estimate must be at least the tool's contribution")
 }
 
 func BenchmarkCountTokensLargeRequest(b *testing.B) {
