@@ -1200,3 +1200,155 @@ func TestTransformStreamingResponse_RepeatedToolIDNameDoesNotReinit(t *testing.T
 	// This confirms args from all chunks were emitted, not dropped on the repeated id+name.
 	require.GreaterOrEqual(t, len(deltas), 3, "expected one delta per arg chunk")
 }
+
+// TestTransformStreamingResponse_SynthesisedOutputTokensWhenNoBackendUsage verifies
+// that when the backend emits no usage in its stream, finalizeStream synthesises a
+// non-zero output_tokens estimate from the accumulated content length (chars/4, min 1).
+// This prevents Anthropic clients (including Claude Code) from receiving output_tokens:0.
+func TestTransformStreamingResponse_SynthesisedOutputTokensWhenNoBackendUsage(t *testing.T) {
+	t.Parallel()
+	tr := newTestTranslator()
+
+	// Stream with several content chunks but no usage chunk at all — the common case
+	// for most OpenAI-compatible backends that do not support include_usage.
+	content := "Hello, world! This is synthesised." // 34 chars -> 34/4 = 8
+	stream := mockOpenAIStream([]string{
+		textChunk("chatcmpl-synth", "claude-3-5-sonnet-20241022", content),
+		finishChunk("chatcmpl-synth", "stop"),
+		doneChunk(),
+	})
+
+	recorder := httptest.NewRecorder()
+	require.NoError(t, tr.TransformStreamingResponse(context.Background(), stream, recorder, nil))
+
+	events := parseAnthropicEvents(t, recorder.Body.String())
+
+	delta := getEventByType(events, "message_delta")
+	require.NotNil(t, delta, "message_delta must be present")
+
+	usage, ok := delta["usage"].(map[string]interface{})
+	require.True(t, ok, "message_delta must have usage")
+
+	outputTokens, ok := usage["output_tokens"].(float64)
+	require.True(t, ok, "usage must have output_tokens")
+
+	// Must be non-zero and approximately match chars/4 for the accumulated content.
+	assert.Greater(t, outputTokens, float64(0),
+		"output_tokens must be synthesised to a non-zero value when backend sends no usage")
+	assert.InDelta(t, float64(len(content)/4), outputTokens, 2,
+		"synthesised output_tokens should roughly match chars/4 of the accumulated content")
+}
+
+// TestTransformStreamingResponse_RealUsageWinsOverSynthesis verifies that when the
+// backend does provide usage via a terminal choices:[] chunk, the real completion_tokens
+// value is used in message_delta rather than the chars/4 estimate.
+func TestTransformStreamingResponse_RealUsageWinsOverSynthesis(t *testing.T) {
+	t.Parallel()
+	tr := newTestTranslator()
+
+	const realCompletionTokens = 20
+
+	// The usageOnlyChunk emits a choices:[] terminal chunk -- the same format used by
+	// vLLM and the ollamock terminal usage chunk. The translator must write 20, not the
+	// estimate derived from the accumulated content.
+	stream := mockOpenAIStream([]string{
+		textChunk("chatcmpl-realusage", "claude-3-5-sonnet-20241022", "Hello world"),
+		finishChunk("chatcmpl-realusage", "stop"),
+		usageOnlyChunk("chatcmpl-realusage", 10, realCompletionTokens),
+		doneChunk(),
+	})
+
+	recorder := httptest.NewRecorder()
+	require.NoError(t, tr.TransformStreamingResponse(context.Background(), stream, recorder, nil))
+
+	events := parseAnthropicEvents(t, recorder.Body.String())
+
+	delta := getEventByType(events, "message_delta")
+	require.NotNil(t, delta, "message_delta must be present")
+
+	usage, ok := delta["usage"].(map[string]interface{})
+	require.True(t, ok, "message_delta must have usage")
+
+	outputTokens, ok := usage["output_tokens"].(float64)
+	require.True(t, ok, "usage must have output_tokens")
+
+	// Real backend value must win; synthesis must not fire when state.outputTokens != 0.
+	assert.Equal(t, float64(realCompletionTokens), outputTokens,
+		"real backend output_tokens must take precedence over the chars/4 estimate")
+}
+
+// TestTransformStreamingResponse_SynthesisedOutputTokensEmptyContent verifies that a
+// stream with no text or thinking content (e.g. a tool-only response with no visible
+// text) synthesises output_tokens:0, which is correct -- the client-visible content
+// length is genuinely zero and a min-1 clamp would be misleading.
+// The min-1 clamp is only applied when charCount > 0.
+func TestTransformStreamingResponse_SynthesisedOutputTokensEmptyContent(t *testing.T) {
+	t.Parallel()
+	tr := newTestTranslator()
+
+	// Only a finish chunk, no content or usage -- simulates the truly-nothing case.
+	stream := mockOpenAIStream([]string{
+		finishChunk("chatcmpl-empty-synth", "stop"),
+		doneChunk(),
+	})
+
+	recorder := httptest.NewRecorder()
+	require.NoError(t, tr.TransformStreamingResponse(context.Background(), stream, recorder, nil))
+
+	events := parseAnthropicEvents(t, recorder.Body.String())
+
+	delta := getEventByType(events, "message_delta")
+	require.NotNil(t, delta, "message_delta must be present")
+
+	usage, ok := delta["usage"].(map[string]interface{})
+	require.True(t, ok, "message_delta must have usage")
+
+	outputTokens, ok := usage["output_tokens"].(float64)
+	require.True(t, ok, "usage must have output_tokens")
+
+	// No content, no real usage -> output_tokens stays 0 (no spurious min-1 clamp).
+	assert.Equal(t, float64(0), outputTokens,
+		"output_tokens must be 0 when there is no content and no backend usage")
+}
+
+// TestTransformStreamingResponse_SynthesisedOutputTokensThinkingContent verifies that
+// thinking (reasoning) block text is included in the synthesis estimate alongside
+// regular text content, ensuring chain-of-thought responses get a plausible token count.
+func TestTransformStreamingResponse_SynthesisedOutputTokensThinkingContent(t *testing.T) {
+	t.Parallel()
+	tr := newTestTranslator()
+
+	// Reasoning chunk followed by a short text chunk, no backend usage.
+	thinking := "Let me reason through this carefully."
+	visible := "The answer is 42."
+	stream := mockOpenAIStream([]string{
+		reasoningChunk("chatcmpl-think-synth", "claude-3-5-sonnet-20241022", thinking),
+		textChunk("chatcmpl-think-synth", "", visible),
+		finishChunk("chatcmpl-think-synth", "stop"),
+		doneChunk(),
+	})
+
+	recorder := httptest.NewRecorder()
+	require.NoError(t, tr.TransformStreamingResponse(context.Background(), stream, recorder, nil))
+
+	events := parseAnthropicEvents(t, recorder.Body.String())
+
+	delta := getEventByType(events, "message_delta")
+	require.NotNil(t, delta, "message_delta must be present")
+
+	usage, ok := delta["usage"].(map[string]interface{})
+	require.True(t, ok, "message_delta must have usage")
+
+	outputTokens, ok := usage["output_tokens"].(float64)
+	require.True(t, ok, "usage must have output_tokens")
+
+	// Both thinking and visible content contribute to the estimate, so the token
+	// count must be at least 1 and greater than visible text alone.
+	totalChars := len(thinking) + len(visible)
+	minExpected := float64(1)
+	maxExpected := float64(totalChars/4 + 2) // +2 tolerance for integer division
+	assert.GreaterOrEqual(t, outputTokens, minExpected,
+		"synthesised output_tokens must be >= 1 when thinking+text content exists")
+	assert.LessOrEqual(t, outputTokens, maxExpected,
+		"synthesised output_tokens must not far exceed (thinking+text chars)/4")
+}

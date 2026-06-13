@@ -623,6 +623,27 @@ func (t *Translator) finalizeStream(state *StreamingState, w http.ResponseWriter
 	// map finish_reason to stop_reason (same logic as non-streaming)
 	stopReason := mapFinishReasonToStopReason(state.lastFinishReason)
 
+	// When the backend stream carries no usage (common for OpenAI-compatible backends
+	// that don't set include_usage), output_tokens stays 0 from initialisation.
+	// Synthesise an estimate from accumulated content so Anthropic clients (including
+	// Claude Code) receive a plausible non-zero value rather than 0.
+	// The chars/4 heuristic matches the count_tokens estimator — acceptable precision
+	// for a fallback. Real backend usage always takes precedence; this branch only fires
+	// when state.outputTokens is still 0 after the full stream has been consumed.
+	if state.outputTokens == 0 {
+		var charCount int
+		for _, block := range state.contentBlocks {
+			charCount += len(block.Text) + len(block.Thinking)
+		}
+		if charCount > 0 {
+			estimated := charCount / 4
+			if estimated < 1 {
+				estimated = 1
+			}
+			state.outputTokens = estimated
+		}
+	}
+
 	// send delta with stop_reason + usage
 	if err := t.writeEvent(w, "message_delta", map[string]interface{}{
 		"type": "message_delta",
