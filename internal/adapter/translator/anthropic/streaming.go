@@ -14,6 +14,50 @@ import (
 	"github.com/thushan/olla/internal/util"
 )
 
+// openAIChunk is the typed representation of an incoming OpenAI SSE data line.
+// Using a typed struct instead of map[string]interface{} avoids per-chunk map
+// allocations and interface boxing — the dominant allocator on the streaming hot path.
+type openAIChunk struct {
+	Usage   *openAIUsage   `json:"usage"`
+	Model   string         `json:"model"`
+	Choices []openAIChoice `json:"choices"`
+}
+
+type openAIChoice struct {
+	FinishReason *string     `json:"finish_reason"`
+	Delta        openAIDelta `json:"delta"`
+	Index        int         `json:"index"`
+}
+
+type openAIDelta struct {
+	Role             string           `json:"role"`
+	Content          *string          `json:"content"`
+	Reasoning        string           `json:"reasoning"`
+	ReasoningContent string           `json:"reasoning_content"`
+	ToolCalls        []openAIToolCall `json:"tool_calls"`
+}
+
+type openAIToolCall struct {
+	Index    *int           `json:"index"`
+	ID       string         `json:"id"`
+	Type     string         `json:"type"`
+	Function openAIFunction `json:"function"`
+}
+
+type openAIFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+// openAIUsage holds token counts from the final SSE chunk.
+// Fields are int rather than float64 because json.Unmarshal into a typed struct
+// uses the declared field type directly, avoiding the float64-then-int cast
+// that the map[string]interface{} path required.
+type openAIUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+}
+
 // sseDeltaEvent is the hot-path content_block_delta envelope.
 // Field order is chosen for struct packing (interface{} + string + int fits without
 // padding on amd64). JSON tag order (delta, index, type) differs from field
@@ -165,7 +209,7 @@ func (t *Translator) processStreamLine(line string, state *StreamingState, w htt
 		return nil
 	}
 
-	var chunk map[string]interface{}
+	var chunk openAIChunk
 	if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 		// log bad chunks but keep going, partial responses better than nothing
 		t.logger.Warn("Malformed chunk encountered, skipping", "error", err,
@@ -174,73 +218,58 @@ func (t *Translator) processStreamLine(line string, state *StreamingState, w htt
 	}
 
 	// grab model name for message_start event
-	if state.model == "" {
-		if model, ok := chunk["model"].(string); ok {
-			state.model = model
-		}
+	if state.model == "" && chunk.Model != "" {
+		state.model = chunk.Model
 	}
 
-	choices, ok := chunk["choices"].([]interface{})
-	if !ok || len(choices) == 0 {
+	if len(chunk.Choices) == 0 {
 		return nil
 	}
 
-	choice, ok := choices[0].(map[string]interface{})
-	if !ok {
-		return nil
+	choice := chunk.Choices[0]
+
+	// capture finish_reason for later stop_reason mapping; nil or empty means absent
+	if fr := choice.FinishReason; fr != nil && *fr != "" {
+		state.lastFinishReason = *fr
 	}
 
-	// capture finish_reason for later stop_reason mapping
-	if finishReason, finishOk := choice["finish_reason"].(string); finishOk && finishReason != "" {
-		state.lastFinishReason = finishReason
+	// grab usage stats if present (usually in the final chunk)
+	if u := chunk.Usage; u != nil {
+		state.inputTokens = u.PromptTokens
+		state.outputTokens = u.CompletionTokens
 	}
 
-	// grab usage stats if present (usually in final chunk)
-	if usage, usageOk := chunk["usage"].(map[string]interface{}); usageOk {
-		if promptTokens, promptOk := usage["prompt_tokens"].(float64); promptOk {
-			state.inputTokens = int(promptTokens)
-		}
-		if completionTokens, completionsOk := usage["completion_tokens"].(float64); completionsOk {
-			state.outputTokens = int(completionTokens)
-		}
-	}
-
-	delta, ok := choice["delta"].(map[string]interface{})
-	if !ok {
-		return nil
-	}
+	delta := choice.Delta
 
 	// reasoning / reasoning_content are the per-backend field names for chain-of-thought.
 	// Ollama, LM Studio, and Lemonade use "reasoning"; vLLM, SGLang, and DeepSeek use
 	// "reasoning_content". Treat them as equivalent and prefer whichever is non-empty.
-	reasoning := extractReasoningField(delta)
+	reasoning := extractReasoningFieldTyped(delta)
 	if reasoning != "" {
 		return t.handleReasoningDelta(reasoning, state, w, rc)
 	}
 
-	if content, ok := delta["content"].(string); ok && content != "" {
-		return t.handleContentDelta(content, state, w, rc)
+	// Content is a pointer so we can distinguish absent/null (nil) from empty string.
+	if delta.Content != nil && *delta.Content != "" {
+		return t.handleContentDelta(*delta.Content, state, w, rc)
 	}
 
-	if toolCalls, ok := delta["tool_calls"].([]interface{}); ok {
-		return t.handleToolCallsDelta(toolCalls, state, w, rc)
+	if len(delta.ToolCalls) > 0 {
+		return t.handleToolCallsDelta(delta.ToolCalls, state, w, rc)
 	}
 
 	return nil
 }
 
-// extractReasoningField returns the non-empty reasoning text from a delta object,
+// extractReasoningFieldTyped returns the non-empty reasoning text from a typed delta,
 // checking both field name variants used across backends:
 //   - "reasoning"         - Ollama, LM Studio, Lemonade
 //   - "reasoning_content" - vLLM, SGLang, DeepSeek
-func extractReasoningField(delta map[string]interface{}) string {
-	if v, ok := delta["reasoning"].(string); ok && v != "" {
-		return v
+func extractReasoningFieldTyped(delta openAIDelta) string {
+	if delta.Reasoning != "" {
+		return delta.Reasoning
 	}
-	if v, ok := delta["reasoning_content"].(string); ok && v != "" {
-		return v
-	}
-	return ""
+	return delta.ReasoningContent
 }
 
 // send message_start if we haven't already, needs to be first event
@@ -367,47 +396,6 @@ func (t *Translator) handleReasoningDelta(reasoning string, state *StreamingStat
 	state.contentBlocks[state.currentIndex] = *state.currentBlock
 
 	return nil
-}
-
-// toolCallData holds extracted and validated tool call information
-type toolCallData struct {
-	id        string
-	name      string
-	arguments string
-	toolIndex int
-}
-
-// extractToolCallData validates and extracts data from a tool call delta
-func extractToolCallData(tc interface{}) (*toolCallData, bool) {
-	toolCall, ok := tc.(map[string]interface{})
-	if !ok {
-		return nil, false
-	}
-
-	index, _ := toolCall["index"].(float64)
-	toolIndex := int(index)
-
-	function, ok := toolCall["function"].(map[string]interface{})
-	if !ok {
-		return nil, false
-	}
-
-	data := &toolCallData{
-		toolIndex: toolIndex,
-	}
-
-	// extract optional fields
-	if id, ok := toolCall["id"].(string); ok {
-		data.id = id
-	}
-	if name, ok := function["name"].(string); ok {
-		data.name = name
-	}
-	if args, ok := function["arguments"].(string); ok {
-		data.arguments = args
-	}
-
-	return data, true
 }
 
 // closeCurrentBlock closes the currently open block regardless of type.
@@ -540,32 +528,33 @@ func (t *Translator) sendToolArgumentsDelta(args string, toolIndex int, state *S
 }
 
 // process tool call deltas, buffers partial json args
-func (t *Translator) handleToolCallsDelta(toolCalls []interface{}, state *StreamingState, w http.ResponseWriter, rc *http.ResponseController) error {
+func (t *Translator) handleToolCallsDelta(toolCalls []openAIToolCall, state *StreamingState, w http.ResponseWriter, rc *http.ResponseController) error {
 	if err := t.ensureMessageStartSent(state, w, rc); err != nil {
 		return err
 	}
 
 	for _, tc := range toolCalls {
-		data, ok := extractToolCallData(tc)
-		if !ok {
-			continue
+		// absent index field defaults to 0 — the first and usually only tool call
+		toolIndex := 0
+		if tc.Index != nil {
+			toolIndex = *tc.Index
 		}
 
 		// initialise buffer if first time seeing this tool index
-		if _, exists := state.toolCallBuffers[data.toolIndex]; !exists {
-			state.toolCallBuffers[data.toolIndex] = &strings.Builder{}
+		if _, exists := state.toolCallBuffers[toolIndex]; !exists {
+			state.toolCallBuffers[toolIndex] = &strings.Builder{}
 		}
 
 		// start block when we get id + name
-		if data.id != "" && data.name != "" {
-			if err := t.initializeToolBlock(data.id, data.name, data.toolIndex, state, w, rc); err != nil {
+		if tc.ID != "" && tc.Function.Name != "" {
+			if err := t.initializeToolBlock(tc.ID, tc.Function.Name, toolIndex, state, w, rc); err != nil {
 				return err
 			}
 		}
 
 		// buffer args chunks and send as partial_json
-		if data.arguments != "" {
-			if err := t.sendToolArgumentsDelta(data.arguments, data.toolIndex, state, w, rc); err != nil {
+		if tc.Function.Arguments != "" {
+			if err := t.sendToolArgumentsDelta(tc.Function.Arguments, toolIndex, state, w, rc); err != nil {
 				return err
 			}
 		}
