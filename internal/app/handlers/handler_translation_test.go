@@ -136,6 +136,128 @@ func (m *mockProxyService) ProxyRequestToEndpoints(
 	return json.NewEncoder(w).Encode(response)
 }
 
+// TestTranslationHandler_PlainTextBackendError verifies that when a backend returns
+// a non-JSON 4xx/5xx body (e.g. a plain-text 429 from a rate-limiter), the handler
+// preserves the upstream status code and emits a structured Anthropic error rather
+// than surfacing a misleading "failed to parse OpenAI response" 502.
+func TestTranslationHandler_PlainTextBackendError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		backendStatus  int
+		backendBody    string
+		backendCT      string
+		expectedStatus int
+		expectedType   string
+	}{
+		{
+			name:           "plain_text_429",
+			backendStatus:  http.StatusTooManyRequests,
+			backendBody:    "Rate limit exceeded. Please try again later.",
+			backendCT:      "text/plain",
+			expectedStatus: http.StatusTooManyRequests,
+			expectedType:   "rate_limit_error",
+		},
+		{
+			name:           "html_503",
+			backendStatus:  http.StatusServiceUnavailable,
+			backendBody:    "<html><body>Service Unavailable</body></html>",
+			backendCT:      "text/html",
+			expectedStatus: http.StatusServiceUnavailable,
+			expectedType:   "overloaded_error", // mock writeErrorFunc maps 503 → overloaded_error
+		},
+		{
+			name:          "json_400_preserved",
+			backendStatus: http.StatusBadRequest,
+			backendBody:   `{"error":{"message":"Invalid temperature value","type":"invalid_request_error"}}`,
+			backendCT:     "application/json",
+			// Existing behaviour must be preserved: message extracted from JSON.
+			expectedStatus: http.StatusBadRequest,
+			expectedType:   "invalid_request_error",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			mockLogger := &mockStyledLogger{}
+
+			trans := &mockTranslator{
+				name:                  "anthropic",
+				implementsErrorWriter: true,
+				writeErrorFunc: func(w http.ResponseWriter, err error, statusCode int) {
+					errorType := "api_error"
+					switch statusCode {
+					case http.StatusBadRequest:
+						errorType = "invalid_request_error"
+					case http.StatusTooManyRequests:
+						errorType = "rate_limit_error"
+					case http.StatusServiceUnavailable:
+						errorType = "overloaded_error"
+					}
+					w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
+					w.WriteHeader(statusCode)
+					_ = json.NewEncoder(w).Encode(map[string]interface{}{
+						"type": "error",
+						"error": map[string]interface{}{
+							"type":    errorType,
+							"message": err.Error(),
+						},
+					})
+				},
+			}
+
+			proxyService := &mockProxyService{
+				proxyFunc: func(ctx context.Context, w http.ResponseWriter, r *http.Request, endpoints []*domain.Endpoint, stats *ports.RequestStats, rlog logger.StyledLogger) error {
+					w.Header().Set(constants.HeaderContentType, tt.backendCT)
+					w.WriteHeader(tt.backendStatus)
+					_, err := w.Write([]byte(tt.backendBody))
+					return err
+				},
+			}
+
+			app := &Application{
+				logger:           mockLogger,
+				proxyService:     proxyService,
+				statsCollector:   &mockStatsCollector{},
+				repository:       &mockEndpointRepository{},
+				inspectorChain:   inspector.NewChain(mockLogger),
+				profileFactory:   &mockProfileFactory{},
+				discoveryService: &mockDiscoveryServiceForTranslation{},
+				Config:           &config.Config{},
+			}
+
+			reqBody, _ := json.Marshal(map[string]interface{}{
+				"model":      "test-model",
+				"max_tokens": 100,
+				"messages":   []map[string]interface{}{{"role": "user", "content": "hello"}},
+			})
+
+			req := httptest.NewRequest("POST", "/olla/anthropic/v1/messages", bytes.NewReader(reqBody))
+			req.Header.Set(constants.HeaderContentType, constants.ContentTypeJSON)
+			rec := httptest.NewRecorder()
+
+			handler := app.translationHandler(trans)
+			handler.ServeHTTP(rec, req)
+
+			assert.Equal(t, tt.expectedStatus, rec.Code,
+				"upstream status code must be preserved, not flattened to 502")
+
+			var errBody map[string]interface{}
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &errBody),
+				"error body must be valid JSON")
+			assert.Equal(t, "error", errBody["type"])
+
+			errObj, ok := errBody["error"].(map[string]interface{})
+			require.True(t, ok)
+			assert.Equal(t, tt.expectedType, errObj["type"],
+				"error type must match the expected Anthropic error type for this status")
+		})
+	}
+}
+
 func TestTranslationHandler_NonStreaming(t *testing.T) {
 	mockLogger := &mockStyledLogger{}
 	trans := &mockTranslator{
@@ -784,12 +906,23 @@ func TestTranslationHandler_StreamingPanicRecovery(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	// The handler must NOT re-panic. A re-panic resets the TCP connection,
-	// giving the client no indication of what went wrong. The correct behaviour
-	// is a 502 response so the client can handle the error gracefully.
+	// giving the client no indication of what went wrong.
+	//
+	// The proxy writes one SSE event before the panic fires, so the response
+	// is already committed. The expected behaviour is:
+	//   - status remains 200 (net/http ignores WriteHeader after first Write)
+	//   - body contains the SSE payload written before the panic
+	//   - body ends with a well-formed "event: error" SSE event
 	handler.ServeHTTP(rec, req)
 
-	assert.Equal(t, http.StatusBadGateway, rec.Code,
-		"streaming panic must produce 502 not a connection reset")
+	// Response must not propagate the panic as a connection reset.
+	// Status is 200 because the stream was already started when the panic fired.
+	assert.Equal(t, http.StatusOK, rec.Code,
+		"status must be 200 when stream was already started before the panic")
+	assert.Contains(t, rec.Body.String(), "event: error",
+		"a spec-valid SSE error event must be appended after the panic")
+	assert.Contains(t, rec.Body.String(), "api_error",
+		"SSE error event must include the Anthropic error type")
 }
 
 // Verifies that:
@@ -1780,10 +1913,13 @@ func TestHandleStreamingPanic_Writes502(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 
+	// streamRecorder with started=false simulates a panic before any bytes were written.
+	streamRecorder := newStreamingResponseRecorder(pipeWriter)
+
 	// Call handleStreamingPanic directly, simulating the deferred call after a panic.
 	// We wrap in a function that sets up a panic so recover() fires.
 	func() {
-		defer app.handleStreamingPanic(rec, pipeReader, pipeWriter, proxyErrChan, &proxyRequest{
+		defer app.handleStreamingPanic(rec, pipeReader, pipeWriter, proxyErrChan, streamRecorder, &proxyRequest{
 			requestLogger: mockLogger,
 		}, trans)
 		panic("simulated streaming panic")
@@ -1792,4 +1928,150 @@ func TestHandleStreamingPanic_Writes502(t *testing.T) {
 	// The panic must NOT propagate — if it did, the test would fail here.
 	assert.Equal(t, http.StatusBadGateway, rec.Code,
 		"streaming panic must produce 502 not a connection reset")
+}
+
+// TestHandleStreamingPanic_AfterStreamStarted_EmitsSSEError verifies that when a
+// panic fires after the upstream has already written body bytes, the handler emits
+// a well-formed Anthropic SSE error event rather than attempting a plain HTTP 502
+// (which net/http silently ignores once the response is committed).
+func TestHandleStreamingPanic_AfterStreamStarted_EmitsSSEError(t *testing.T) {
+	t.Parallel()
+
+	mockLogger := &mockStyledLogger{}
+	app := &Application{logger: mockLogger}
+
+	trans := &mockTranslator{
+		name:                  "panicking-translator",
+		implementsErrorWriter: true,
+		writeErrorFunc: func(w http.ResponseWriter, err error, statusCode int) {
+			w.WriteHeader(statusCode)
+		},
+	}
+
+	pipeReader, pipeWriter := io.Pipe()
+	proxyErrChan := make(chan error, 1)
+	proxyErrChan <- nil
+
+	rec := httptest.NewRecorder()
+
+	// Mark the recorder as started to simulate the state after the proxy has
+	// written at least one SSE event through the pipe.
+	streamRecorder := newStreamingResponseRecorder(pipeWriter)
+	streamRecorder.started.Store(true)
+
+	func() {
+		defer app.handleStreamingPanic(rec, pipeReader, pipeWriter, proxyErrChan, streamRecorder, &proxyRequest{
+			requestLogger: mockLogger,
+		}, trans)
+		panic("simulated mid-stream panic")
+	}()
+
+	body := rec.Body.String()
+	// Status must remain 200 — WriteHeader(502) is a no-op after the first Write.
+	assert.Equal(t, http.StatusOK, rec.Code,
+		"status must stay 200 when the panic fires after the stream has started")
+	assert.Contains(t, body, "event: error",
+		"a spec-valid SSE error line must be appended mid-stream")
+	assert.Contains(t, body, "data: ",
+		"error event must include a data line")
+	assert.Contains(t, body, "api_error",
+		"Anthropic error type must appear in the SSE data payload")
+	assert.Contains(t, body, "internal error during stream transformation",
+		"error message must appear in the SSE data payload")
+	// Ensure no raw JSON is injected outside the SSE envelope.
+	assert.NotContains(t, body, `{"error":`,
+		"raw JSON error must not be injected outside the SSE envelope")
+}
+
+// TestStreamingPanic_BeforeWrite_Returns502 exercises the full translation handler
+// end-to-end with a panic that fires before any SSE data is written to the client.
+// The response must be HTTP 502 with an Anthropic-formatted JSON error body.
+func TestStreamingPanic_BeforeWrite_Returns502(t *testing.T) {
+	t.Parallel()
+
+	mockLogger := &mockStyledLogger{}
+
+	// The translator panics inside TransformStreamingResponse before writing
+	// anything to w. Because no bytes reach the client, the response is
+	// uncommitted and a 502 can be written.
+	panicTrans := &mockTranslator{
+		name:                  "early-panic-translator",
+		implementsErrorWriter: true,
+		writeErrorFunc: func(w http.ResponseWriter, err error, statusCode int) {
+			w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
+			w.WriteHeader(statusCode)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"type": "error",
+				"error": map[string]interface{}{
+					"type":    "api_error",
+					"message": err.Error(),
+				},
+			})
+		},
+		transformRequestFunc: func(ctx context.Context, r *http.Request) (*translator.TransformedRequest, error) {
+			return &translator.TransformedRequest{
+				OpenAIRequest: map[string]interface{}{
+					"model":  "test-model",
+					"stream": true,
+					"messages": []interface{}{
+						map[string]interface{}{"role": "user", "content": "test"},
+					},
+				},
+				ModelName:   "test-model",
+				IsStreaming: true,
+			}, nil
+		},
+		transformStreamingFunc: func(ctx context.Context, openaiStream io.Reader, w http.ResponseWriter, original *http.Request) error {
+			// Panic before writing anything to w — stream is not started.
+			panic("panic before any write")
+		},
+	}
+
+	// Proxy does NOT write any body data (no Write call, only WriteHeader), so
+	// streamRecorder.started remains false when the panic fires.
+	proxyService := &mockProxyService{
+		proxyFunc: func(ctx context.Context, w http.ResponseWriter, r *http.Request, endpoints []*domain.Endpoint, stats *ports.RequestStats, rlog logger.StyledLogger) error {
+			w.Header().Set(constants.HeaderContentType, "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			// No Write call — started remains false.
+			return nil
+		},
+	}
+
+	app := &Application{
+		logger:           mockLogger,
+		proxyService:     proxyService,
+		statsCollector:   &mockStatsCollector{},
+		repository:       &mockEndpointRepository{},
+		inspectorChain:   inspector.NewChain(mockLogger),
+		profileFactory:   &mockProfileFactory{},
+		discoveryService: &mockDiscoveryServiceForTranslation{},
+		Config:           &config.Config{},
+	}
+
+	handler := app.translationHandler(panicTrans)
+
+	reqBody, _ := json.Marshal(map[string]interface{}{
+		"model":  "test-model",
+		"stream": true,
+		"messages": []interface{}{
+			map[string]interface{}{"role": "user", "content": "test"},
+		},
+	})
+	req := httptest.NewRequest("POST", "/test", bytes.NewReader(reqBody))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadGateway, rec.Code,
+		"502 must be returned when the panic fires before any bytes are written")
+
+	var errBody map[string]interface{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &errBody),
+		"error body must be valid JSON")
+	assert.Equal(t, "error", errBody["type"],
+		"Anthropic error envelope type must be 'error'")
+	errObj, ok := errBody["error"].(map[string]interface{})
+	require.True(t, ok, "error object must be present")
+	assert.Equal(t, "api_error", errObj["type"])
 }

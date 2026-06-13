@@ -377,6 +377,52 @@ curl -X POST http://localhost:40114/olla/anthropic/v1/messages \
 
 **Note**: Tool use requires a model that supports function calling. Not all local models support this feature.
 
+### Example: Reasoning (Thinking Blocks)
+
+Reasoning models (DeepSeek-R1, Qwen3, gpt-oss) emit a chain-of-thought before their answer. Olla surfaces it as a `thinking` block ahead of the text. Passthrough forwards the native block as-is; translation builds one from the backend's `reasoning`/`reasoning_content` field.
+
+**Non-streaming response**:
+
+```json
+{
+  "id": "msg_reason123",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "thinking",
+      "thinking": "The user wants the capital of France. That is Paris."
+    },
+    {
+      "type": "text",
+      "text": "The capital of France is Paris."
+    }
+  ],
+  "model": "deepseek-r1:latest",
+  "stop_reason": "end_turn",
+  "usage": { "input_tokens": 12, "output_tokens": 34 }
+}
+```
+
+**Streaming**: the thinking block streams first, before the text block:
+
+```
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The user wants"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+```
+
+**Notes**:
+
+- Local models don't produce Anthropic's `signature`, so thinking blocks come through without one.
+- Olla reads both field names: `reasoning` (Ollama, LM Studio, Lemonade) and `reasoning_content` (vLLM, SGLang, DeepSeek).
+- Reasoning tokens count against `max_tokens`. Set it too low and the model spends the lot thinking, returning `stop_reason: "max_tokens"` with little or no text, so give reasoning models headroom.
+
 ### Example: Vision (Image Input)
 
 **Request**:
@@ -587,7 +633,7 @@ Streaming uses Server-Sent Events (SSE) with typed events.
 |-------|-------------|--------------|
 | `message_start` | Initial message metadata | `{"type":"message_start","message":{...}}` |
 | `content_block_start` | Start of text or tool_use block | `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` |
-| `content_block_delta` | Text chunks (`text_delta`) or tool JSON chunks (`input_json_delta`) | `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"..."}}` |
+| `content_block_delta` | Text chunks (`text_delta`), reasoning chunks (`thinking_delta`), or tool JSON chunks (`input_json_delta`) | `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"..."}}` |
 | `content_block_stop` | End of content block | `{"type":"content_block_stop","index":0}` |
 | `message_delta` | Stop reason and final usage statistics | `{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":9}}` |
 | `message_stop` | End of stream | `{"type":"message_stop"}` |
@@ -712,6 +758,7 @@ Errors follow Anthropic API format:
 - System messages (string or content blocks)
 - Tool use (definitions, tool_choice, tool_use, tool_result)
 - Tool streaming with `input_json_delta` events
+- **Reasoning output** surfaced as `thinking` blocks (passthrough keeps the native block; translation builds one from `reasoning`/`reasoning_content`, streamed as `thinking_delta`)
 - Token counting via `/count_tokens` endpoint
 - Stop sequences
 - Temperature, top_p, top_k parameters
@@ -733,7 +780,7 @@ Errors follow Anthropic API format:
 
 ### ❌ Not Supported
 
-- **Extended Thinking**: Field accepted but not processed
+- **Extended Thinking control**: the request-side `thinking`/`budget_tokens` parameter is accepted but ignored. (Reasoning *output* is still surfaced as `thinking` blocks, see above.)
 - **Prompt Caching**: Not implemented
 - **Batches API**: Not implemented
 - **Message Editing**: Not supported

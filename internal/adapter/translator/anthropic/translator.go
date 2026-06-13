@@ -132,6 +132,9 @@ func (t *Translator) WriteError(w http.ResponseWriter, err error, statusCode int
 		errorType = "permission_error"
 	case http.StatusNotFound:
 		errorType = "not_found_error"
+	case http.StatusRequestEntityTooLarge:
+		// Anthropic error taxonomy: oversized request body maps to request_too_large.
+		errorType = "request_too_large"
 	case http.StatusTooManyRequests:
 		errorType = "rate_limit_error"
 	case http.StatusRequestTimeout, http.StatusGatewayTimeout:
@@ -145,6 +148,14 @@ func (t *Translator) WriteError(w http.ResponseWriter, err error, statusCode int
 			"type":    errorType,
 			"message": err.Error(),
 		},
+	}
+
+	// Best-effort: propagate the Olla request ID into the Anthropic error envelope.
+	// SDKs read the request-id response header and the top-level request_id body field
+	// for correlation. Only set when the header was already written by the handler.
+	if reqID := w.Header().Get(constants.HeaderXOllaRequestID); reqID != "" {
+		w.Header().Set("request-id", reqID)
+		errorResp["request_id"] = reqID
 	}
 
 	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)

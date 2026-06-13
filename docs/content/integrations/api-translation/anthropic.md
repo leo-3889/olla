@@ -694,7 +694,7 @@ See [Crush CLI Integration](../frontend/crush-cli.md) for complete setup.
 
 ### Not Supported
 
-- ❌ **Extended Thinking** - Advanced reasoning mode
+- ❌ **Extended Thinking control** - request-side `thinking`/`budget_tokens` is ignored. (Reasoning *output* is supported, surfaced as `thinking` blocks in both modes.)
 - ❌ **Prompt Caching** - Response caching
 - ❌ **Batches API** - Batch processing
 - ❌ **Usage Tracking** - Account-level usage tracking
