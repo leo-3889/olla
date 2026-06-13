@@ -321,12 +321,13 @@ func TestCleanupLoop_SurvivesTick_Panic(t *testing.T) {
 	// Wait for at least two ticks: first panics, second must still fire.
 	time.Sleep(100 * time.Millisecond)
 
-	// The loop is still alive if we can send to cleanupStop (channel is open).
+	// Liveness probe: an alive loop is parked in its select and receives this
+	// send (then exits). A dead goroutine never receives it.
 	select {
 	case s.cleanupStop <- struct{}{}:
-		t.Error("cleanupStop received unexpectedly — Cleanup was called?")
-	default:
-		// Expected: channel is open, loop is running.
+		// Expected: loop survived the panic and took the stop signal.
+	case <-time.After(2 * time.Second):
+		t.Fatal("cleanupLoop did not receive stop signal; goroutine died after tick panic")
 	}
 
 	// Shut down cleanly.
