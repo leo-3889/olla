@@ -391,6 +391,82 @@ func TestProcessStreamLine_ReasoningAndToolCallsInOneChunk(t *testing.T) {
 	assert.Equal(t, contentTypeToolUse, toolType, "second block must be tool_use")
 }
 
+// TestProcessStreamLine_ReasoningContentAndToolCallsInOneChunk verifies that a
+// single delta carrying reasoning, content, AND tool_calls together emits all
+// three as separate, properly sequenced blocks. This exercises the three-way
+// coalescing path: thinking block (start, thinking_delta, stop), then text block
+// (start, text_delta, stop), then tool_use block (start, stop). Each block must
+// be fully closed before the next one opens.
+func TestProcessStreamLine_ReasoningContentAndToolCallsInOneChunk(t *testing.T) {
+	t.Parallel()
+	tr := newTestTranslator()
+
+	// Single chunk carrying all three delta fields simultaneously.
+	// This simulates a backend that coalesces chain-of-thought, text, and a tool
+	// invocation into one SSE frame.
+	combinedChunk := `data: {"id":"chatcmpl-rct","model":"deepseek-r1","choices":[{"delta":{"reasoning":"think step","content":"answer text","tool_calls":[{"index":0,"id":"call_rct","type":"function","function":{"name":"lookup","arguments":""}}]},"index":0}]}` + "\n\n"
+
+	stream := mockOpenAIStream([]string{
+		combinedChunk,
+		toolArgsChunk("chatcmpl-rct", 0, `{\\\"q\\\":\\\"go\\\"}`),
+		finishChunk("chatcmpl-rct", "tool_calls"),
+		doneChunk(),
+	})
+
+	recorder := httptest.NewRecorder()
+	require.NoError(t, tr.TransformStreamingResponse(context.Background(), stream, recorder, nil))
+
+	body := recorder.Body.String()
+	events := parseAnthropicEvents(t, body)
+
+	// All three content types must be present in the body.
+	assert.Contains(t, body, `"thinking":"think step"`, "thinking content must be present")
+	assert.Contains(t, body, `"text":"answer text"`, "text content must be present")
+	assertToolPresent(t, body, "call_rct", "lookup")
+
+	// Three blocks opened: thinking, text, tool_use — all closed.
+	assertContentBlockCount(t, events, 3)
+	assertBlocksClosed(t, events)
+
+	// Verify block order: thinking first, then text, then tool_use.
+	starts := findEventsByType(events, "content_block_start")
+	require.Len(t, starts, 3, "expected exactly 3 content_block_start events")
+
+	thinkingType, _ := getContentBlockType(starts[0])
+	assert.Equal(t, contentTypeThinking, thinkingType, "first block must be thinking")
+
+	textType, _ := getContentBlockType(starts[1])
+	assert.Equal(t, contentTypeText, textType, "second block must be text")
+
+	toolType, _ := getContentBlockType(starts[2])
+	assert.Equal(t, contentTypeToolUse, toolType, "third block must be tool_use")
+
+	// Thinking block must be fully stopped before the text block opens.
+	assertThinkingBlockTransitionOrder(t, events)
+
+	// Text block (index 1) must be stopped before the tool_use block (index 2) opens.
+	stops := findEventsByType(events, "content_block_stop")
+	require.GreaterOrEqual(t, len(stops), 2, "at least thinking and text blocks must be stopped before tool_use opens")
+	textStopIdx := -1
+	toolStartIdx := -1
+	for i, ev := range events {
+		switch ev["_event_type"] {
+		case "content_block_stop":
+			if idx, ok := getContentBlockIndex(ev); ok && idx == 1 && textStopIdx == -1 {
+				textStopIdx = i
+			}
+		case "content_block_start":
+			bt, ok := getContentBlockType(ev)
+			if ok && bt == contentTypeToolUse && toolStartIdx == -1 {
+				toolStartIdx = i
+			}
+		}
+	}
+	if textStopIdx > -1 && toolStartIdx > -1 {
+		assert.Less(t, textStopIdx, toolStartIdx, "text block must stop before tool_use block opens")
+	}
+}
+
 // validateStreamingParseTests is a compile-time guard — if any of the above
 // helper dependencies shift, this will fail to compile rather than silently pass.
 func validateStreamingParseTests() {

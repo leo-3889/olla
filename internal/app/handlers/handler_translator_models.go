@@ -59,7 +59,9 @@ func (c *anthropicModelsCache) set(fingerprint string, body []byte) {
 // the fingerprint must include the emitted value. Without this, an alias change
 // (e.g. a version suffix update) while the underlying IDs are stable would leave
 // stale alias strings in the cache until the next model-set change. Each entry is
-// "id:emittedID" so that changes to either field invalidate the cache.
+// Each entry is "id\x00emittedID" (null-byte separator) so that changes to
+// either field invalidate the cache. A colon would collide with IDs that contain
+// colons (e.g. "a:b" + alias "c" vs "a" + alias "b:c" both produce "a:b:c").
 // Sorting ensures the key is order-independent.
 func modelSetFingerprint(models []*domain.UnifiedModel) string {
 	if len(models) == 0 {
@@ -71,7 +73,7 @@ func modelSetFingerprint(models []*domain.UnifiedModel) string {
 		if len(m.Aliases) > 0 {
 			emitted = m.Aliases[0].Name
 		}
-		ids = append(ids, m.ID+":"+emitted)
+		ids = append(ids, m.ID+"\x00"+emitted)
 	}
 	sort.Strings(ids)
 	return strings.Join(ids, ",")
