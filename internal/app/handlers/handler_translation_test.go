@@ -1957,7 +1957,7 @@ func TestHandleStreamingPanic_AfterStreamStarted_EmitsSSEError(t *testing.T) {
 	// Mark the recorder as started to simulate the state after the proxy has
 	// written at least one SSE event through the pipe.
 	streamRecorder := newStreamingResponseRecorder(pipeWriter)
-	streamRecorder.started = true
+	streamRecorder.started.Store(true)
 
 	func() {
 		defer app.handleStreamingPanic(rec, pipeReader, pipeWriter, proxyErrChan, streamRecorder, &proxyRequest{

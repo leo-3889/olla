@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/thushan/olla/internal/adapter/translator"
@@ -16,6 +17,7 @@ import (
 	"github.com/thushan/olla/internal/core/domain"
 	"github.com/thushan/olla/internal/core/ports"
 	"github.com/thushan/olla/internal/util"
+	"github.com/tidwall/gjson"
 )
 
 // executePassthroughRequest handles requests that can be forwarded directly to backends
@@ -277,12 +279,27 @@ func (a *Application) tryPassthrough(
 	// Only pass endpoints whose backend natively supports the wire format.
 	// Mixed deployments (e.g. ollama + vllm) must not block passthrough for
 	// the capable subset — the proxy will route within that filtered list.
+	//
+	// Additionally, exclude endpoints that declare a limitation matching a
+	// feature present in this specific request. Token-counting limitations
+	// (e.g. token_counting_404) use different names and are never affected.
+	reqFeatures := detectRequestFeatures(bodyBytes)
 	passthroughEndpoints := make([]*domain.Endpoint, 0, len(endpoints))
 	for _, ep := range endpoints {
 		support := a.profileLookup.GetAnthropicSupport(ep.Type)
-		if support != nil && support.Enabled {
-			passthroughEndpoints = append(passthroughEndpoints, ep)
+		if support == nil || !support.Enabled {
+			continue
 		}
+		if reqFeatures.toolUse && support.HasLimitation(domain.AnthropicLimitationNoToolUse) {
+			continue
+		}
+		if reqFeatures.extendedThinking && support.HasLimitation(domain.AnthropicLimitationNoExtendedThinking) {
+			continue
+		}
+		if reqFeatures.vision && support.HasLimitation(domain.AnthropicLimitationNoVision) {
+			continue
+		}
+		passthroughEndpoints = append(passthroughEndpoints, ep)
 	}
 
 	if !passthroughTrans.CanPassthrough(passthroughEndpoints, a.profileLookup) {
@@ -734,7 +751,7 @@ func (a *Application) handleStreamingPanic(
 		// response is committed and WriteHeader(502) is a no-op. Emitting a
 		// well-formed SSE error event is the only way to signal the failure to
 		// the client without corrupting the stream with raw JSON.
-		if streamRecorder != nil && streamRecorder.started {
+		if streamRecorder != nil && streamRecorder.started.Load() {
 			a.writeSSEErrorEvent(w, "internal error during stream transformation")
 			return
 		}
@@ -758,8 +775,10 @@ func (a *Application) writeSSEErrorEvent(w http.ResponseWriter, message string) 
 		return
 	}
 	payload := fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":%q}}`, message)
-	// SSE format: event line, data line, blank line terminator.
-	sseEvent := fmt.Sprintf("event: error\ndata: %s\n\n", payload)
+	// Prefix with \n\n to guarantee a clean event boundary in case the panic
+	// occurred mid-write of a previous event. SSE parsers treat blank lines as
+	// field separators, so extra blank lines are harmless when already at a boundary.
+	sseEvent := fmt.Sprintf("\n\nevent: error\ndata: %s\n\n", payload)
 	_, _ = fmt.Fprint(w, sseEvent)
 	// Flush if the underlying writer supports it, so the client receives
 	// the event immediately rather than waiting for a buffer drain.
@@ -1009,6 +1028,59 @@ func (a *Application) recordTranslatorMetrics(
 	a.statsCollector.RecordTranslatorRequest(event)
 }
 
+// requestFeatures holds which Anthropic features are active in a specific request.
+// Used to decide which capable endpoints are eligible for passthrough.
+type requestFeatures struct {
+	toolUse          bool
+	extendedThinking bool
+	vision           bool
+}
+
+// detectRequestFeatures inspects the raw Anthropic request body with gjson to
+// determine which feature flags are active. It is deliberately cheap: gjson
+// does not allocate a full parse tree, and we only scan the fields we care about.
+//
+// Content blocks can be a plain string (scalar) or an array of typed objects.
+// The vision check handles both: a scalar string never contains image blocks,
+// so we only iterate when content is a JSON array.
+func detectRequestFeatures(body []byte) requestFeatures {
+	if len(body) == 0 {
+		return requestFeatures{}
+	}
+
+	var f requestFeatures
+
+	// Non-empty tools array → tool use is active.
+	if tools := gjson.GetBytes(body, "tools"); tools.IsArray() && len(tools.Array()) > 0 {
+		f.toolUse = true
+	}
+
+	// Presence of top-level "thinking" key → extended thinking is active.
+	if gjson.GetBytes(body, "thinking").Exists() {
+		f.extendedThinking = true
+	}
+
+	// Vision: any message content block with type=="image".
+	// messages.#.content yields the content field of every message.
+	// Each content entry may be a plain string (skip) or an array of blocks.
+	gjson.GetBytes(body, "messages.#.content").ForEach(func(_, contentVal gjson.Result) bool {
+		if !contentVal.IsArray() {
+			// Plain string content — no image blocks possible.
+			return true
+		}
+		contentVal.ForEach(func(_, block gjson.Result) bool {
+			if block.Get("type").Str == "image" {
+				f.vision = true
+				return false // stop iterating blocks
+			}
+			return true
+		})
+		return !f.vision // stop iterating messages once found
+	})
+
+	return f
+}
+
 // abstract header access for both response types
 type headerGetter interface {
 	Header() http.Header
@@ -1052,7 +1124,9 @@ type streamingResponseRecorder struct {
 	// begun emitting body bytes. The panic handler uses this to decide whether
 	// to inject an SSE error event into the already-open stream rather than
 	// attempting a plain HTTP 502 (which net/http silently ignores post-commit).
-	started bool
+	// atomic.Bool because Write is called from the proxy goroutine while
+	// handleStreamingPanic reads it from the handler goroutine.
+	started atomic.Bool
 }
 
 func newStreamingResponseRecorder(w io.Writer) *streamingResponseRecorder {
@@ -1075,7 +1149,7 @@ func (r *streamingResponseRecorder) ensureHeadersReady() {
 }
 
 func (r *streamingResponseRecorder) Write(data []byte) (int, error) {
-	r.started = true
+	r.started.Store(true)
 	r.ensureHeadersReady()
 	return r.writer.Write(data)
 }
