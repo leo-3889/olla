@@ -32,6 +32,9 @@ type StreamingState struct {
 	inputTokens      int
 	outputTokens     int
 	messageStartSent bool
+	// reasoningOpen is true while a thinking block has been started but not yet stopped.
+	// The first non-reasoning delta closes the thinking block before opening its own.
+	reasoningOpen bool
 }
 
 // convert openai sse stream to anthropic format
@@ -176,6 +179,14 @@ func (t *Translator) processStreamLine(line string, state *StreamingState, w htt
 		return nil
 	}
 
+	// reasoning / reasoning_content are the per-backend field names for chain-of-thought.
+	// Ollama, LM Studio, and Lemonade use "reasoning"; vLLM, SGLang, and DeepSeek use
+	// "reasoning_content". Treat them as equivalent and prefer whichever is non-empty.
+	reasoning := extractReasoningField(delta)
+	if reasoning != "" {
+		return t.handleReasoningDelta(reasoning, state, w, rc)
+	}
+
 	if content, ok := delta["content"].(string); ok && content != "" {
 		return t.handleContentDelta(content, state, w, rc)
 	}
@@ -185,6 +196,20 @@ func (t *Translator) processStreamLine(line string, state *StreamingState, w htt
 	}
 
 	return nil
+}
+
+// extractReasoningField returns the non-empty reasoning text from a delta object,
+// checking both field name variants used across backends:
+//   - "reasoning"         - Ollama, LM Studio, Lemonade
+//   - "reasoning_content" - vLLM, SGLang, DeepSeek
+func extractReasoningField(delta map[string]interface{}) string {
+	if v, ok := delta["reasoning"].(string); ok && v != "" {
+		return v
+	}
+	if v, ok := delta["reasoning_content"].(string); ok && v != "" {
+		return v
+	}
+	return ""
 }
 
 // send message_start if we haven't already, needs to be first event
@@ -259,6 +284,65 @@ func (t *Translator) handleContentDelta(content string, state *StreamingState, w
 	return nil
 }
 
+// handleReasoningDelta streams chain-of-thought text as an Anthropic thinking block.
+// Reasoning always precedes content in model output, so we open a thinking block on the
+// first reasoning chunk and leave it open until the first non-reasoning delta arrives,
+// at which point closeCurrentBlock handles the stop event before the next block opens.
+func (t *Translator) handleReasoningDelta(reasoning string, state *StreamingState, w http.ResponseWriter, rc *http.ResponseController) error {
+	if err := t.ensureMessageStartSent(state, w, rc); err != nil {
+		return err
+	}
+
+	// Open the thinking block on the first reasoning chunk.
+	if !state.reasoningOpen {
+		// Close anything that was already open (shouldn't happen in practice, but be safe).
+		if err := t.closeCurrentBlock(state, w, rc); err != nil {
+			return err
+		}
+
+		state.currentBlock = &ContentBlock{
+			Type: contentTypeThinking,
+		}
+		state.currentIndex = len(state.contentBlocks)
+		state.contentBlocks = append(state.contentBlocks, *state.currentBlock)
+		state.reasoningOpen = true
+
+		if err := t.writeEvent(w, "content_block_start", map[string]interface{}{
+			"type":  "content_block_start",
+			"index": state.currentIndex,
+			"content_block": map[string]interface{}{
+				"type":     contentTypeThinking,
+				"thinking": "",
+			},
+		}); err != nil {
+			return err
+		}
+		if err := rc.Flush(); err != nil {
+			return fmt.Errorf("flush failed: %w", err)
+		}
+	}
+
+	if err := t.writeEvent(w, "content_block_delta", map[string]interface{}{
+		"type":  "content_block_delta",
+		"index": state.currentIndex,
+		"delta": map[string]interface{}{
+			"type":     "thinking_delta",
+			"thinking": reasoning,
+		},
+	}); err != nil {
+		return err
+	}
+	if err := rc.Flush(); err != nil {
+		return fmt.Errorf("flush failed: %w", err)
+	}
+
+	// Accumulate for inspector/logging.
+	state.currentBlock.Thinking += reasoning
+	state.contentBlocks[state.currentIndex] = *state.currentBlock
+
+	return nil
+}
+
 // toolCallData holds extracted and validated tool call information
 type toolCallData struct {
 	id        string
@@ -316,6 +400,11 @@ func (t *Translator) closeCurrentBlock(state *StreamingState, w http.ResponseWri
 	}
 	if err := rc.Flush(); err != nil {
 		return fmt.Errorf("flush failed: %w", err)
+	}
+	// Clear thinking state when closing a thinking block so subsequent reasoning
+	// chunks (if any) would open a new block rather than append to a closed one.
+	if state.currentBlock.Type == contentTypeThinking {
+		state.reasoningOpen = false
 	}
 	state.currentBlock = nil
 	return nil

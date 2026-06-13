@@ -60,13 +60,14 @@ type AnthropicMessage struct {
 }
 
 // ContentBlock represents different types of content in messages
-// Anthropic uses a block-based content model for text, images, tool use, and tool results
+// Anthropic uses a block-based content model for text, images, tool use, tool results, and thinking.
 type ContentBlock struct {
 	Content   interface{}            `json:"content,omitempty"` // for tool_result
 	Source    *ImageSource           `json:"source,omitempty"`
 	Input     map[string]interface{} `json:"input,omitempty"`
-	Type      string                 `json:"type"` // "text", "image", "tool_use", "tool_result"
+	Type      string                 `json:"type"` // "text", "image", "tool_use", "tool_result", "thinking"
 	Text      string                 `json:"text,omitempty"`
+	Thinking  string                 `json:"thinking,omitempty"` // populated for type="thinking" response blocks
 	ID        string                 `json:"id,omitempty"`
 	Name      string                 `json:"name,omitempty"`
 	ToolUseID string                 `json:"tool_use_id,omitempty"`
@@ -166,6 +167,12 @@ type TextDelta struct {
 type InputJSONDelta struct {
 	Type        string `json:"type"` // "input_json_delta"
 	PartialJSON string `json:"partial_json"`
+}
+
+// ThinkingDelta represents incremental reasoning/thinking text
+type ThinkingDelta struct {
+	Type     string `json:"type"` // "thinking_delta"
+	Thinking string `json:"thinking"`
 }
 
 // ContentBlockStop marks the end of a content block

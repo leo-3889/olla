@@ -5,6 +5,7 @@ const (
 	contentTypeToolUse    = "tool_use"
 	contentTypeToolResult = "tool_result"
 	contentTypeImage      = "image"
+	contentTypeThinking   = "thinking"
 )
 
 const (
