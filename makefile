@@ -18,7 +18,7 @@ LDFLAGS := -ldflags "\
 	-X '$(PKG).Tool=$(TOOL)' \
 	-X '$(PKG).User=$(USER)'"
 
-.PHONY: run clean build test test-verbose test-short test-race test-cover bench version install-deps check-deps vet test-script-integration test-script-sticky mock-up mock-down mock-status mock-logs test-auth-bearer test-auth-env-fatal test-auth-manual
+.PHONY: run clean build test test-verbose test-short test-race test-cover bench version install-deps check-deps vet test-script-integration test-script-sticky test-auth-bearer test-auth-env-fatal test-auth-manual
 
 # Build the application with version info
 build:
