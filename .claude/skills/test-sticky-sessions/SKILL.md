@@ -242,13 +242,13 @@ else
 fi
 ```
 
-**session_id must NOT appear on INFO "Request completed" lines (redaction check):**
+**session_id must appear on INFO "Request completed" lines:**
 
 ```bash
 if grep "Request completed" "$LOG" 2>/dev/null | grep -q "session_id="; then
-    echo "FAIL: session_id found on INFO Request completed lines - user identifier leak"
+    echo "PASS: session_id present on INFO Request completed lines"
 else
-    echo "PASS: session_id absent from INFO Request completed lines"
+    echo "FAIL: session_id missing from INFO Request completed lines - check logRequestResult"
 fi
 ```
 

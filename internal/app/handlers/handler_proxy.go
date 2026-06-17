@@ -352,6 +352,12 @@ func (a *Application) logRequestResult(pr *proxyRequest, err error) {
 			infoFields = append(infoFields, "sticky_outcome", pr.stickyOutcome)
 		}
 
+		// the client-supplied session id, logged alongside the outcome so affinity
+		// routing can be traced without enabling DEBUG
+		if pr.sessionID != "" {
+			infoFields = append(infoFields, "session_id", pr.sessionID)
+		}
+
 		// FallbackReasonNone is the empty string (passthrough succeeded); omit it
 		// because it would appear on the majority of requests and adds no signal
 		if pr.translatorFallbackReason != "" {
@@ -391,8 +397,8 @@ func (a *Application) buildLogFields(pr *proxyRequest, duration time.Duration) [
 	if pr.stickySource != "" && pr.stickySource != "none" {
 		fields = append(fields, "sticky_source", pr.stickySource)
 	}
-	// session_id is client-supplied; keep it at DEBUG only to avoid logging user
-	// identifiers in operational log aggregation pipelines
+	// also carried here so failed requests and the detailed metrics line keep
+	// the session id (the success path logs it at INFO)
 	if pr.sessionID != "" {
 		fields = append(fields, "session_id", pr.sessionID)
 	}

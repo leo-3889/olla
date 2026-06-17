@@ -169,9 +169,9 @@ func TestLogRequestResult_FallbackReason_OmittedWhenNone(t *testing.T) {
 		"fallback_reason must be absent from INFO log when reason is FallbackReasonNone; fields: %v", cl.infoFields)
 }
 
-// TestLogRequestResult_SessionID_NotAtInfo verifies that client-supplied session
-// IDs never appear in INFO logs - they are user identifiers and must stay at DEBUG.
-func TestLogRequestResult_SessionID_NotAtInfo(t *testing.T) {
+// TestLogRequestResult_SessionID_AtInfo verifies the client-supplied session id
+// is logged at INFO so affinity routing can be traced without enabling DEBUG.
+func TestLogRequestResult_SessionID_AtInfo(t *testing.T) {
 	t.Parallel()
 
 	cl := &capturingLogger{}
@@ -181,8 +181,8 @@ func TestLogRequestResult_SessionID_NotAtInfo(t *testing.T) {
 	app := &Application{logger: cl}
 	app.logRequestResult(pr, nil)
 
-	assert.False(t, cl.hasKey("session_id"),
-		"session_id must NOT appear in INFO log; fields: %v", cl.infoFields)
+	assert.True(t, cl.hasField("session_id", "sess-abc-123"),
+		"session_id must appear at INFO; fields: %v", cl.infoFields)
 }
 
 // TestResolveAliasEndpoints_LogsActualModels verifies that the "Model alias
