@@ -18,21 +18,28 @@ import (
 )
 
 type proxyRequest struct {
-	requestLogger  logger.StyledLogger
-	stats          *ports.RequestStats
-	profile        *domain.RequestProfile
-	clientIP       string
-	targetPath     string
-	model          string
-	contentType    string
-	method         string
-	path           string
-	query          string
-	userAgent      string
-	translatorMode constants.TranslatorMode
-	contentLength  int64
-	hadError       bool
-	isStreaming    bool
+	requestLogger            logger.StyledLogger
+	stats                    *ports.RequestStats
+	profile                  *domain.RequestProfile
+	clientIP                 string
+	targetPath               string
+	model                    string
+	contentType              string
+	method                   string
+	path                     string
+	query                    string
+	userAgent                string
+	translatorMode           constants.TranslatorMode
+	translatorFallbackReason string
+	// stickyOutcome, stickySource, and sessionID are populated after endpoint
+	// selection so the routing outcome is visible in completed-request log lines.
+	// sessionID must only appear at DEBUG because client-supplied IDs are user data.
+	stickyOutcome string
+	stickySource  string
+	sessionID     string
+	contentLength int64
+	hadError      bool
+	isStreaming   bool
 }
 
 func (a *Application) proxyHandler(w http.ResponseWriter, r *http.Request) {
@@ -64,6 +71,15 @@ func (a *Application) proxyHandler(w http.ResponseWriter, r *http.Request) {
 	r.URL.Path = pr.targetPath
 
 	err = a.executeProxyRequest(ctx, w, r, endpoints, pr)
+
+	// Read sticky outcome back from context so it appears in the completed-request log.
+	// The outcome pointer was allocated in injectStickyKeyWithBody and written by
+	// the balancer selector before returning, so it is safe to read here without a lock.
+	if outcome, ok := ctx.Value(constants.ContextStickyOutcomeKey).(*balancer.StickyOutcome); ok && outcome != nil {
+		pr.stickyOutcome = outcome.Result
+		pr.stickySource = outcome.Source
+	}
+	pr.sessionID = r.Header.Get(constants.HeaderXOllaSessionID)
 
 	a.logRequestResult(pr, err)
 
@@ -312,6 +328,34 @@ func (a *Application) logRequestResult(pr *proxyRequest, err error) {
 			if pm.TTFTMs > 0 {
 				infoFields = append(infoFields, "ttft_ms", pm.TTFTMs)
 			}
+			// the model the backend actually ran, which can differ from the requested alias
+			if pm.Model != "" {
+				infoFields = append(infoFields, "provider_model", pm.Model)
+			}
+		}
+
+		// routing fields at INFO so operators can see the strategy without enabling DEBUG
+		if rd := pr.stats.RoutingDecision; rd != nil {
+			if rd.Strategy != "" {
+				infoFields = append(infoFields, "routing_strategy", rd.Strategy)
+			}
+			if rd.Action != "" {
+				infoFields = append(infoFields, "routing_action", rd.Action)
+			}
+			if rd.Reason != "" {
+				infoFields = append(infoFields, "routing_reason", rd.Reason)
+			}
+		}
+
+		// "disabled" carries no signal; omit it to avoid noise in deployments without sticky sessions
+		if pr.stickyOutcome != "" && pr.stickyOutcome != "disabled" {
+			infoFields = append(infoFields, "sticky_outcome", pr.stickyOutcome)
+		}
+
+		// FallbackReasonNone is the empty string (passthrough succeeded); omit it
+		// because it would appear on the majority of requests and adds no signal
+		if pr.translatorFallbackReason != "" {
+			infoFields = append(infoFields, "fallback_reason", pr.translatorFallbackReason)
 		}
 
 		pr.requestLogger.Info("Request completed", infoFields...)
@@ -341,6 +385,16 @@ func (a *Application) buildLogFields(pr *proxyRequest, duration time.Duration) [
 
 	if pr.stats.EndpointName == "" {
 		fields = append(fields, "target_path", pr.targetPath)
+	}
+
+	// "none" means no sticky session is active, which adds no useful signal at DEBUG
+	if pr.stickySource != "" && pr.stickySource != "none" {
+		fields = append(fields, "sticky_source", pr.stickySource)
+	}
+	// session_id is client-supplied; keep it at DEBUG only to avoid logging user
+	// identifiers in operational log aggregation pipelines
+	if pr.sessionID != "" {
+		fields = append(fields, "session_id", pr.sessionID)
 	}
 
 	// Add provider metrics if available (detailed view)
@@ -539,9 +593,21 @@ func (a *Application) resolveAliasEndpoints(ctx context.Context, profile *domain
 	profile.RoutingDecision = ports.NewRoutingDecision("alias", ports.RoutingActionRouted,
 		fmt.Sprintf("alias %q resolved to %d endpoint(s)", aliasName, len(aliasEndpoints)))
 
+	// collect unique actual model names so the log shows what the backends serve,
+	// not just the alias name the client requested
+	actualModels := make([]string, 0, len(endpointToModel))
+	seen := make(map[string]struct{}, len(endpointToModel))
+	for _, m := range endpointToModel {
+		if _, dup := seen[m]; !dup {
+			seen[m] = struct{}{}
+			actualModels = append(actualModels, m)
+		}
+	}
+
 	logger.Info("Model alias resolved",
 		"alias", aliasName,
 		"matched_endpoints", len(aliasEndpoints),
+		"actual_models", actualModels,
 		"total_candidates", len(candidates))
 
 	return aliasEndpoints

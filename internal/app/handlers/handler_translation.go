@@ -88,6 +88,13 @@ func (a *Application) executePassthroughRequest(
 	// Execute proxy
 	err = a.proxyService.ProxyRequestToEndpoints(ctx, w, r, endpoints, pr.stats, pr.requestLogger)
 
+	// Capture sticky outcome so it appears in completed-request log lines.
+	if outcome, ok := ctx.Value(constants.ContextStickyOutcomeKey).(*domain.StickyOutcome); ok && outcome != nil {
+		pr.stickyOutcome = outcome.Result
+		pr.stickySource = outcome.Source
+	}
+	pr.sessionID = r.Header.Get(constants.HeaderXOllaSessionID)
+
 	a.logRequestResult(pr, err)
 
 	if err != nil {
@@ -247,6 +254,13 @@ func (a *Application) executeTranslationRequest(
 	} else {
 		proxyErr = a.executeTranslatedNonStreamingRequest(ctx, w, r, endpoints, pr, trans)
 	}
+
+	// Capture sticky outcome so it appears in completed-request log lines.
+	if outcome, ok := ctx.Value(constants.ContextStickyOutcomeKey).(*domain.StickyOutcome); ok && outcome != nil {
+		pr.stickyOutcome = outcome.Result
+		pr.stickySource = outcome.Source
+	}
+	pr.sessionID = r.Header.Get(constants.HeaderXOllaSessionID)
 
 	a.logRequestResult(pr, proxyErr)
 
@@ -412,6 +426,10 @@ func (a *Application) translationHandler(trans translator.RequestTranslator) htt
 		// Passthrough was not used - fall back to full translation.
 		mode := constants.TranslatorModeTranslation
 		fallbackReason := a.resolveTranslationFallback(trans)
+
+		// surface the fallback reason so completed-request logs explain why
+		// translation was required rather than passthrough
+		pr.translatorFallbackReason = string(fallbackReason)
 
 		// Translation path only -- perform the full parse and format conversion.
 		// This is deferred to here so passthrough requests never pay the cost.

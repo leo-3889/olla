@@ -18,7 +18,7 @@ LDFLAGS := -ldflags "\
 	-X '$(PKG).Tool=$(TOOL)' \
 	-X '$(PKG).User=$(USER)'"
 
-.PHONY: run clean build test test-verbose test-short test-race test-cover bench version install-deps check-deps vet test-script-integration test-script-sticky mock-up mock-down mock-status mock-logs test-sticky-manual test-auth-bearer test-auth-env-fatal test-auth-manual
+.PHONY: run clean build test test-verbose test-short test-race test-cover bench version install-deps check-deps vet test-script-integration test-script-sticky mock-up mock-down mock-status mock-logs test-auth-bearer test-auth-env-fatal test-auth-manual
 
 # Build the application with version info
 build:
@@ -364,7 +364,7 @@ test-script-sticky:
 # confirm which instance handled each response.
 #
 # Ports: mock-instance-a=9300, mock-instance-b=9301, mock-instance-c=9302
-.PHONY: mock-up mock-down mock-status mock-logs test-sticky-manual
+.PHONY: mock-up mock-down mock-status mock-logs
 
 ## mock-up: Start AIMock instances and wait until all are healthy
 mock-up:
@@ -384,12 +384,6 @@ mock-status:
 ## mock-logs: Tail logs from all three AIMock instances
 mock-logs:
 	@docker compose -f test/mock/compose.yaml logs -f
-
-## test-sticky-manual: Full end-to-end sticky session test (mock-up → olla → assert → teardown)
-## Starts AIMock, runs Olla with sticky config, executes assertion script, tears down on exit.
-test-sticky-manual:
-	@echo "Running full sticky session manual test..."
-	@bash test/scripts/sticky/run-manual.sh
 
 # ── Auth test helpers ─────────────────────────────────────────────────────────
 # These targets run the auth integration scripts that prove outbound credential
@@ -463,7 +457,6 @@ help:
 	@echo "  mock-down               - Stop AIMock instances and remove volumes"
 	@echo "  mock-status             - Show AIMock container state"
 	@echo "  mock-logs               - Tail logs from all AIMock instances"
-	@echo "  test-sticky-manual      - Full sticky session end-to-end test (mock + olla + assert)"
 	@echo "  test-auth-bearer        - Bearer token injection end-to-end (no Docker needed)"
 	@echo "  test-auth-env-fatal     - Missing env var aborts startup with a clear error"
 	@echo "  test-auth-manual        - All auth integration scripts (no Docker needed)"
