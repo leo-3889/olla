@@ -10,6 +10,7 @@ import (
 	"github.com/thushan/olla/internal/core/constants"
 	"github.com/thushan/olla/internal/core/domain"
 	"github.com/thushan/olla/internal/core/ports"
+	"github.com/thushan/olla/internal/logger"
 )
 
 // capturingLogger records the fields passed to each Info call so tests can
@@ -27,6 +28,10 @@ func (c *capturingLogger) Info(msg string, args ...any) {
 	c.infoMsg = msg
 	c.infoFields = args
 }
+
+// WithRequestID must return the capturingLogger itself, not the embedded mockStyledLogger,
+// so that pr.requestLogger.Info routes back through our capturing implementation.
+func (c *capturingLogger) WithRequestID(_ string) logger.StyledLogger { return c }
 
 // hasField returns true when the captured INFO args contain key=value as an
 // adjacent pair.

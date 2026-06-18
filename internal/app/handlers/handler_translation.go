@@ -87,14 +87,7 @@ func (a *Application) executePassthroughRequest(
 
 	// Execute proxy
 	err = a.proxyService.ProxyRequestToEndpoints(ctx, w, r, endpoints, pr.stats, pr.requestLogger)
-
-	// Capture sticky outcome so it appears in completed-request log lines.
-	if outcome, ok := ctx.Value(constants.ContextStickyOutcomeKey).(*domain.StickyOutcome); ok && outcome != nil {
-		pr.stickyOutcome = outcome.Result
-		pr.stickySource = outcome.Source
-	}
-	pr.sessionID = r.Header.Get(constants.HeaderXOllaSessionID)
-
+	pr.captureStickyOutcome(ctx, r)
 	a.logRequestResult(pr, err)
 
 	if err != nil {
@@ -255,13 +248,7 @@ func (a *Application) executeTranslationRequest(
 		proxyErr = a.executeTranslatedNonStreamingRequest(ctx, w, r, endpoints, pr, trans)
 	}
 
-	// Capture sticky outcome so it appears in completed-request log lines.
-	if outcome, ok := ctx.Value(constants.ContextStickyOutcomeKey).(*domain.StickyOutcome); ok && outcome != nil {
-		pr.stickyOutcome = outcome.Result
-		pr.stickySource = outcome.Source
-	}
-	pr.sessionID = r.Header.Get(constants.HeaderXOllaSessionID)
-
+	pr.captureStickyOutcome(ctx, r)
 	a.logRequestResult(pr, proxyErr)
 
 	if proxyErr != nil {

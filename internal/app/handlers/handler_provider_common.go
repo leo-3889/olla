@@ -114,6 +114,7 @@ func (a *Application) providerProxyHandler(w http.ResponseWriter, r *http.Reques
 
 	a.logRequestStart(pr, len(endpoints))
 	err = a.executeProxyRequest(ctx, w, r, endpoints, pr)
+	pr.captureStickyOutcome(ctx, r)
 	a.logRequestResult(pr, err)
 
 	if err != nil {

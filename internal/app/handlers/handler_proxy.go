@@ -71,16 +71,7 @@ func (a *Application) proxyHandler(w http.ResponseWriter, r *http.Request) {
 	r.URL.Path = pr.targetPath
 
 	err = a.executeProxyRequest(ctx, w, r, endpoints, pr)
-
-	// Read sticky outcome back from context so it appears in the completed-request log.
-	// The outcome pointer was allocated in injectStickyKeyWithBody and written by
-	// the balancer selector before returning, so it is safe to read here without a lock.
-	if outcome, ok := ctx.Value(constants.ContextStickyOutcomeKey).(*balancer.StickyOutcome); ok && outcome != nil {
-		pr.stickyOutcome = outcome.Result
-		pr.stickySource = outcome.Source
-	}
-	pr.sessionID = r.Header.Get(constants.HeaderXOllaSessionID)
-
+	pr.captureStickyOutcome(ctx, r)
 	a.logRequestResult(pr, err)
 
 	if err != nil {
@@ -146,6 +137,20 @@ func (a *Application) analyzeRequest(ctx context.Context, r *http.Request, pr *p
 	}
 
 	pr.stats.PathResolutionMs = time.Since(pathResolutionStart).Milliseconds()
+}
+
+// captureStickyOutcome copies the sticky session result and the client-supplied session id
+// into pr so logRequestResult surfaces them. Every handler that logs a completed request
+// must call this after endpoint selection; without it, provider routes silently drop the
+// fields from their "Request completed" log line (#178, regression from #139).
+// The outcome pointer is allocated in injectStickyKeyWithBody and filled by the balancer
+// wrapper before Select() returns, so no lock is needed here.
+func (pr *proxyRequest) captureStickyOutcome(ctx context.Context, r *http.Request) {
+	if outcome, ok := ctx.Value(constants.ContextStickyOutcomeKey).(*balancer.StickyOutcome); ok && outcome != nil {
+		pr.stickyOutcome = outcome.Result
+		pr.stickySource = outcome.Source
+	}
+	pr.sessionID = r.Header.Get(constants.HeaderXOllaSessionID)
 }
 
 // injectStickyKey computes the affinity key for this request and injects it into the context.
