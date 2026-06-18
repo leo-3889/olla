@@ -10,6 +10,7 @@ import (
 	"github.com/thushan/olla/internal/adapter/proxy/common"
 	"github.com/thushan/olla/internal/adapter/proxy/core"
 	"github.com/thushan/olla/internal/app/middleware"
+	"github.com/thushan/olla/internal/core/constants"
 	"github.com/thushan/olla/internal/core/domain"
 	"github.com/thushan/olla/internal/core/ports"
 	"github.com/thushan/olla/internal/logger"
@@ -87,6 +88,17 @@ func (s *Service) proxyToSingleEndpoint(ctx context.Context, w http.ResponseWrit
 
 	// Rewrite model name in request body if this is an alias-resolved request
 	core.RewriteModelForAlias(ctx, r, endpoint)
+
+	// log at DEBUG when a model alias rewrite occurred so operators can correlate
+	// the alias name the client sent with the actual model dispatched to the backend
+	if aliasMap, ok := ctx.Value(constants.ContextModelAliasMapKey).(map[string]string); ok {
+		if actualModel, ok := aliasMap[endpoint.GetURLString()]; ok && actualModel != stats.Model {
+			rlog.Debug("Model alias rewritten for backend",
+				"alias", stats.Model,
+				"actual_model", actualModel,
+				"endpoint", endpoint.Name)
+		}
+	}
 
 	proxyReq, err := s.prepareProxyRequest(ctx, r, targetURL, endpoint, stats)
 	if err != nil {
