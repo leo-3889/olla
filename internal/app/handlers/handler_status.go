@@ -90,13 +90,13 @@ type StatusResponse struct {
 }
 
 type statusSnapshot struct {
-	all             []*domain.Endpoint
-	healthy         []*domain.Endpoint
 	endpointStats   map[string]ports.EndpointStats
-	proxyStats      ports.ProxyStats
-	securityStats   ports.SecurityStats
 	connectionStats map[string]int64
 	endpointModels  map[string]*domain.EndpointModels
+	all             []*domain.Endpoint
+	healthy         []*domain.Endpoint
+	proxyStats      ports.ProxyStats
+	securityStats   ports.SecurityStats
 }
 
 func (a *Application) gatherStatusSnapshot(ctx context.Context) (*statusSnapshot, error) {

@@ -84,6 +84,76 @@ func TestMetricsHandler_BasicFunctionality(t *testing.T) {
 	assert.Contains(t, body, `olla_endpoint_up{endpoint="test-endpoint-unhealthy",status="unhealthy"} 0`)
 	assert.Contains(t, body, `engine="olla"`)
 	assert.Contains(t, body, `balancer="priority"`)
+	assert.Contains(t, body, "olla_models_total 0")
+}
+
+func TestMetricsHandler_MatchesModelStatsCounts(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	stats := &mockStatusStatsCollector{
+		modelStats: map[string]ports.ModelStats{
+			"llama3.2": {
+				TotalRequests:      42,
+				SuccessfulRequests: 40,
+				FailedRequests:     2,
+				TotalBytes:         8192,
+				AverageLatency:     110,
+				P95Latency:         200,
+				P99Latency:         350,
+				UniqueClients:      3,
+				RoutingHits:        35,
+				RoutingMisses:      5,
+				RoutingFallbacks:   2,
+				LastRequested:      now,
+			},
+		},
+		modelEndpointStats: map[string]map[string]ports.EndpointModelStats{
+			"llama3.2": {
+				"local-ollama": {
+					EndpointName:      "local-ollama",
+					ModelName:         "llama3.2",
+					RequestCount:      42,
+					SuccessRate:       95.2,
+					AverageLatency:    110,
+					ConsecutiveErrors: 1,
+					LastUsed:          now,
+				},
+			},
+		},
+	}
+
+	app := &Application{
+		repository:     &mockStatusEndpointRepository{endpoints: nil},
+		statsCollector: stats,
+		modelRegistry:  &mockStatusModelRegistry{},
+		StartTime:      time.Now(),
+		Config:         &config.Config{},
+	}
+
+	modelReq := httptest.NewRequest(http.MethodGet, "/internal/stats/models", nil)
+	modelRec := httptest.NewRecorder()
+	app.modelStatsHandler(modelRec, modelReq)
+	require.Equal(t, http.StatusOK, modelRec.Code)
+
+	metricsReq := httptest.NewRequest(http.MethodGet, constants.DefaultMetricsEndpoint, nil)
+	metricsRec := httptest.NewRecorder()
+	app.metricsHandler(metricsRec, metricsReq)
+	require.Equal(t, http.StatusOK, metricsRec.Code)
+
+	body := metricsRec.Body.String()
+	assert.Contains(t, body, "olla_models_total 1")
+	assert.Contains(t, body, "olla_models_active 1")
+	assert.Contains(t, body, "olla_models_requests_total 42")
+	assert.Contains(t, body, "olla_models_traffic_bytes 8192")
+	assert.Contains(t, body, `olla_model_requests_total{model="llama3.2"} 42`)
+	assert.Contains(t, body, `olla_model_successful_requests_total{model="llama3.2"} 40`)
+	assert.Contains(t, body, `olla_model_failed_requests_total{model="llama3.2"} 2`)
+	assert.Contains(t, body, `olla_model_avg_latency_ms{model="llama3.2"} 110`)
+	assert.Contains(t, body, `olla_model_routing_hits_total{model="llama3.2"} 35`)
+	assert.Contains(t, body, `olla_model_endpoint_requests_total{model="llama3.2",endpoint="local-ollama"} 42`)
+	assert.Contains(t, body, `olla_model_endpoint_success_rate_percent{model="llama3.2",endpoint="local-ollama"} 95.2`)
+	assert.Contains(t, body, `olla_model_endpoint_consecutive_errors{model="llama3.2",endpoint="local-ollama"} 1`)
 }
 
 func TestMetricsHandler_MatchesStatusCounts(t *testing.T) {
@@ -138,7 +208,7 @@ func TestMetricsHandler_MatchesStatusCounts(t *testing.T) {
 	assert.Contains(t, body, "olla_requests_total 10")
 	assert.Contains(t, body, "olla_failures_total 1")
 	assert.Contains(t, body, "olla_avg_latency_ms 50")
-	assert.Contains(t, body, `olla_endpoint_requests_total{endpoint="ep-a",status="healthy"} 10`)
+	assert.Contains(t, body, `olla_endpoint_requests_total{endpoint="ep-a"} 10`)
 }
 
 func TestEscapePrometheusLabel(t *testing.T) {

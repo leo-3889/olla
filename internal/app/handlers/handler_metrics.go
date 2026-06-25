@@ -22,12 +22,28 @@ func (a *Application) metricsHandler(w http.ResponseWriter, r *http.Request) {
 
 	response := a.buildStatusResponse(snapshot)
 
+	modelStats := make(map[string]ports.ModelStats)
+	modelEndpointStats := make(map[string]map[string]ports.EndpointModelStats)
+	if a.statsCollector != nil {
+		modelStats = a.statsCollector.GetModelStats()
+		modelEndpointStats = a.statsCollector.GetModelEndpointStats()
+	}
+	if modelStats == nil {
+		modelStats = make(map[string]ports.ModelStats)
+	}
+	if modelEndpointStats == nil {
+		modelEndpointStats = make(map[string]map[string]ports.EndpointModelStats)
+	}
+	models, acc := a.buildModelStats(modelStats, modelEndpointStats, false)
+	summary := a.buildSummary(models, modelStats, acc)
+
 	w.Header().Set(constants.HeaderContentType, constants.ContentTypePrometheus)
 	w.WriteHeader(http.StatusOK)
-	writePrometheusMetrics(w, response, snapshot, a.Config.Proxy, time.Since(a.StartTime))
+	writePrometheusMetrics(w, response, snapshot, a.Config.Proxy, time.Since(a.StartTime), summary, modelStats, modelEndpointStats)
 }
 
-func writePrometheusMetrics(w http.ResponseWriter, response StatusResponse, snapshot *statusSnapshot, proxyConfig config.ProxyConfig, uptime time.Duration) {
+func writePrometheusMetrics(w http.ResponseWriter, response StatusResponse, snapshot *statusSnapshot, proxyConfig config.ProxyConfig, uptime time.Duration,
+	summary ModelStatsSummary, modelStats map[string]ports.ModelStats, modelEndpointStats map[string]map[string]ports.EndpointModelStats) {
 	var b strings.Builder
 
 	writePrometheusHelpType(&b, "olla_info", "gauge", "Olla build and proxy configuration")
@@ -85,6 +101,7 @@ func writePrometheusMetrics(w http.ResponseWriter, response StatusResponse, snap
 	writePrometheusGauge(&b, "olla_security_status", securityStatusValue(response.Security.Status))
 
 	writeEndpointPrometheusMetrics(&b, snapshot.all, snapshot.endpointStats, snapshot.connectionStats, snapshot.endpointModels)
+	writeModelPrometheusMetrics(&b, summary, modelStats, modelEndpointStats)
 
 	_, _ = w.Write([]byte(b.String()))
 }
@@ -129,13 +146,82 @@ func writeEndpointPrometheusMetrics(b *strings.Builder, all []*domain.Endpoint, 
 		}
 
 		writePrometheusLabeledGauge(b, "olla_endpoint_up", up, "endpoint", endpoint.Name, "status", status)
-		writePrometheusLabeledGauge(b, "olla_endpoint_requests_total", float64(requests), "endpoint", endpoint.Name, "status", status)
-		writePrometheusLabeledGauge(b, "olla_endpoint_connections", float64(connectionStats[url]), "endpoint", endpoint.Name, "status", status)
-		writePrometheusLabeledGauge(b, "olla_endpoint_success_rate_percent", successRate, "endpoint", endpoint.Name, "status", status)
-		writePrometheusLabeledGauge(b, "olla_endpoint_avg_latency_ms", float64(avgLatency), "endpoint", endpoint.Name, "status", status)
-		writePrometheusLabeledGauge(b, "olla_endpoint_traffic_bytes", float64(trafficBytes), "endpoint", endpoint.Name, "status", status)
-		writePrometheusLabeledGauge(b, "olla_endpoint_priority", float64(endpoint.Priority), "endpoint", endpoint.Name, "status", status)
-		writePrometheusLabeledGauge(b, "olla_endpoint_models_count", float64(modelCount), "endpoint", endpoint.Name, "status", status)
+		writePrometheusLabeledGauge(b, "olla_endpoint_requests_total", float64(requests), "endpoint", endpoint.Name)
+		writePrometheusLabeledGauge(b, "olla_endpoint_connections", float64(connectionStats[url]), "endpoint", endpoint.Name)
+		writePrometheusLabeledGauge(b, "olla_endpoint_success_rate_percent", successRate, "endpoint", endpoint.Name)
+		writePrometheusLabeledGauge(b, "olla_endpoint_avg_latency_ms", float64(avgLatency), "endpoint", endpoint.Name)
+		writePrometheusLabeledGauge(b, "olla_endpoint_traffic_bytes", float64(trafficBytes), "endpoint", endpoint.Name)
+		writePrometheusLabeledGauge(b, "olla_endpoint_priority", float64(endpoint.Priority), "endpoint", endpoint.Name)
+		writePrometheusLabeledGauge(b, "olla_endpoint_models_count", float64(modelCount), "endpoint", endpoint.Name)
+	}
+}
+
+func writeModelPrometheusMetrics(b *strings.Builder, summary ModelStatsSummary, modelStats map[string]ports.ModelStats,
+	modelEndpointStats map[string]map[string]ports.EndpointModelStats) {
+	var totalTrafficBytes int64
+	for _, stats := range modelStats {
+		totalTrafficBytes += stats.TotalBytes
+	}
+
+	writePrometheusHelpType(b, "olla_models_total", "gauge", "Total tracked models")
+	writePrometheusHelpType(b, "olla_models_active", "gauge", "Models requested in the last hour")
+	writePrometheusHelpType(b, "olla_models_requests_total", "counter", "Total requests across all models")
+	writePrometheusHelpType(b, "olla_models_success_rate_percent", "gauge", "Overall model request success rate")
+	writePrometheusHelpType(b, "olla_models_traffic_bytes", "counter", "Total model traffic in bytes")
+	writePrometheusHelpType(b, "olla_model_requests_total", "counter", "Total requests for a model")
+	writePrometheusHelpType(b, "olla_model_successful_requests_total", "counter", "Successful requests for a model")
+	writePrometheusHelpType(b, "olla_model_failed_requests_total", "counter", "Failed requests for a model")
+	writePrometheusHelpType(b, "olla_model_success_rate_percent", "gauge", "Model success rate percentage")
+	writePrometheusHelpType(b, "olla_model_traffic_bytes", "counter", "Total traffic for a model in bytes")
+	writePrometheusHelpType(b, "olla_model_avg_latency_ms", "gauge", "Model average latency in milliseconds")
+	writePrometheusHelpType(b, "olla_model_p95_latency_ms", "gauge", "Model P95 latency in milliseconds")
+	writePrometheusHelpType(b, "olla_model_p99_latency_ms", "gauge", "Model P99 latency in milliseconds")
+	writePrometheusHelpType(b, "olla_model_unique_clients", "gauge", "Unique clients per model")
+	writePrometheusHelpType(b, "olla_model_routing_hits_total", "counter", "Model routing hits (first endpoint)")
+	writePrometheusHelpType(b, "olla_model_routing_misses_total", "counter", "Model routing misses (retry required)")
+	writePrometheusHelpType(b, "olla_model_routing_fallbacks_total", "counter", "Model routing fallbacks")
+	writePrometheusHelpType(b, "olla_model_endpoint_requests_total", "counter", "Requests for a model on a specific endpoint")
+	writePrometheusHelpType(b, "olla_model_endpoint_success_rate_percent", "gauge", "Model success rate on a specific endpoint")
+	writePrometheusHelpType(b, "olla_model_endpoint_avg_latency_ms", "gauge", "Model average latency on a specific endpoint")
+	writePrometheusHelpType(b, "olla_model_endpoint_consecutive_errors", "gauge", "Consecutive errors for a model on an endpoint")
+
+	writePrometheusGauge(b, "olla_models_total", float64(summary.TotalModels))
+	writePrometheusGauge(b, "olla_models_active", float64(summary.ActiveModels))
+	writePrometheusGauge(b, "olla_models_requests_total", float64(summary.TotalRequests))
+	writePrometheusGauge(b, "olla_models_success_rate_percent", parsePercentage(summary.OverallSuccessRate))
+	writePrometheusGauge(b, "olla_models_traffic_bytes", float64(totalTrafficBytes))
+
+	for name, stats := range modelStats {
+		successRate := float64(0)
+		if stats.TotalRequests > 0 {
+			successRate = float64(stats.SuccessfulRequests) / float64(stats.TotalRequests) * 100.0
+		}
+
+		writePrometheusLabeledGauge(b, "olla_model_requests_total", float64(stats.TotalRequests), "model", name)
+		writePrometheusLabeledGauge(b, "olla_model_successful_requests_total", float64(stats.SuccessfulRequests), "model", name)
+		writePrometheusLabeledGauge(b, "olla_model_failed_requests_total", float64(stats.FailedRequests), "model", name)
+		writePrometheusLabeledGauge(b, "olla_model_success_rate_percent", successRate, "model", name)
+		writePrometheusLabeledGauge(b, "olla_model_traffic_bytes", float64(stats.TotalBytes), "model", name)
+		writePrometheusLabeledGauge(b, "olla_model_avg_latency_ms", float64(stats.AverageLatency), "model", name)
+		writePrometheusLabeledGauge(b, "olla_model_p95_latency_ms", float64(stats.P95Latency), "model", name)
+		writePrometheusLabeledGauge(b, "olla_model_p99_latency_ms", float64(stats.P99Latency), "model", name)
+		writePrometheusLabeledGauge(b, "olla_model_unique_clients", float64(stats.UniqueClients), "model", name)
+		writePrometheusLabeledGauge(b, "olla_model_routing_hits_total", float64(stats.RoutingHits), "model", name)
+		writePrometheusLabeledGauge(b, "olla_model_routing_misses_total", float64(stats.RoutingMisses), "model", name)
+		writePrometheusLabeledGauge(b, "olla_model_routing_fallbacks_total", float64(stats.RoutingFallbacks), "model", name)
+	}
+
+	for modelName, endpoints := range modelEndpointStats {
+		for epName, epStats := range endpoints {
+			writePrometheusLabeledGauge(b, "olla_model_endpoint_requests_total", float64(epStats.RequestCount),
+				"model", modelName, "endpoint", epName)
+			writePrometheusLabeledGauge(b, "olla_model_endpoint_success_rate_percent", epStats.SuccessRate,
+				"model", modelName, "endpoint", epName)
+			writePrometheusLabeledGauge(b, "olla_model_endpoint_avg_latency_ms", float64(epStats.AverageLatency),
+				"model", modelName, "endpoint", epName)
+			writePrometheusLabeledGauge(b, "olla_model_endpoint_consecutive_errors", float64(epStats.ConsecutiveErrors),
+				"model", modelName, "endpoint", epName)
+		}
 	}
 }
 
@@ -199,7 +285,7 @@ func writePrometheusGauge(b *strings.Builder, name string, value float64) {
 func writePrometheusLabeledGauge(b *strings.Builder, name string, value float64, labels ...string) {
 	b.WriteString(name)
 	b.WriteByte('{')
-	for i := 0; i < len(labels); i += 2 {
+	for i := 0; i+1 < len(labels); i += 2 {
 		if i > 0 {
 			b.WriteByte(',')
 		}
