@@ -106,8 +106,49 @@ func writePrometheusMetrics(w http.ResponseWriter, response StatusResponse, snap
 	_, _ = w.Write([]byte(b.String()))
 }
 
+type endpointMetricSample struct {
+	name        string
+	status      string
+	up          float64
+	requests    float64
+	connections float64
+	successRate float64
+	avgLatency  float64
+	traffic     float64
+	priority    float64
+	modelCount  float64
+}
+
 func writeEndpointPrometheusMetrics(b *strings.Builder, all []*domain.Endpoint, statsMap map[string]ports.EndpointStats,
 	connectionStats map[string]int64, modelMap map[string]*domain.EndpointModels) {
+	samples := make([]endpointMetricSample, 0, len(all))
+	for _, endpoint := range all {
+		url := endpoint.GetURLString()
+		stats, hasStats := statsMap[url]
+
+		sample := endpointMetricSample{
+			name:        endpoint.Name,
+			status:      endpoint.Status.String(),
+			connections: float64(connectionStats[url]),
+			priority:    float64(endpoint.Priority),
+		}
+		if endpoint.Status == domain.StatusHealthy {
+			sample.up = 1
+		}
+		if hasStats {
+			sample.requests = float64(stats.TotalRequests)
+			sample.avgLatency = float64(stats.AverageLatency)
+			sample.traffic = float64(stats.TotalBytes)
+			if stats.TotalRequests > 0 {
+				sample.successRate = float64(stats.SuccessfulRequests) / float64(stats.TotalRequests) * 100.0
+			}
+		}
+		if endpointModels := modelMap[url]; endpointModels != nil {
+			sample.modelCount = float64(len(endpointModels.Models))
+		}
+		samples = append(samples, sample)
+	}
+
 	writePrometheusHelpType(b, "olla_endpoint_up", "gauge", "Whether the endpoint is healthy (1) or not (0)")
 	writePrometheusHelpType(b, "olla_endpoint_requests_total", "counter", "Total requests handled by endpoint")
 	writePrometheusHelpType(b, "olla_endpoint_connections", "gauge", "Active connections for endpoint")
@@ -117,50 +158,95 @@ func writeEndpointPrometheusMetrics(b *strings.Builder, all []*domain.Endpoint, 
 	writePrometheusHelpType(b, "olla_endpoint_priority", "gauge", "Endpoint routing priority")
 	writePrometheusHelpType(b, "olla_endpoint_models_count", "gauge", "Number of models discovered on endpoint")
 
-	for _, endpoint := range all {
-		url := endpoint.GetURLString()
-		stats, hasStats := statsMap[url]
-		status := endpoint.Status.String()
-
-		var successRate float64
-		requests := int64(0)
-		avgLatency := int64(0)
-		trafficBytes := int64(0)
-		if hasStats {
-			requests = stats.TotalRequests
-			avgLatency = stats.AverageLatency
-			trafficBytes = stats.TotalBytes
-			if stats.TotalRequests > 0 {
-				successRate = float64(stats.SuccessfulRequests) / float64(stats.TotalRequests) * 100.0
-			}
-		}
-
-		modelCount := int64(0)
-		if endpointModels := modelMap[url]; endpointModels != nil {
-			modelCount = int64(len(endpointModels.Models))
-		}
-
-		up := float64(0)
-		if endpoint.Status == domain.StatusHealthy {
-			up = 1
-		}
-
-		writePrometheusLabeledGauge(b, "olla_endpoint_up", up, "endpoint", endpoint.Name, "status", status)
-		writePrometheusLabeledGauge(b, "olla_endpoint_requests_total", float64(requests), "endpoint", endpoint.Name)
-		writePrometheusLabeledGauge(b, "olla_endpoint_connections", float64(connectionStats[url]), "endpoint", endpoint.Name)
-		writePrometheusLabeledGauge(b, "olla_endpoint_success_rate_percent", successRate, "endpoint", endpoint.Name)
-		writePrometheusLabeledGauge(b, "olla_endpoint_avg_latency_ms", float64(avgLatency), "endpoint", endpoint.Name)
-		writePrometheusLabeledGauge(b, "olla_endpoint_traffic_bytes", float64(trafficBytes), "endpoint", endpoint.Name)
-		writePrometheusLabeledGauge(b, "olla_endpoint_priority", float64(endpoint.Priority), "endpoint", endpoint.Name)
-		writePrometheusLabeledGauge(b, "olla_endpoint_models_count", float64(modelCount), "endpoint", endpoint.Name)
+	for _, sample := range samples {
+		writePrometheusLabeledGauge(b, "olla_endpoint_up", sample.up, "endpoint", sample.name, "status", sample.status)
 	}
+	for _, sample := range samples {
+		writePrometheusLabeledGauge(b, "olla_endpoint_requests_total", sample.requests, "endpoint", sample.name)
+	}
+	for _, sample := range samples {
+		writePrometheusLabeledGauge(b, "olla_endpoint_connections", sample.connections, "endpoint", sample.name)
+	}
+	for _, sample := range samples {
+		writePrometheusLabeledGauge(b, "olla_endpoint_success_rate_percent", sample.successRate, "endpoint", sample.name)
+	}
+	for _, sample := range samples {
+		writePrometheusLabeledGauge(b, "olla_endpoint_avg_latency_ms", sample.avgLatency, "endpoint", sample.name)
+	}
+	for _, sample := range samples {
+		writePrometheusLabeledGauge(b, "olla_endpoint_traffic_bytes", sample.traffic, "endpoint", sample.name)
+	}
+	for _, sample := range samples {
+		writePrometheusLabeledGauge(b, "olla_endpoint_priority", sample.priority, "endpoint", sample.name)
+	}
+	for _, sample := range samples {
+		writePrometheusLabeledGauge(b, "olla_endpoint_models_count", sample.modelCount, "endpoint", sample.name)
+	}
+}
+
+type modelMetricSample struct {
+	name               string
+	requests           float64
+	successfulRequests float64
+	failedRequests     float64
+	successRate        float64
+	traffic            float64
+	avgLatency         float64
+	p95Latency         float64
+	p99Latency         float64
+	uniqueClients      float64
+	routingHits        float64
+	routingMisses      float64
+	routingFallbacks   float64
+}
+
+type modelEndpointMetricSample struct {
+	modelName         string
+	endpointName      string
+	requests          float64
+	successRate       float64
+	avgLatency        float64
+	consecutiveErrors float64
 }
 
 func writeModelPrometheusMetrics(b *strings.Builder, summary ModelStatsSummary, modelStats map[string]ports.ModelStats,
 	modelEndpointStats map[string]map[string]ports.EndpointModelStats) {
 	var totalTrafficBytes int64
-	for _, stats := range modelStats {
+	modelSamples := make([]modelMetricSample, 0, len(modelStats))
+	for name, stats := range modelStats {
 		totalTrafficBytes += stats.TotalBytes
+		sample := modelMetricSample{
+			name:               name,
+			requests:           float64(stats.TotalRequests),
+			successfulRequests: float64(stats.SuccessfulRequests),
+			failedRequests:     float64(stats.FailedRequests),
+			traffic:            float64(stats.TotalBytes),
+			avgLatency:         float64(stats.AverageLatency),
+			p95Latency:         float64(stats.P95Latency),
+			p99Latency:         float64(stats.P99Latency),
+			uniqueClients:      float64(stats.UniqueClients),
+			routingHits:        float64(stats.RoutingHits),
+			routingMisses:      float64(stats.RoutingMisses),
+			routingFallbacks:   float64(stats.RoutingFallbacks),
+		}
+		if stats.TotalRequests > 0 {
+			sample.successRate = float64(stats.SuccessfulRequests) / float64(stats.TotalRequests) * 100.0
+		}
+		modelSamples = append(modelSamples, sample)
+	}
+
+	endpointSamples := make([]modelEndpointMetricSample, 0)
+	for modelName, endpoints := range modelEndpointStats {
+		for epName, epStats := range endpoints {
+			endpointSamples = append(endpointSamples, modelEndpointMetricSample{
+				modelName:         modelName,
+				endpointName:      epName,
+				requests:          float64(epStats.RequestCount),
+				successRate:       epStats.SuccessRate,
+				avgLatency:        float64(epStats.AverageLatency),
+				consecutiveErrors: float64(epStats.ConsecutiveErrors),
+			})
+		}
 	}
 
 	writePrometheusHelpType(b, "olla_models_total", "gauge", "Total tracked models")
@@ -191,37 +277,58 @@ func writeModelPrometheusMetrics(b *strings.Builder, summary ModelStatsSummary, 
 	writePrometheusGauge(b, "olla_models_success_rate_percent", parsePercentage(summary.OverallSuccessRate))
 	writePrometheusGauge(b, "olla_models_traffic_bytes", float64(totalTrafficBytes))
 
-	for name, stats := range modelStats {
-		successRate := float64(0)
-		if stats.TotalRequests > 0 {
-			successRate = float64(stats.SuccessfulRequests) / float64(stats.TotalRequests) * 100.0
-		}
-
-		writePrometheusLabeledGauge(b, "olla_model_requests_total", float64(stats.TotalRequests), "model", name)
-		writePrometheusLabeledGauge(b, "olla_model_successful_requests_total", float64(stats.SuccessfulRequests), "model", name)
-		writePrometheusLabeledGauge(b, "olla_model_failed_requests_total", float64(stats.FailedRequests), "model", name)
-		writePrometheusLabeledGauge(b, "olla_model_success_rate_percent", successRate, "model", name)
-		writePrometheusLabeledGauge(b, "olla_model_traffic_bytes", float64(stats.TotalBytes), "model", name)
-		writePrometheusLabeledGauge(b, "olla_model_avg_latency_ms", float64(stats.AverageLatency), "model", name)
-		writePrometheusLabeledGauge(b, "olla_model_p95_latency_ms", float64(stats.P95Latency), "model", name)
-		writePrometheusLabeledGauge(b, "olla_model_p99_latency_ms", float64(stats.P99Latency), "model", name)
-		writePrometheusLabeledGauge(b, "olla_model_unique_clients", float64(stats.UniqueClients), "model", name)
-		writePrometheusLabeledGauge(b, "olla_model_routing_hits_total", float64(stats.RoutingHits), "model", name)
-		writePrometheusLabeledGauge(b, "olla_model_routing_misses_total", float64(stats.RoutingMisses), "model", name)
-		writePrometheusLabeledGauge(b, "olla_model_routing_fallbacks_total", float64(stats.RoutingFallbacks), "model", name)
+	for _, sample := range modelSamples {
+		writePrometheusLabeledGauge(b, "olla_model_requests_total", sample.requests, "model", sample.name)
+	}
+	for _, sample := range modelSamples {
+		writePrometheusLabeledGauge(b, "olla_model_successful_requests_total", sample.successfulRequests, "model", sample.name)
+	}
+	for _, sample := range modelSamples {
+		writePrometheusLabeledGauge(b, "olla_model_failed_requests_total", sample.failedRequests, "model", sample.name)
+	}
+	for _, sample := range modelSamples {
+		writePrometheusLabeledGauge(b, "olla_model_success_rate_percent", sample.successRate, "model", sample.name)
+	}
+	for _, sample := range modelSamples {
+		writePrometheusLabeledGauge(b, "olla_model_traffic_bytes", sample.traffic, "model", sample.name)
+	}
+	for _, sample := range modelSamples {
+		writePrometheusLabeledGauge(b, "olla_model_avg_latency_ms", sample.avgLatency, "model", sample.name)
+	}
+	for _, sample := range modelSamples {
+		writePrometheusLabeledGauge(b, "olla_model_p95_latency_ms", sample.p95Latency, "model", sample.name)
+	}
+	for _, sample := range modelSamples {
+		writePrometheusLabeledGauge(b, "olla_model_p99_latency_ms", sample.p99Latency, "model", sample.name)
+	}
+	for _, sample := range modelSamples {
+		writePrometheusLabeledGauge(b, "olla_model_unique_clients", sample.uniqueClients, "model", sample.name)
+	}
+	for _, sample := range modelSamples {
+		writePrometheusLabeledGauge(b, "olla_model_routing_hits_total", sample.routingHits, "model", sample.name)
+	}
+	for _, sample := range modelSamples {
+		writePrometheusLabeledGauge(b, "olla_model_routing_misses_total", sample.routingMisses, "model", sample.name)
+	}
+	for _, sample := range modelSamples {
+		writePrometheusLabeledGauge(b, "olla_model_routing_fallbacks_total", sample.routingFallbacks, "model", sample.name)
 	}
 
-	for modelName, endpoints := range modelEndpointStats {
-		for epName, epStats := range endpoints {
-			writePrometheusLabeledGauge(b, "olla_model_endpoint_requests_total", float64(epStats.RequestCount),
-				"model", modelName, "endpoint", epName)
-			writePrometheusLabeledGauge(b, "olla_model_endpoint_success_rate_percent", epStats.SuccessRate,
-				"model", modelName, "endpoint", epName)
-			writePrometheusLabeledGauge(b, "olla_model_endpoint_avg_latency_ms", float64(epStats.AverageLatency),
-				"model", modelName, "endpoint", epName)
-			writePrometheusLabeledGauge(b, "olla_model_endpoint_consecutive_errors", float64(epStats.ConsecutiveErrors),
-				"model", modelName, "endpoint", epName)
-		}
+	for _, sample := range endpointSamples {
+		writePrometheusLabeledGauge(b, "olla_model_endpoint_requests_total", sample.requests,
+			"model", sample.modelName, "endpoint", sample.endpointName)
+	}
+	for _, sample := range endpointSamples {
+		writePrometheusLabeledGauge(b, "olla_model_endpoint_success_rate_percent", sample.successRate,
+			"model", sample.modelName, "endpoint", sample.endpointName)
+	}
+	for _, sample := range endpointSamples {
+		writePrometheusLabeledGauge(b, "olla_model_endpoint_avg_latency_ms", sample.avgLatency,
+			"model", sample.modelName, "endpoint", sample.endpointName)
+	}
+	for _, sample := range endpointSamples {
+		writePrometheusLabeledGauge(b, "olla_model_endpoint_consecutive_errors", sample.consecutiveErrors,
+			"model", sample.modelName, "endpoint", sample.endpointName)
 	}
 }
 

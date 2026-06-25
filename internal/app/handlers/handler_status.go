@@ -111,13 +111,25 @@ func (a *Application) gatherStatusSnapshot(ctx context.Context) (*statusSnapshot
 		endpointModelsMap = make(map[string]*domain.EndpointModels)
 	}
 
+	var endpointStats map[string]ports.EndpointStats
+	var proxyStats ports.ProxyStats
+	var securityStats ports.SecurityStats
+	var connectionStats map[string]int64
+
+	if a.statsCollector != nil {
+		endpointStats = a.statsCollector.GetEndpointStats()
+		proxyStats = a.statsCollector.GetProxyStats()
+		securityStats = a.statsCollector.GetSecurityStats()
+		connectionStats = a.statsCollector.GetConnectionStats()
+	}
+
 	return &statusSnapshot{
 		all:             all,
 		healthy:         healthy,
-		endpointStats:   a.statsCollector.GetEndpointStats(),
-		proxyStats:      a.statsCollector.GetProxyStats(),
-		securityStats:   a.statsCollector.GetSecurityStats(),
-		connectionStats: a.statsCollector.GetConnectionStats(),
+		endpointStats:   endpointStats,
+		proxyStats:      proxyStats,
+		securityStats:   securityStats,
+		connectionStats: connectionStats,
 		endpointModels:  endpointModelsMap,
 	}, nil
 }

@@ -13,7 +13,7 @@ This guide covers monitoring and observability for Olla deployments.
 > # Built-in endpoints (always enabled)
 > # /internal/health - Basic health check
 > # /internal/status - Detailed status
-> # /internal/metrics - Prometheus metrics (same data as /internal/status)
+> # /internal/metrics - Prometheus metrics (same data as /internal/status and /internal/stats/models)
 > # /internal/status/endpoints - Endpoint details
 > # /internal/stats/models - Model statistics
 > # /internal/stats/translators - Translator statistics

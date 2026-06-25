@@ -85,6 +85,7 @@ func TestMetricsHandler_BasicFunctionality(t *testing.T) {
 	assert.Contains(t, body, `engine="olla"`)
 	assert.Contains(t, body, `balancer="priority"`)
 	assert.Contains(t, body, "olla_models_total 0")
+	assertPrometheusFamiliesGrouped(t, body)
 }
 
 func TestMetricsHandler_MatchesModelStatsCounts(t *testing.T) {
@@ -154,6 +155,7 @@ func TestMetricsHandler_MatchesModelStatsCounts(t *testing.T) {
 	assert.Contains(t, body, `olla_model_endpoint_requests_total{model="llama3.2",endpoint="local-ollama"} 42`)
 	assert.Contains(t, body, `olla_model_endpoint_success_rate_percent{model="llama3.2",endpoint="local-ollama"} 95.2`)
 	assert.Contains(t, body, `olla_model_endpoint_consecutive_errors{model="llama3.2",endpoint="local-ollama"} 1`)
+	assertPrometheusFamiliesGrouped(t, body)
 }
 
 func TestMetricsHandler_MatchesStatusCounts(t *testing.T) {
@@ -248,4 +250,37 @@ func TestWritePrometheusLabeledGauge(t *testing.T) {
 	writePrometheusLabeledGauge(&b, "olla_info", 1, "version", "0.0.28", "engine", "olla")
 
 	assert.Equal(t, `olla_info{version="0.0.28",engine="olla"} 1`+"\n", b.String())
+}
+
+func assertPrometheusFamiliesGrouped(t *testing.T, body string) {
+	t.Helper()
+
+	finished := make(map[string]struct{})
+	var current string
+
+	for line := range strings.Lines(body) {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		name := prometheusMetricName(line)
+		if current != "" && name != current {
+			finished[current] = struct{}{}
+		}
+		if _, seen := finished[name]; seen {
+			t.Fatalf("metric family %q samples are not contiguous in exposition output", name)
+		}
+		current = name
+	}
+}
+
+func prometheusMetricName(line string) string {
+	if idx := strings.IndexByte(line, '{'); idx >= 0 {
+		return line[:idx]
+	}
+	if idx := strings.IndexByte(line, ' '); idx >= 0 {
+		return line[:idx]
+	}
+	return line
 }
