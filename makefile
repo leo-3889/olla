@@ -9,7 +9,7 @@ TOOL := "make"
 # Tool versions (pinned)
 GOLANGCI_LINT_VERSION := v2.11.4
 BETTERALIGN_VERSION := v0.8.2
-BUN_VERSION := 1.1.0
+BUN_VERSION := 1.3.5
 
 # Frontend locations. WEB_DIR is the Svelte source tree; EMBED_DIST is the
 # go:embed source the binary ships. It is gitignored and regenerated at build
