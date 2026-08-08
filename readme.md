@@ -39,7 +39,7 @@ Olla works alongside API gateways like [LiteLLM](https://github.com/BerriAI/lite
 
 Single CLI application and config file is all you need to go [Olla](https://tensorfoundry.io/products/olla)!
 
-For Large GPU deployments, Enterprise & Data-Centre use, see [TensorFoundry FoundryOS](https://tensorfoundry.io/products/foundryos).
+For Large GPU deployments, Enterprise & datacenter use, see [TensorFoundry FoundryOS](https://tensorfoundry.io/products/foundryos), for an inference control-plane, consider [Alloy](https://tensorfoundry.io/alloy).
 
 ## Key Features
 
@@ -117,17 +117,17 @@ docker run --platform linux/arm64 -t \
   -p 40114:40114 \
   ghcr.io/thushan/olla:latest
 ```
+
+You can still use the `go install` method, but you won't get the bundled front-end, but you can see 
+[Admin Dashboard: building the frontend](https://thushan.github.io/olla/configuration/dashboard/#building-the-frontend).
+
 ```bash
 # Install via Go
 go install github.com/thushan/olla@latest
 ```
 
-> **Dashboard caveat with `go install`.** A plain `go install` or `go build` produces a
-> binary whose embedded `dist/` carries only a `.gitkeep` sentinel. The binary boots and
-> proxies traffic fine, but `/internal/ui/` serves a `503 dashboard not built` response
-> and the startup log line says so. For a working dashboard use a release binary, the
-> Docker image, or run `make build-web` (requires Bun 1.1+) before `make build`. See
-> [Admin Dashboard: building the frontend](https://thushan.github.io/olla/configuration/dashboard/#building-the-frontend).
+Or you can build and run it from source:
+
 ```bash
 # Build from source
 git clone https://github.com/thushan/olla.git && cd olla && make build-release
