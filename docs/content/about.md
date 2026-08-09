@@ -11,7 +11,7 @@ Olla takes a step back to deliver a **clean, focused and high-performance proxy 
 
 ## TensorFoundry
 
-Olla is an open-source project by [TensorFoundry](https://tensorfoundry.io), and remains free to use under its licence. See the [Olla product page](https://tensorfoundry.io/products/olla) for more on how it fits into TensorFoundry's wider LLM infrastructure tooling.
+Olla is an open-source project by [TensorFoundry](https://tensorfoundry.io), and remains free to use under the [Apache 2.0 licence](https://github.com/thushan/olla/blob/main/LICENSE). See the [Olla product page](https://tensorfoundry.io/products/olla) for more on how it fits into TensorFoundry's wider LLM infrastructure tooling.
 
 ## Core Principals
 

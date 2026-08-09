@@ -844,4 +844,4 @@ curl -X POST http://localhost:40114/olla/lemonade/api/v1/chat/completions \
 
 ## Further Reading
 
-- TensorFoundry's [LLM Inference Servers Compared](https://tensorfoundry.io/blog/llm-inference-servers-compared) - how Lemonade compares with vLLM, SGLang, llama.cpp and Ollama
+- TensorFoundry's [LLM Inference Servers Compared](https://tensorfoundry.io/blog/llm-inference-servers-compared) - covers Lemonade in its "Also in the field" section; the head-to-head comparison table is vLLM, SGLang, llama.cpp and Ollama

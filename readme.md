@@ -39,7 +39,7 @@ Olla works alongside API gateways like [LiteLLM](https://github.com/BerriAI/lite
 
 Single CLI application and config file is all you need to go [Olla](https://tensorfoundry.io/products/olla)!
 
-For Large GPU deployments, Enterprise & datacenter use, see [TensorFoundry FoundryOS](https://tensorfoundry.io/products/foundryos), for an inference control-plane, consider [Alloy](https://tensorfoundry.io/products/alloy).
+For large GPU deployments, enterprise and data centre use, see [TensorFoundry FoundryOS](https://tensorfoundry.io/products/foundryos). For an inference control plane, consider [Alloy](https://tensorfoundry.io/products/alloy).
 
 ## Key Features
 

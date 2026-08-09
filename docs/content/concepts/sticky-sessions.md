@@ -220,4 +220,4 @@ Relevant source files: `internal/adapter/balancer/sticky.go`, `internal/core/dom
 
 ## Further Reading
 
-- TensorFoundry's [What we found when we benchmarked Olla](https://tensorfoundry.io/blog/olla-performance-benchmarks) measures a 7.6x time-to-first-token improvement from sticky-session KV-cache affinity.
+- TensorFoundry's [What we found when we benchmarked Olla](https://tensorfoundry.io/blog/olla-performance-benchmarks) measures a 7.6x time-to-first-token improvement from sticky-session KV-cache affinity, for a 32k-token second turn routed across two backends - not a blanket figure across workloads.

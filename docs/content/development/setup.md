@@ -26,7 +26,7 @@ This guide covers setting up a complete development environment for Olla.
 ### Optional: Bun 1.1+ for the admin dashboard
 
 The embedded admin dashboard SPA (`/internal/ui/`) is built from `web/dashboard/` and
-needs Bun 1.1+. Install and build it with:
+needs Bun 1.3.5+ (pinned in the `Makefile`). Install and build it with:
 
 ```bash
 make install-web   # bun install --frozen-lockfile

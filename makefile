@@ -290,7 +290,7 @@ goreleaser-check:
 # non-empty so a fresh checkout compiles, and the embed handler serves a loud
 # 503 if a binary was built without the SPA.
 
-# Install frontend deps (bun install). Requires Bun 1.1+.
+# Install frontend deps (bun install). Requires Bun 1.3.5+ (pinned above as BUN_VERSION).
 install-web:
 	@echo "Installing frontend dependencies (bun install --frozen-lockfile)..."
 	@cd $(WEB_DIR) && bun install --frozen-lockfile

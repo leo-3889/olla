@@ -514,5 +514,5 @@ func BenchmarkGood(b *testing.B) {
 
 ## Further Reading
 
-- TensorFoundry's [What we found when we benchmarked Olla](https://tensorfoundry.io/blog/olla-performance-benchmarks) - independently measured results for proxy overhead, memory and failover
+- TensorFoundry's [What we found when we benchmarked Olla](https://tensorfoundry.io/blog/olla-performance-benchmarks) - TensorFoundry's own benchmark of proxy overhead, memory and failover (Olla is a TensorFoundry project, so treat this as first-party, not third-party, measurement)
 - [Olla benchmarks](https://tensorfoundry.io/products/olla/benchmarks) on TensorFoundry

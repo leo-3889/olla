@@ -25,7 +25,7 @@ binary and served on the same listener as the proxy. It answers "is my fleet hea
 
 With the shipped default config, start Olla and open:
 
-```
+```text
 http://localhost:40114/internal/ui/
 ```
 
@@ -182,7 +182,7 @@ Every request must pass both; failure returns `403 Forbidden`.
 A failed check returns a body naming what failed and what Olla saw, with a matching
 `Warn` log line:
 
-```
+```text
 403 forbidden: ip not in allowed range (ip=172.17.0.1, host=172.17.0.1:40114)
 403 forbidden: host not accepted (ip=10.0.1.5, host=olla.corp.example:40114)
 ```
