@@ -19,9 +19,11 @@ const appCss = readFileSync(
 // must also be defined in the explicit dark block, or the same class of
 // drift creeps back in unnoticed.
 
-/** Extracts the `--name: value;` custom property declarations from a single
- * `selector { ... }` block in a stylesheet's raw source. */
-function customPropsInBlock(css: string, selector: string): Set<string> {
+/** Extracts the `--name: value` custom property declarations from a single
+ * `selector { ... }` block in a stylesheet's raw source. Values are captured
+ * too: name-only parity would still pass if a block declared the property with
+ * the wrong theme's value, which is the very failure being guarded against. */
+function customPropsInBlock(css: string, selector: string): Map<string, string> {
   const selectorIndex = css.indexOf(selector);
   if (selectorIndex === -1) {
     throw new Error(`selector not found in app.css: ${selector}`);
@@ -30,9 +32,11 @@ function customPropsInBlock(css: string, selector: string): Set<string> {
   const closeBrace = css.indexOf('}', openBrace);
   const body = css.slice(openBrace + 1, closeBrace);
 
-  const props = new Set<string>();
-  for (const match of body.matchAll(/(--[a-zA-Z0-9-]+)\s*:/g)) {
-    props.add(match[1]);
+  const props = new Map<string, string>();
+  // The final declaration in a block may omit its semicolon, so stop at either
+  // a semicolon or the end of the body rather than requiring one.
+  for (const match of body.matchAll(/(--[a-zA-Z0-9-]+)\s*:\s*([^;]+)(?:;|$)/g)) {
+    props.set(match[1], match[2].trim());
   }
   return props;
 }
@@ -42,8 +46,31 @@ describe('app.css theme block parity', () => {
     const mediaQueryDark = customPropsInBlock(appCss, '@media (prefers-color-scheme: dark)');
     const explicitDark = customPropsInBlock(appCss, ":root[data-theme='dark']");
 
-    const missing = [...mediaQueryDark].filter((prop) => !explicitDark.has(prop));
+    const missing = [...mediaQueryDark.keys()].filter((prop) => !explicitDark.has(prop));
     expect(missing).toEqual([]);
+  });
+
+  // Both dark blocks describe the same theme, so a property that resolves to a
+  // different colour depending on how dark was reached (OS preference versus
+  // the explicit toggle) is a bug by definition. Comparing values, not just
+  // names, is what catches --blue being present but carrying the light value.
+  it('the two dark blocks agree on every value, not just which properties exist', () => {
+    const mediaQueryDark = customPropsInBlock(appCss, '@media (prefers-color-scheme: dark)');
+    const explicitDark = customPropsInBlock(appCss, ":root[data-theme='dark']");
+
+    expect(Object.fromEntries([...explicitDark].sort())).toEqual(
+      Object.fromEntries([...mediaQueryDark].sort())
+    );
+  });
+
+  // Pins the specific regression: --blue must be the dark tone in both dark
+  // blocks and the light tone in the light block.
+  it('--blue carries the right tone in each theme block', () => {
+    expect(customPropsInBlock(appCss, '@media (prefers-color-scheme: dark)').get('--blue')).toBe(
+      '#3fbce6'
+    );
+    expect(customPropsInBlock(appCss, ":root[data-theme='dark']").get('--blue')).toBe('#3fbce6');
+    expect(customPropsInBlock(appCss, ":root[data-theme='light']").get('--blue')).toBe('#0094c2');
   });
 
   // The base :root also carries non-themed tokens (fonts, spacing, radii)
@@ -55,7 +82,7 @@ describe('app.css theme block parity', () => {
     const explicitLight = customPropsInBlock(appCss, ":root[data-theme='light']");
     const explicitDark = customPropsInBlock(appCss, ":root[data-theme='dark']");
 
-    expect([...explicitLight].sort()).toEqual([...mediaQueryDark].sort());
-    expect([...explicitDark].sort()).toEqual([...mediaQueryDark].sort());
+    expect([...explicitLight.keys()].sort()).toEqual([...mediaQueryDark.keys()].sort());
+    expect([...explicitDark.keys()].sort()).toEqual([...mediaQueryDark.keys()].sort());
   });
 });
