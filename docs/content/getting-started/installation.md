@@ -62,7 +62,7 @@ Get Olla running on your system with these installation options.
         A `go install` binary embeds only a placeholder `dist/`, so `/internal/ui/` serves a
         `503 dashboard not built` response instead of the admin dashboard. Use a release binary
         or the Docker image if you want the dashboard, or run `make build-web` before `make build`
-        when building from source. See [Admin Dashboard](../configuration/dashboard.md#building-the-frontend).
+        when building from source. See [Development Setup](../development/setup.md#optional-bun-11-for-the-admin-dashboard).
 
 === "From Source"
 
