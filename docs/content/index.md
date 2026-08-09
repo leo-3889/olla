@@ -31,7 +31,9 @@ Olla is a high-performance, low-overhead, low-latency proxy and load balancer fo
 Olla works alongside API gateways like [LiteLLM](https://github.com/BerriAI/litellm) or orchestration platforms like [GPUStack](https://github.com/gpustack/gpustack), focusing on making your **existing** LLM infrastructure reliable through intelligent routing and failover. The high-performance **Olla** engine is the default, with **Sherpa** available as a simpler, maintenance-mode alternative.
 
 !!! info "Local-First"
-    Olla is built for local, self-hosted inference: Ollama, llama.cpp, vLLM, LM Studio, LiteLLM, SGLang, and similar engines running on hardware you control. Remote authenticated APIs (Ollama Cloud, OpenAI, Anthropic, OpenRouter, Groq, etc.) are not a first-class use case. The auth machinery is generic enough to point at them, but Olla makes no guarantees about health check accuracy, rate limit handling, or model unification for cloud providers. If you want to proxy remote APIs, see [Remote Backend Auth (Experimental)](configuration/endpoint-auth-remote.md).
+    Olla is built for local, self-hosted inference: Ollama, llama.cpp, vLLM, LM Studio, LiteLLM, SGLang, and similar engines running on hardware you control. Remote authenticated APIs (Ollama Cloud, OpenAI, Anthropic, OpenRouter, Groq, etc.) are not a first-class use case. The auth implementation is generic enough to point at them, but Olla makes no guarantees about health check accuracy, rate limit handling, or model unification for cloud providers. 
+    
+    If you want to proxy remote APIs, see [Remote Backend Auth (Experimental)](configuration/endpoint-auth-remote.md) or consider a control plane like [Alloy](https://tensorfoundry.io/alloy).
 
 ## Key Features
 
@@ -119,6 +121,8 @@ Olla provides detailed response headers for observability:
 - **Fast**: Optimised for minimal latency and maximum throughput
 
 See how Olla compares to [LiteLLM](compare/litellm.md), [GPUStack](compare/gpustack.md) and [LocalAI](compare/localai.md) in our [comparison guide](compare/overview.md).
+
+More thoughts are available on our [blog](https://tensorfoundry.io/blog) including [Olla vs LiteLLM](https://tensorfoundry.io/blog/olla-vs-litellm) and [Benchmarking Olla](https://tensorfoundry.io/blog/olla-performance-benchmarks).
 
 ## Next Steps
 
