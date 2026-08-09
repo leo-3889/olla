@@ -61,7 +61,7 @@ health probes, so it would under-report live failures) and per-model traffic (th
 engines don't record per-model counts).
 
 The frontend targets current evergreen browsers; older browsers are untested. Building
-the SPA is covered in [Development Setup](../development/setup.md#optional-bun-11-for-the-admin-dashboard).
+the SPA is covered in [Development Setup](../development/setup.md#optional-bun-135-for-the-admin-dashboard).
 
 ## Configuration
 
@@ -227,4 +227,4 @@ curl -i http://127.0.0.1:40114/internal/ui/
 | `200` | Dashboard mounted and the policy admits you |
 | `403` | Policy refused the request. The body names the failed check and the IP and Host Olla saw, so you can add the missing `allowed_cidrs` or `allowed_hosts` entry |
 | `404` | Routes not registered: `dashboard.enabled: false` |
-| `503` | Binary was built without the SPA. Run `make build-web` (see [Development Setup](../development/setup.md#optional-bun-11-for-the-admin-dashboard)) |
+| `503` | Binary was built without the SPA. Run `make build-web` (see [Development Setup](../development/setup.md#optional-bun-135-for-the-admin-dashboard)) |

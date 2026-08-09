@@ -23,7 +23,7 @@ This guide covers setting up a complete development environment for Olla.
 - **[air](https://github.com/cosmtrek/air)**: Hot reload for development
 - **Docker**: For testing with real backends
 
-### Optional: Bun 1.1+ for the admin dashboard
+### Optional: Bun 1.3.5+ for the admin dashboard
 
 The embedded admin dashboard SPA (`/internal/ui/`) is built from `web/dashboard/` and
 needs Bun 1.3.5+ (pinned in the `Makefile`). Install and build it with:

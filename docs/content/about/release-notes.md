@@ -108,4 +108,4 @@ security practices document promises. Only `/internal/` GET/HEAD polling that re
 A binary built without `make build-web` (e.g. via `go install` or a plain `go build`)
 now logs a clear startup line and serves `503` at `/internal/ui/` with a body naming the
 fix. Previously such a binary served a silent placeholder. See
-[Development Setup: building the dashboard](../development/setup.md#optional-bun-11-for-the-admin-dashboard).
+[Development Setup: building the dashboard](../development/setup.md#optional-bun-135-for-the-admin-dashboard).
