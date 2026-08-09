@@ -289,6 +289,76 @@ func TestRetry_GETMidStreamRST_DoesRetry(t *testing.T) {
 	assert.Equal(t, 2, attemptsHit, "GET should always retry on connection errors")
 }
 
+// TestRetry_ConnectionErrorThenCBOpen_ReportsMixedFailure covers the CB-open
+// mislabelling bug: buildFinalError used to classify total exhaustion purely
+// off lastErr, so a genuine connection error on an earlier endpoint got
+// silently swallowed by a CB-open rejection on the last one. The final error
+// must mention both failure classes, not just whichever happened last.
+func TestRetry_ConnectionErrorThenCBOpen_ReportsMixedFailure(t *testing.T) {
+	t.Parallel()
+
+	h := newTestRetryHandler(t)
+	ep1 := namedEndpoint("ep1")
+	ep2 := namedEndpoint("ep2")
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	w := httptest.NewRecorder()
+	stats := &ports.RequestStats{}
+
+	attemptsHit := 0
+	proxyFunc := func(ctx context.Context, w http.ResponseWriter, r *http.Request, ep *domain.Endpoint, s *ports.RequestStats) error {
+		attemptsHit++
+		if attemptsHit == 1 {
+			// ep1: a real network failure.
+			return &connectionResetError{}
+		}
+		// ep2: the breaker is open, not a network problem.
+		return ErrCircuitBreakerOpen
+	}
+
+	err := h.ExecuteWithRetry(context.Background(), w, req, []*domain.Endpoint{ep1, ep2},
+		&roundRobinSelector{}, stats, proxyFunc)
+
+	require.Error(t, err)
+	assert.Equal(t, 2, attemptsHit)
+	assert.ErrorIs(t, err, ErrCircuitBreakerOpen, "must still chain to the sentinel for errors.Is callers")
+	msg := err.Error()
+	assert.Contains(t, msg, "connection failure", "must not hide the earlier connection error")
+	assert.Contains(t, msg, "circuit breaker open", "must still surface the CB-open rejection")
+}
+
+// TestRetry_AllEndpointsCBOpen_StillReportsCBOpen guards against a regression
+// in the other direction: when every endpoint is CB-open and none failed on
+// the network, the message must stay exactly "circuit breaker open", not the
+// mixed-failure wording that would misleadingly imply a connection error.
+func TestRetry_AllEndpointsCBOpen_StillReportsCBOpen(t *testing.T) {
+	t.Parallel()
+
+	h := newTestRetryHandler(t)
+	ep1 := namedEndpoint("ep1")
+	ep2 := namedEndpoint("ep2")
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	w := httptest.NewRecorder()
+	stats := &ports.RequestStats{}
+
+	attemptsHit := 0
+	proxyFunc := func(ctx context.Context, w http.ResponseWriter, r *http.Request, ep *domain.Endpoint, s *ports.RequestStats) error {
+		attemptsHit++
+		return ErrCircuitBreakerOpen
+	}
+
+	err := h.ExecuteWithRetry(context.Background(), w, req, []*domain.Endpoint{ep1, ep2},
+		&roundRobinSelector{}, stats, proxyFunc)
+
+	require.Error(t, err)
+	assert.Equal(t, 2, attemptsHit)
+	assert.ErrorIs(t, err, ErrCircuitBreakerOpen)
+	msg := err.Error()
+	assert.Contains(t, msg, "circuit breaker open")
+	assert.NotContains(t, msg, "connection failure", "no connection error occurred, must not claim one did")
+}
+
 // TestResponseStartedWriter_Unwrap verifies that Flush works through the wrapper via
 // http.NewResponseController. Without Unwrap(), the controller cannot reach the
 // underlying flusher and SSE streams stall silently.
