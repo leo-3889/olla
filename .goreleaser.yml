@@ -104,6 +104,10 @@ dockers:
       - "--label=org.opencontainers.image.source={{.GitURL}}"
       - "--label=org.opencontainers.image.description=High-performance LLM front-end load balancer and proxy"
       - "--label=org.opencontainers.image.licenses=Apache-2.0"
+    # The image_templates above are unconditional, so without this an RC tag
+    # would republish :latest, :v0 and :v0.0 to every user. "auto" skips the
+    # push for prereleases and snapshots only; a real tag publishes as normal.
+    skip_push: auto
     extra_files:
       # Exactly what the Dockerfile COPYs, alongside the binary goreleaser adds.
       # Docker-flavoured config is staged under build/ by the before-hook above
@@ -130,6 +134,10 @@ dockers:
       - "--label=org.opencontainers.image.source={{.GitURL}}"
       - "--label=org.opencontainers.image.description=High-performance LLM front-end load balancer and proxy"
       - "--label=org.opencontainers.image.licenses=Apache-2.0"
+    # The image_templates above are unconditional, so without this an RC tag
+    # would republish :latest, :v0 and :v0.0 to every user. "auto" skips the
+    # push for prereleases and snapshots only; a real tag publishes as normal.
+    skip_push: auto
     extra_files:
       # Exactly what the Dockerfile COPYs, alongside the binary goreleaser adds.
       # Docker-flavoured config is staged under build/ by the before-hook above
@@ -139,19 +147,23 @@ dockers:
       - config/profiles/
 
 docker_manifests:
-  - name_template: ghcr.io/thushan/olla:latest
+  - skip_push: auto
+    name_template: ghcr.io/thushan/olla:latest
     image_templates:
         - "ghcr.io/thushan/olla:latest-amd64"
         - "ghcr.io/thushan/olla:latest-arm64"
-  - name_template: ghcr.io/thushan/olla:{{ .Tag }}
+  - skip_push: auto
+    name_template: ghcr.io/thushan/olla:{{ .Tag }}
     image_templates:
         - "ghcr.io/thushan/olla:{{ .Tag }}-amd64"
         - "ghcr.io/thushan/olla:{{ .Tag }}-arm64"
-  - name_template: ghcr.io/thushan/olla:v{{ .Major }}
+  - skip_push: auto
+    name_template: ghcr.io/thushan/olla:v{{ .Major }}
     image_templates:
         - "ghcr.io/thushan/olla:v{{ .Major }}-amd64"
         - "ghcr.io/thushan/olla:v{{ .Major }}-arm64"
-  - name_template: ghcr.io/thushan/olla:v{{ .Major }}.{{ .Minor }}
+  - skip_push: auto
+    name_template: ghcr.io/thushan/olla:v{{ .Major }}.{{ .Minor }}
     image_templates:
         - "ghcr.io/thushan/olla:v{{ .Major }}.{{ .Minor }}-amd64"
         - "ghcr.io/thushan/olla:v{{ .Major }}.{{ .Minor }}-arm64"
