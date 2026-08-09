@@ -217,3 +217,7 @@ Relevant source files: `internal/adapter/balancer/sticky.go`, `internal/core/dom
 - [Load Balancing](load-balancing.md): underlying strategies that sticky sessions wrap
 - [Health Checking](health-checking.md): health states and the routable concept
 - [Configuration Reference](../configuration/reference.md#sticky-sessions): complete field reference
+
+## Further Reading
+
+- TensorFoundry's [What we found when we benchmarked Olla](https://tensorfoundry.io/blog/olla-performance-benchmarks) measures a 7.6x time-to-first-token improvement from sticky-session KV-cache affinity.
