@@ -33,7 +33,7 @@ Olla works alongside API gateways like [LiteLLM](https://github.com/BerriAI/lite
 !!! info "Local-First"
     Olla is built for local, self-hosted inference: Ollama, llama.cpp, vLLM, LM Studio, LiteLLM, SGLang, and similar engines running on hardware you control. Remote authenticated APIs (Ollama Cloud, OpenAI, Anthropic, OpenRouter, Groq, etc.) are not a first-class use case. The auth implementation is generic enough to point at them, but Olla makes no guarantees about health check accuracy, rate limit handling, or model unification for cloud providers. 
     
-    If you want to proxy remote APIs, see [Remote Backend Auth (Experimental)](configuration/endpoint-auth-remote.md) or consider a control plane like [Alloy](https://tensorfoundry.io/alloy).
+    If you want to proxy remote APIs, see [Remote Backend Auth (Experimental)](configuration/endpoint-auth-remote.md) or consider a control plane like [Alloy](https://tensorfoundry.io/products/alloy).
 
 ## Key Features
 
