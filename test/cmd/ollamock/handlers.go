@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"math"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -15,6 +16,18 @@ import (
 
 // errUnknownMode is returned when a PATCH body sets an unrecognised mode.
 var errUnknownMode = errors.New("unknown mode")
+
+// Precompiled once at package init rather than per call inside modelMetadata -
+// these run on every /api/tags response and the quantisation ones were
+// previously compiled twice each (once for MatchString, again for FindString).
+var (
+	paramSizeRe = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*([bm])`)
+	quantKLMSRe = regexp.MustCompile(`(?i)q\d+_k_[lms]`)
+	quantNumRe  = regexp.MustCompile(`(?i)q\d+_\d+`)
+	quantBareRe = regexp.MustCompile(`(?i)\bq\d+\b`)
+	quantF16Re  = regexp.MustCompile(`(?i)fp?16`)
+	quantF8Re   = regexp.MustCompile(`(?i)fp?8`)
+)
 
 // serverConfig holds static configuration set at startup.
 // Field order largest-to-smallest for alignment.
@@ -209,7 +222,7 @@ func (srv *mockServer) handleOllamaTags(w http.ResponseWriter, _ *http.Request) 
 	writeJSON(w, http.StatusOK, response{Models: models})
 }
 
-// modelMetadata derives a plausible family, parameter size and quantization
+// modelMetadata derives a plausible family, parameter size and quantisation
 // from a model name so the Ollama tags listing reflects the actual model
 // rather than one hardcoded 7B/Q4_0 value for everything. Lets the mock back
 // a realistic-looking fleet for screenshots and demos.
@@ -226,36 +239,43 @@ func modelMetadata(name string) (family, paramDisplay string, billions float64, 
 		}
 	}
 
-	// Parameter size: first "<digits>[.<digits>]<b|m>" token in the name.
-	if ms := regexp.MustCompile(`(\d+(?:\.\d+)?)\s*([bm])`).FindStringSubmatch(name); ms != nil {
-		num, _ := strconv.ParseFloat(ms[1], 64)
-		if strings.EqualFold(ms[2], "m") {
-			paramDisplay = fmt.Sprintf("%.0fM", num)
-			billions = num / 1000
-		} else {
-			paramDisplay = fmt.Sprintf("%gB", num)
-			billions = num
+	// Parameter size: first "<digits>[.<digits>]<b|m>" token in the name, case
+	// insensitive so names like "Llama-3-8B" match (upstream naming isn't
+	// consistent about casing here).
+	if ms := paramSizeRe.FindStringSubmatch(name); ms != nil {
+		num, err := strconv.ParseFloat(ms[1], 64)
+		// Config-sourced input only (never request-controlled), but guard
+		// against Inf/NaN anyway - sizeBytes would otherwise propagate them
+		// into the response.
+		if err == nil && !math.IsInf(num, 0) && !math.IsNaN(num) {
+			if strings.EqualFold(ms[2], "m") {
+				paramDisplay = fmt.Sprintf("%.0fM", num)
+				billions = num / 1000
+			} else {
+				paramDisplay = fmt.Sprintf("%gB", num)
+				billions = num
+			}
 		}
 	}
 
-	// Quantization from the name when present, else the common Ollama pull default.
+	// Quantisation from the name when present, else the common Ollama pull default.
 	quant = "Q4_K_M"
 	switch {
-	case regexp.MustCompile(`(?i)q\d+_k_[lms]`).MatchString(name):
-		quant = strings.ToUpper(regexp.MustCompile(`(?i)q\d+_k_[lms]`).FindString(name))
-	case regexp.MustCompile(`(?i)q\d+_\d+`).MatchString(name):
-		quant = strings.ToUpper(regexp.MustCompile(`(?i)q\d+_\d+`).FindString(name))
-	case regexp.MustCompile(`(?i)\bq\d+\b`).MatchString(name):
-		quant = strings.ToUpper(regexp.MustCompile(`(?i)\bq\d+\b`).FindString(name))
-	case regexp.MustCompile(`(?i)fp?16`).MatchString(name):
+	case quantKLMSRe.MatchString(name):
+		quant = strings.ToUpper(quantKLMSRe.FindString(name))
+	case quantNumRe.MatchString(name):
+		quant = strings.ToUpper(quantNumRe.FindString(name))
+	case quantBareRe.MatchString(name):
+		quant = strings.ToUpper(quantBareRe.FindString(name))
+	case quantF16Re.MatchString(name):
 		quant = "F16"
-	case regexp.MustCompile(`(?i)fp?8`).MatchString(name):
+	case quantF8Re.MatchString(name):
 		quant = "F8"
 	}
 	return family, paramDisplay, billions, quant
 }
 
-// sizeBytes approximates on-disk size from a parameter count and quantization.
+// sizeBytes approximates on-disk size from a parameter count and quantisation.
 func sizeBytes(billions float64, quant string) int64 {
 	if billions <= 0 {
 		return 0

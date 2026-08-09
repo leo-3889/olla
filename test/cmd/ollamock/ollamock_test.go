@@ -60,6 +60,39 @@ func decodeJSON(t *testing.T, resp *http.Response, v any) {
 
 // --- Tests ---
 
+// TestModelMetadataCaseInsensitiveParamSize covers the regression: the param
+// size regex used to be case-sensitive, so a model named with an uppercase
+// unit suffix (as real Ollama library names commonly are, e.g. "Llama-3-8B")
+// matched nothing, leaving paramDisplay empty and sizeBytes 0.
+func TestModelMetadataCaseInsensitiveParamSize(t *testing.T) {
+	t.Parallel()
+
+	_, paramDisplay, billions, _ := modelMetadata("Llama-3-8B")
+	if paramDisplay != "8B" {
+		t.Errorf("paramDisplay = %q, want 8B", paramDisplay)
+	}
+	if billions != 8 {
+		t.Errorf("billions = %v, want 8", billions)
+	}
+}
+
+// TestModelMetadataNonFiniteGuard covers the non-finite ParseFloat guard: a
+// name whose digits parse to Inf must not propagate into billions/paramDisplay,
+// which would otherwise make sizeBytes compute an Inf/garbage size.
+func TestModelMetadataNonFiniteGuard(t *testing.T) {
+	t.Parallel()
+
+	// A run of digits long enough that ParseFloat overflows to +Inf.
+	huge := strings.Repeat("9", 400) + "b"
+	_, paramDisplay, billions, _ := modelMetadata(huge)
+	if paramDisplay != "" {
+		t.Errorf("paramDisplay = %q, want empty on non-finite parse", paramDisplay)
+	}
+	if billions != 0 {
+		t.Errorf("billions = %v, want 0 on non-finite parse", billions)
+	}
+}
+
 func TestOllamaTagsFormat(t *testing.T) {
 	t.Parallel()
 	ts := testServer(t, "llama3.2", "phi4")
