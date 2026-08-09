@@ -43,6 +43,10 @@ Olla works alongside API gateways like [LiteLLM](https://github.com/BerriAI/lite
 - **Security**: Built-in rate limiting, request validation, optional CORS for browser clients, and outbound authentication for protected backends
 - **Observability**: Comprehensive metrics and request tracing
 - **API Translation**: [Anthropic Messages API](concepts/api-translation.md) support for Claude-compatible clients
+- **Admin Dashboard**: [Read-only fleet overview](configuration/dashboard.md) embedded in the binary at `/internal/ui/`
+
+[![Admin dashboard - read-only fleet overview with live request sparkline](assets/images/dashboard/overview-light.png#only-light)](configuration/dashboard.md)
+[![Admin dashboard - read-only fleet overview with live request sparkline](assets/images/dashboard/overview-dark.png#only-dark)](configuration/dashboard.md)
 
 ## Core Concepts
 

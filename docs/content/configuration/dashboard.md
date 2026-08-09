@@ -15,6 +15,9 @@ It exists as a glanceable alternative to `curl`-ing `/internal/status*` and read
 when you want to answer questions like "is my fleet healthy", "which backend is slow", and
 "which models are loaded where" without SSH-ing in.
 
+![Overview panel - aggregate fleet health, live request sparkline and per-endpoint summary](../assets/images/dashboard/overview-light.png#only-light)
+![Overview panel - aggregate fleet health, live request sparkline and per-endpoint summary](../assets/images/dashboard/overview-dark.png#only-dark)
+
 ## What it is
 
 - **Read-only.** No config editing, no endpoint enable or disable, no restart, no cache
@@ -66,6 +69,12 @@ even one that resolves to an allowed IP - is rejected.
 | Overview | Aggregate fleet status, success rate, average latency, total traffic, active connections, total requests, total failures, security violations, uptime, proxy engine/balancer in use, and a live requests-per-second sparkline | `GET /internal/status` | 5s |
 | Endpoints | Per-endpoint name, type, status, priority, success rate, average/min/max proxy latency, request count, active connections, model count, last and next health check, last model sync, sanitised URL | `GET /internal/status/endpoints` | 5s |
 | Models | Discovered model inventory grouped by family: name, aliases, parameter size, quantisation, size on disk, which endpoints host each model, last seen | `GET /internal/status/models` | 15s |
+
+![Endpoints panel - per-endpoint status, priority, success rate and latency, sortable by column](../assets/images/dashboard/endpoints-light.png#only-light)
+![Endpoints panel - per-endpoint status, priority, success rate and latency, sortable by column](../assets/images/dashboard/endpoints-dark.png#only-dark)
+
+![Models panel - discovered model inventory grouped by family, with hosting endpoints](../assets/images/dashboard/models-light.png#only-light)
+![Models panel - discovered model inventory grouped by family, with hosting endpoints](../assets/images/dashboard/models-dark.png#only-dark)
 
 Clicking a model's host in the Models panel jumps to and highlights that endpoint's row in
 the Endpoints panel. The active panel, and any endpoint jumped to, is reflected in the URL

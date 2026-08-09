@@ -60,6 +60,21 @@ For Large GPU deployments, Enterprise & datacenter use, see [TensorFoundry Found
 - **⚙️ High Performance**: Designed to be very [lightweight & efficient](https://thushan.github.io/olla/configuration/practices/performance/), runs on less than 50Mb RAM.
 - **📈 Admin Dashboard**: [Read-only fleet overview](https://thushan.github.io/olla/configuration/dashboard/) embedded in the binary at `/internal/ui/`, on by default and loopback-only
 
+## Herd Dashboard
+
+Olla ships with an embedded, read-only dashboard at `/internal/ui/` - fleet health, per-endpoint latency and the discovered model inventory, served straight from the binary. No extra port, no separate web server, on by default and loopback-only.
+
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/content/assets/images/dashboard/overview-dark.png">
+    <img src="docs/content/assets/images/dashboard/overview-light.png" alt="Olla admin dashboard - fleet overview with live request sparkline, per-endpoint health and latency" width="820">
+  </picture>
+  <br/>
+  <small>Read-only &middot; light &amp; dark &middot; nothing leaves your network &middot; <a href="https://thushan.github.io/olla/configuration/dashboard/">dashboard docs</a></small>
+</div>
+
+Start Olla and open [http://localhost:40114/internal/ui/](http://localhost:40114/internal/ui/) to see your herd.
+
 ## Supported Backends
 
 Olla proxies the following self-hosted inference backends. The **Anthropic API** column shows whether `/olla/anthropic/` requests are forwarded as-is (native passthrough) or translated from Anthropic format to OpenAI format on the fly.

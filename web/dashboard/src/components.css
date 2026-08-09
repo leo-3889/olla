@@ -563,7 +563,7 @@ tbody tr:hover .col-sticky {
   top: -2px;
   bottom: -2px;
   width: 1px;
-  background: var(--text-faint);
+  background: var(--blue);
 }
 .range-wrap {
   display: flex;

@@ -108,6 +108,15 @@ curl http://localhost:40114/olla/ollama/api/tags
 curl http://localhost:40114/olla/ollama/v1/models
 ```
 
+### 4. See Your Herd
+
+Open [http://localhost:40114/internal/ui/](http://localhost:40114/internal/ui/) for the embedded
+[read-only dashboard](../configuration/dashboard.md) - fleet health, per-endpoint latency and the
+discovered model inventory, no extra setup required.
+
+[![Admin dashboard showing fleet overview](../assets/images/dashboard/overview-light.png#only-light)](../configuration/dashboard.md)
+[![Admin dashboard showing fleet overview](../assets/images/dashboard/overview-dark.png#only-dark)](../configuration/dashboard.md)
+
 ## Example Requests
 
 ### Chat Completion (OpenAI-compatible)

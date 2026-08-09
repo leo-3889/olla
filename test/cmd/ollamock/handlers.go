@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"hash/fnv"
 	"net/http"
+	"regexp"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -189,20 +192,94 @@ func (srv *mockServer) handleOllamaTags(w http.ResponseWriter, _ *http.Request) 
 	now := time.Now().UTC().Format(time.RFC3339)
 	models := make([]model, len(srv.cfg.models))
 	for i, m := range srv.cfg.models {
+		fam, pdisp, billions, q := modelMetadata(m)
 		models[i] = model{
 			Name:       m,
 			Model:      m,
 			ModifiedAt: now,
-			Size:       4_000_000_000,
+			Size:       sizeBytes(billions, q),
 			Digest:     fmt.Sprintf("sha256:ollamock%s%s", srv.cfg.name, m),
 			Details: details{
-				Family:            "llama",
-				ParameterSize:     "7B",
-				QuantizationLevel: "Q4_0",
+				Family:            fam,
+				ParameterSize:     pdisp,
+				QuantizationLevel: q,
 			},
 		}
 	}
 	writeJSON(w, http.StatusOK, response{Models: models})
+}
+
+// modelMetadata derives a plausible family, parameter size and quantization
+// from a model name so the Ollama tags listing reflects the actual model
+// rather than one hardcoded 7B/Q4_0 value for everything. Lets the mock back
+// a realistic-looking fleet for screenshots and demos.
+func modelMetadata(name string) (family, paramDisplay string, billions float64, quant string) {
+	lower := strings.ToLower(name)
+	if idx := strings.LastIndex(lower, "/"); idx != -1 {
+		lower = lower[idx+1:]
+	}
+	family = "llama"
+	for _, f := range []string{"deepseek", "llama", "gemma", "qwen", "mistral", "mixtral", "phi", "nomic", "yi", "falcon", "kimi", "granite", "glm", "starcoder", "codellama"} {
+		if strings.HasPrefix(lower, f) {
+			family = f
+			break
+		}
+	}
+
+	// Parameter size: first "<digits>[.<digits>]<b|m>" token in the name.
+	if ms := regexp.MustCompile(`(\d+(?:\.\d+)?)\s*([bm])`).FindStringSubmatch(name); ms != nil {
+		num, _ := strconv.ParseFloat(ms[1], 64)
+		if strings.EqualFold(ms[2], "m") {
+			paramDisplay = fmt.Sprintf("%.0fM", num)
+			billions = num / 1000
+		} else {
+			paramDisplay = fmt.Sprintf("%gB", num)
+			billions = num
+		}
+	}
+
+	// Quantization from the name when present, else the common Ollama pull default.
+	quant = "Q4_K_M"
+	switch {
+	case regexp.MustCompile(`(?i)q\d+_k_[lms]`).MatchString(name):
+		quant = strings.ToUpper(regexp.MustCompile(`(?i)q\d+_k_[lms]`).FindString(name))
+	case regexp.MustCompile(`(?i)q\d+_\d+`).MatchString(name):
+		quant = strings.ToUpper(regexp.MustCompile(`(?i)q\d+_\d+`).FindString(name))
+	case regexp.MustCompile(`(?i)\bq\d+\b`).MatchString(name):
+		quant = strings.ToUpper(regexp.MustCompile(`(?i)\bq\d+\b`).FindString(name))
+	case regexp.MustCompile(`(?i)fp?16`).MatchString(name):
+		quant = "F16"
+	case regexp.MustCompile(`(?i)fp?8`).MatchString(name):
+		quant = "F8"
+	}
+	return family, paramDisplay, billions, quant
+}
+
+// sizeBytes approximates on-disk size from a parameter count and quantization.
+func sizeBytes(billions float64, quant string) int64 {
+	if billions <= 0 {
+		return 0
+	}
+	bpp := 0.56 // bytes per parameter at Q4_K_M
+	switch {
+	case strings.HasPrefix(quant, "Q2"):
+		bpp = 0.30
+	case strings.HasPrefix(quant, "Q3"):
+		bpp = 0.42
+	case strings.HasPrefix(quant, "Q4"):
+		bpp = 0.56
+	case strings.HasPrefix(quant, "Q5"):
+		bpp = 0.70
+	case strings.HasPrefix(quant, "Q6"):
+		bpp = 0.84
+	case strings.HasPrefix(quant, "Q8"):
+		bpp = 1.00
+	case strings.HasPrefix(quant, "F16"), strings.HasPrefix(quant, "FP16"):
+		bpp = 2.00
+	case strings.HasPrefix(quant, "F32"), strings.HasPrefix(quant, "FP32"):
+		bpp = 4.00
+	}
+	return int64(billions * bpp * float64(1_000_000_000))
 }
 
 func (srv *mockServer) handleOllamaVersion(w http.ResponseWriter, _ *http.Request) {
