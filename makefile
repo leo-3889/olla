@@ -17,6 +17,8 @@ BUN_VERSION := 1.3.5
 # checkout compiles without Bun.
 WEB_DIR := web/dashboard
 EMBED_DIST := internal/app/handlers/dashboard/dist
+# Sentinel proving build-web actually populated the embed (see build-web).
+EMBED_INDEX := index.html
 
 LDFLAGS := -ldflags "\
 	-X '$(PKG).Version=$(VERSION)' \
@@ -301,6 +303,14 @@ install-web:
 build-web: install-web
 	@echo "Building frontend into embed source..."
 	@cd $(WEB_DIR) && bun run build
+	@# A vite outDir that stops pointing at EMBED_DIST still exits 0, and the
+	@# binary would then embed only .gitkeep and serve a 503 dashboard - which
+	@# no Go test catches, since they run against the unbuilt sentinel. Fail
+	@# the build here rather than ship it.
+	@if [ ! -f "$(EMBED_DIST)/$(EMBED_INDEX)" ]; then \
+		echo "build-web: $(EMBED_DIST)/$(EMBED_INDEX) missing after 'bun run build' - check vite.config.js outDir; refusing to embed an empty dashboard"; \
+		exit 1; \
+	fi
 	@echo "Embed source regenerated (gitignored). Rebuild the binary to embed it."
 
 # Run svelte-check (type/syntax checks) on the SPA.
