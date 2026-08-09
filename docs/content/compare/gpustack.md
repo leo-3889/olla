@@ -151,6 +151,8 @@ GPUStack     Ollama        Cloud API
 - Falls back to Ollama if cluster is busy
 - Overflows to cloud if everything is saturated
 
+For large, managed GPU fleets rather than a self-run cluster, TensorFoundry's [FoundryOS](https://tensorfoundry.io/products/foundryos) offers an alternative enterprise AI platform.
+
 ### Scenario 2: Multi-Site Deployment
 ```
         Global Olla Instance
