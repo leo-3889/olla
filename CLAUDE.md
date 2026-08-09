@@ -13,6 +13,7 @@ Full documentation: https://thushan.github.io/olla/
 ```bash
 make ready           # Pre-commit gate: test-short + test-race + fmt + vet + lint + align
 make ready-tools     # Tools only: fmt + vet + lint + align
+make ci-web          # Frontend gate: vitest + svelte-check + font integrity
 make test            # All tests          make test-race   # With race detection
 make test-stress     # Stress tests       make bench        # All benchmarks
 make build           # Optimised binary   make build-local  # Fast build to ./build/
@@ -22,7 +23,7 @@ make docker-build-local-arm64  # Build ARM64 image locally (no goreleaser)
 make ci              # Full CI pipeline locally
 make help            # All targets
 ```
-Always run `make ready` before reporting work complete or committing.
+Always run `make ready` before reporting work complete or committing. `make ready` is Go-only, so also run `make ci-web` when anything under `web/` changed - CI runs it and it catches what `make ready` cannot (svelte-check type errors, frontend test failures).
 
 Specific test patterns:
 ```bash
@@ -96,7 +97,7 @@ Gates on `make ready` first, then boots seven `test/cmd/ollamock` instances (por
 - Australian English for comments and documentation. No em-dashes.
 - Comment on **why**, not **what**. Concise and direct.
 - Production code must not panic - guard closes with CAS or `sync.Once`.
-- Always run `make ready` before committing.
+- Always run `make ready` before committing, plus `make ci-web` if `web/` changed.
 
 ## Dependencies (Endorsed)
 Do not add dependencies unless explicitly asked.
