@@ -760,3 +760,7 @@ features:
 - [Load Balancing](../../concepts/load-balancing.md) - Scale with multiple SGLang instances
 - [Monitoring](../../configuration/practices/monitoring.md) - Set up Prometheus monitoring
 - [Frontend Language Guide](https://sgl-project.github.io/start/frontend_language.html) - Learn SGLang programming
+
+## Further Reading
+
+- TensorFoundry's [LLM Inference Servers Compared](https://tensorfoundry.io/blog/llm-inference-servers-compared) - how SGLang compares with vLLM, llama.cpp, Ollama and others

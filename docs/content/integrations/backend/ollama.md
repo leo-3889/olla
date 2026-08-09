@@ -753,3 +753,7 @@ aider --openai-api-base http://localhost:40114/olla/ollama/v1 \
 - [Model Unification](../../concepts/model-unification.md) - Understand model management
 - [Load Balancing](../../concepts/load-balancing.md) - Configure multi-instance setups
 - [OpenWebUI Integration](../frontend/openwebui.md) - Set up web interface
+
+## Further Reading
+
+- TensorFoundry's [LLM Inference Servers Compared](https://tensorfoundry.io/blog/llm-inference-servers-compared) - how Ollama compares with vLLM, SGLang, llama.cpp and others

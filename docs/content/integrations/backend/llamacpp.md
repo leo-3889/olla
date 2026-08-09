@@ -988,3 +988,7 @@ aider \
 - [Model Unification](../../concepts/model-unification.md) - Understand model management across instances
 - [Load Balancing](../../concepts/load-balancing.md) - Scale with multiple llama.cpp instances
 - [Monitoring](../../configuration/practices/monitoring.md) - Set up slot and performance monitoring
+
+## Further Reading
+
+- TensorFoundry's [LLM Inference Servers Compared](https://tensorfoundry.io/blog/llm-inference-servers-compared) - how llama.cpp compares with vLLM, SGLang, Ollama and others
