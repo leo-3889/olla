@@ -173,8 +173,10 @@ Every request must pass both; failure returns `403 Forbidden`.
 1. **Client IP within `allowed_cidrs`.** The IP is the TCP source address.
    `X-Forwarded-For` and `X-Real-IP` are never consulted, under any configuration.
 2. **`Host` header parses as an IP literal, or matches `allowed_hosts`** (port stripped,
-   case-insensitive). IP literals are always accepted: DNS rebinding needs a resolved
-   hostname, so an IP-literal Host is necessarily the address the browser dialled. A
+   case-insensitive). Any Host that parses as an IP literal is accepted unconditionally,
+   whatever address it names - it is not checked against the connection's actual
+   destination. This check exists to block DNS-rebinding-style hostnames, not to bind
+   the request to a specific IP; `allowed_cidrs` is the real security boundary. A
    non-IP Host is rejected unless listed.
 
 A failed check returns a body naming what failed and what Olla saw, with a matching
