@@ -116,6 +116,8 @@ Mission-critical AI infrastructure at scale:
 - **Performance Monitoring**: Circuit breakers, health checks, metrics
 - **Vendor Diversity**: Mix of cloud providers (via LiteLLM) and on-premise infrastructure
 
+For deployments that outgrow a single-proxy setup, TensorFoundry's [FoundryOS](https://tensorfoundry.io/products/foundryos) targets large GPU deployments and [Alloy](https://tensorfoundry.io/products/alloy) provides a multi-provider control plane.
+
 ```yaml
 # Enterprise config - high performance, observability
 proxy:
