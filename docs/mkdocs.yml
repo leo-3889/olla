@@ -58,6 +58,9 @@ extra_css:
   - stylesheets/extra.css
   - stylesheets/nightowl.css
 
+copyright: >
+  Olla is an open-source project by <a href="https://tensorfoundry.io" target="_blank" rel="noopener">TensorFoundry</a>
+
 markdown_extensions:
   - abbr
   - admonition
