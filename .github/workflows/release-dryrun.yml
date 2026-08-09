@@ -57,7 +57,7 @@ jobs:
         with:
           distribution: goreleaser
           version: latest
-          args: release --clean --skip=publish,announce
+          args: release --clean --skip=publish,announce --snapshot
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PWD: ${{ github.workspace }}
