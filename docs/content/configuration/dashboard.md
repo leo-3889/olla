@@ -121,18 +121,15 @@ browsing by hostname does.
 
 ### Docker
 
-Traffic to a published port reaches the container from the Docker bridge gateway, not
-loopback, so the default policy refuses it. Allow the bridge subnet:
+The published image ships ready to go: it binds `0.0.0.0` and the dashboard's
+`allowed_cidrs` is pre-widened to the private ranges (`10.0.0.0/8`,
+`172.16.0.0/12`, `192.168.0.0/16`), so a request arriving through a published
+port - which comes from the Docker bridge gateway, not loopback - is accepted.
+The dashboard loads with no extra configuration:
 
-```yaml
-dashboard:
-  enabled: true
-  access_policy:
-    allowed_cidrs:
-      - "172.17.0.0/16"    # docker0 default bridge - confirm with
-                           # `docker network inspect bridge`
-    allowed_hosts: []
-  gate_internal_api: false
+```bash
+docker run -p 40114:40114 ghcr.io/thushan/olla:latest
+# then open http://localhost:40114/internal/ui/
 ```
 
 ```yaml
@@ -141,16 +138,26 @@ services:
     image: ghcr.io/thushan/olla:latest
     ports:
       - "40114:40114"
-    volumes:
-      - ./olla.local.yaml:/app/config/config.local.yaml:ro
+    # No volume required for the dashboard. Mount one only to customise the
+    # config; it lands at the first path in Olla's config search order, so it
+    # overrides the baked-in container defaults.
+    # volumes:
+    #   - ./olla.local.yaml:/app/config/config.local.yaml:ro
 ```
 
-!!! warning "Expect a 403 on first run in Docker"
+The Host check is unchanged, so reaching the container by a non-IP hostname (from
+another compose service, or via a DNS name on your LAN) still needs that name in
+`allowed_hosts`. `localhost` and any IP literal work as shipped.
 
-    The 403 body names the source IP and Host that Olla saw (commonly `172.17.0.1`, the
-    bridge gateway). Add that subnet to `allowed_cidrs`. Do not reach for
-    `allowed_cidrs: ["0.0.0.0/0"]`, which opens the dashboard to anyone who can reach
-    the listener.
+!!! tip "Getting a 403 in Docker?"
+
+    That may happen when you mount a config whose `allowed_cidrs` is still
+    loopback-only. The 403 body names the source IP and Host Olla saw: `172.17.0.1`
+    on native Linux Docker, something in `10.0.0.0/8` on Docker Desktop. Add that
+    subnet - confirm it with `docker network inspect bridge` - to `allowed_cidrs`.
+    Do not reach for
+    `allowed_cidrs: ["0.0.0.0/0"]`, which opens the dashboard to anyone who can
+    reach the listener.
 
 ## Security model
 
@@ -186,6 +193,10 @@ A failed check returns a body naming what failed and what Olla saw, with a match
   `gate_internal_api` is reserved to close that gap in a future release.
 - **Anyone inside `allowed_cidrs` with an accepted Host can read the dashboard.**
   Widening the CIDR is a deliberate trade of exposure for convenience.
+- **The container image ships that trade already made.** Its `allowed_cidrs` covers
+  the private ranges so the dashboard works through a published port, which also
+  admits anyone on the same LAN. Mount a config narrowing it to the bridge subnet
+  if the host sits on an untrusted network.
 
 !!! warning "A reverse proxy on the same host defeats the loopback check"
 
