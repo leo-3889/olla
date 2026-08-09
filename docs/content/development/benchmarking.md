@@ -511,3 +511,8 @@ func BenchmarkGood(b *testing.B) {
 - See [Technical Patterns](patterns.md) for optimisation techniques
 - Check current benchmarks in `internal/adapter/proxy/`
 - Run `make bench` to establish baseline
+
+## Further Reading
+
+- TensorFoundry's [What we found when we benchmarked Olla](https://tensorfoundry.io/blog/olla-performance-benchmarks) - independently measured results for proxy overhead, memory and failover
+- [Olla benchmarks](https://tensorfoundry.io/products/olla/benchmarks) on TensorFoundry
