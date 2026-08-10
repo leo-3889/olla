@@ -13,7 +13,7 @@ exact migration step if a behaviour change affects you.
 Breaking changes are tagged **Breaking**. Additions and fixes are tagged **Added** or
 **Fixed**. Quoted field names and config keys are the literal wire or YAML identifiers.
 
-## v0.0.29 (unreleased)
+## v0.0.29
 
 ### Breaking: userinfo URLs now fail startup
 
