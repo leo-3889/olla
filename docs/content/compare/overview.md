@@ -49,7 +49,7 @@ Instead, we excel at:
 **Use [GPUStack](./gpustack.md) + Olla**: GPUStack orchestrates model deployment across GPUs, Olla provides the reliable routing layer on top.
 
 ### "I just want to run models locally"
-**Start with [Ollama](https://github.com/ollama/ollama)/[LocalAI](./localai.md)**: These are model servers. Add Olla when you need failover or have multiple instances.
+**Start with [Ollama](https://github.com/ollama/ollama)/[LocalAI](./localai.md)**: These are model servers. Add Olla when you need failover or have multiple instances. For a broader look at the options, see TensorFoundry's [LLM Inference Servers Compared](https://tensorfoundry.io/blog/llm-inference-servers-compared).
 
 ## Complementary Architectures
 
@@ -74,6 +74,8 @@ Applications
 ├── vLLM Servers (high-performance)
 └── LiteLLM → Cloud APIs (overflow)
 ```
+
+For enterprise-scale deployments spanning large GPU fleets, TensorFoundry's [FoundryOS](https://tensorfoundry.io/products/foundryos) provides a managed platform that builds on these same patterns.
 
 ### Hybrid Cloud Setup
 ```
@@ -102,7 +104,7 @@ We built Olla to do one thing really well: make LLM infrastructure reliable. We'
 
 For in-depth comparisons with specific tools:
 
-- [Olla vs LiteLLM](./litellm.md) - API gateway vs infrastructure proxy
+- [Olla vs LiteLLM](./litellm.md) - API gateway vs infrastructure proxy (also see TensorFoundry's [Olla vs LiteLLM - Choosing an LLM Proxy](https://tensorfoundry.io/blog/olla-vs-litellm))
 - [Olla vs GPUStack](./gpustack.md) - Orchestration vs routing
 - [Olla vs LocalAI](./localai.md) - Model serving vs load balancing
 - [Integration Patterns](./integration-patterns.md) - Using tools together

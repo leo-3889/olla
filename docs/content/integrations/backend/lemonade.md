@@ -841,3 +841,7 @@ curl -X POST http://localhost:40114/olla/lemonade/api/v1/chat/completions \
 - **[Model Unification](../../concepts/model-unification.md)** - Unified model catalogue
 - **[Load Balancing](../../concepts/load-balancing.md)** - Configure multi-backend setups
 - **[Lemonade SDK Documentation](https://lemonade-server.ai/docs/)** - Official Lemonade documentation
+
+## Further Reading
+
+- TensorFoundry's [LLM Inference Servers Compared](https://tensorfoundry.io/blog/llm-inference-servers-compared) - covers Lemonade in its "Also in the field" section; the head-to-head comparison table is vLLM, SGLang, llama.cpp and Ollama

@@ -620,3 +620,7 @@ print(message.content[0].text)
 - [Model Unification](../../concepts/model-unification.md) - Understand model management across backends
 - [Load Balancing](../../concepts/load-balancing.md) - Route across multiple DMR instances
 - [API Translation](../../concepts/api-translation.md) - Use Anthropic-compatible clients with DMR
+
+## Further Reading
+
+- TensorFoundry's [LLM Inference Servers Compared](https://tensorfoundry.io/blog/llm-inference-servers-compared) - covers Docker Model Runner in its "Also in the field" section; the head-to-head comparison table is vLLM, SGLang, llama.cpp and Ollama

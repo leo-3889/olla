@@ -470,3 +470,7 @@ services:
 - [Circuit Breaker](../development/circuit-breaker.md) - Prevent cascade failures
 - [Model Unification](model-unification.md) - Unified model routing
 - [Performance Tuning](../configuration/practices/performance.md) - Optimisation guide
+
+## Further Reading
+
+- TensorFoundry's [What we found when we benchmarked Olla](https://tensorfoundry.io/blog/olla-performance-benchmarks) measures 0.30ms proxy overhead and zero-drop failover across load balancing strategies.

@@ -9,7 +9,7 @@ TOOL := "make"
 # Tool versions (pinned)
 GOLANGCI_LINT_VERSION := v2.11.4
 BETTERALIGN_VERSION := v0.8.2
-BUN_VERSION := 1.1.0
+BUN_VERSION := 1.3.5
 
 # Frontend locations. WEB_DIR is the Svelte source tree; EMBED_DIST is the
 # go:embed source the binary ships. It is gitignored and regenerated at build
@@ -17,6 +17,8 @@ BUN_VERSION := 1.1.0
 # checkout compiles without Bun.
 WEB_DIR := web/dashboard
 EMBED_DIST := internal/app/handlers/dashboard/dist
+# Sentinel proving build-web actually populated the embed (see build-web).
+EMBED_INDEX := index.html
 
 LDFLAGS := -ldflags "\
 	-X '$(PKG).Version=$(VERSION)' \
@@ -288,7 +290,7 @@ goreleaser-check:
 # non-empty so a fresh checkout compiles, and the embed handler serves a loud
 # 503 if a binary was built without the SPA.
 
-# Install frontend deps (bun install). Requires Bun 1.1+.
+# Install frontend deps (bun install). Requires Bun 1.3.5+ (pinned above as BUN_VERSION).
 install-web:
 	@echo "Installing frontend dependencies (bun install --frozen-lockfile)..."
 	@cd $(WEB_DIR) && bun install --frozen-lockfile
@@ -301,6 +303,14 @@ install-web:
 build-web: install-web
 	@echo "Building frontend into embed source..."
 	@cd $(WEB_DIR) && bun run build
+	@# A vite outDir that stops pointing at EMBED_DIST still exits 0, and the
+	@# binary would then embed only .gitkeep and serve a 503 dashboard - which
+	@# no Go test catches, since they run against the unbuilt sentinel. Fail
+	@# the build here rather than ship it.
+	@if [ ! -f "$(EMBED_DIST)/$(EMBED_INDEX)" ]; then \
+		echo "build-web: $(EMBED_DIST)/$(EMBED_INDEX) missing after 'bun run build' - check vite.config.js outDir; refusing to embed an empty dashboard"; \
+		exit 1; \
+	fi
 	@echo "Embed source regenerated (gitignored). Rebuild the binary to embed it."
 
 # Run svelte-check (type/syntax checks) on the SPA.

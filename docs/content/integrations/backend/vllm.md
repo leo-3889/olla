@@ -606,3 +606,7 @@ llm = OpenAI(
 - [Model Unification](../../concepts/model-unification.md) - Understand model management
 - [Load Balancing](../../concepts/load-balancing.md) - Scale with multiple vLLM instances
 - [Monitoring](../../configuration/practices/monitoring.md) - Set up Prometheus monitoring
+
+## Further Reading
+
+- TensorFoundry's [LLM Inference Servers Compared](https://tensorfoundry.io/blog/llm-inference-servers-compared) - how vLLM compares with SGLang, llama.cpp, Ollama and others

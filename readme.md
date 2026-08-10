@@ -39,7 +39,7 @@ Olla works alongside API gateways like [LiteLLM](https://github.com/BerriAI/lite
 
 Single CLI application and config file is all you need to go [Olla](https://tensorfoundry.io/products/olla)!
 
-For Large GPU deployments, Enterprise & Data-Centre use, see [TensorFoundry FoundryOS](https://tensorfoundry.io/products/foundryos).
+For large GPU deployments, enterprise and data centre use, see [TensorFoundry FoundryOS](https://tensorfoundry.io/products/foundryos). For an inference control plane, consider [Alloy](https://tensorfoundry.io/products/alloy).
 
 ## Key Features
 
@@ -60,6 +60,21 @@ For Large GPU deployments, Enterprise & Data-Centre use, see [TensorFoundry Foun
 - **⚙️ High Performance**: Designed to be very [lightweight & efficient](https://thushan.github.io/olla/configuration/practices/performance/), runs on less than 50Mb RAM.
 - **📈 Admin Dashboard**: [Read-only fleet overview](https://thushan.github.io/olla/configuration/dashboard/) embedded in the binary at `/internal/ui/`, on by default and loopback-only
 
+## Herd Dashboard
+
+Olla ships with an embedded (v0.0.29+), read-only dashboard at `/internal/ui/` - fleet health, per-endpoint latency and the discovered model inventory, served straight from the binary. No extra port, no separate web server, on by default and loopback-only.
+
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/content/assets/images/dashboard/overview-dark.png">
+    <img src="docs/content/assets/images/dashboard/overview-light.png" alt="Olla admin dashboard - fleet overview with live request sparkline, per-endpoint health and latency" width="820">
+  </picture>
+  <br/>
+  <small>Read-only &middot; light &amp; dark &middot; nothing leaves your network &middot; <a href="https://thushan.github.io/olla/configuration/dashboard/">dashboard docs</a></small>
+</div>
+
+Start Olla and open [http://localhost:40114/internal/ui/](http://localhost:40114/internal/ui/) to see your herd.
+
 ## Supported Backends
 
 Olla proxies the following self-hosted inference backends. The **Anthropic API** column shows whether `/olla/anthropic/` requests are forwarded as-is (native passthrough) or translated from Anthropic format to OpenAI format on the fly.
@@ -79,7 +94,7 @@ Olla proxies the following self-hosted inference backends. The **Anthropic API**
 | [LiteLLM](https://github.com/BerriAI/litellm) | [Integration](https://thushan.github.io/olla/integrations/backend/litellm/) | 🔄 Translation |
 | OpenAI-compatible (generic) | [Integration](https://thushan.github.io/olla/integrations/overview/) | 🔄 Translation |
 
-> **⚡ Passthrough**: Olla forwards Anthropic-format requests directly; the backend handles them natively, with no translation overhead.
+> **⚡ Passthrough**: Olla forwards Anthropic-format requests directly; the backend handles them natively, with no translation overhead. \
 > **🔄 Translation**: Olla converts Anthropic ↔ OpenAI format automatically; any OpenAI-compatible backend works transparently.
 
 LiteLLM is the recommended bridge when you need Olla to reach hosted cloud APIs (OpenAI, Anthropic, Bedrock, etc.). Learn more 
@@ -117,17 +132,17 @@ docker run --platform linux/arm64 -t \
   -p 40114:40114 \
   ghcr.io/thushan/olla:latest
 ```
+
+You can still use the `go install` method, but you won't get the bundled front-end, but you can see 
+[Admin Dashboard: building the frontend](https://thushan.github.io/olla/configuration/dashboard/#building-the-frontend).
+
 ```bash
 # Install via Go
 go install github.com/thushan/olla@latest
 ```
 
-> **Dashboard caveat with `go install`.** A plain `go install` or `go build` produces a
-> binary whose embedded `dist/` carries only a `.gitkeep` sentinel. The binary boots and
-> proxies traffic fine, but `/internal/ui/` serves a `503 dashboard not built` response
-> and the startup log line says so. For a working dashboard use a release binary, the
-> Docker image, or run `make build-web` (requires Bun 1.1+) before `make build`. See
-> [Admin Dashboard: building the frontend](https://thushan.github.io/olla/configuration/dashboard/#building-the-frontend).
+Or you can build and run it from source:
+
 ```bash
 # Build from source
 git clone https://github.com/thushan/olla.git && cd olla && make build-release

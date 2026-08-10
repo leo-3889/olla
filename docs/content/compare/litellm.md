@@ -13,6 +13,8 @@ keywords: olla vs litellm, litellm comparison, llm proxy comparison, ai gateway,
 
 [Olla](https://github.com/thushan/olla) and [LiteLLM](https://github.com/BerriAI/litellm) solve different problems in the LLM infrastructure stack. **Olla now provides native LiteLLM support**, making them perfect companions rather than competitors.
 
+For a deeper look at how the two tools stack up, see TensorFoundry's [Olla vs LiteLLM - Choosing an LLM Proxy](https://tensorfoundry.io/blog/olla-vs-litellm).
+
 ## Core Differences
 
 ### Primary Purpose
@@ -173,6 +175,8 @@ discovery:
         type: litellm
         priority: 2
 ```
+
+For large multi-region or enterprise-scale deployments, TensorFoundry's [FoundryOS](https://tensorfoundry.io/products/foundryos) and [Alloy](https://tensorfoundry.io/products/alloy) extend this pattern with a managed enterprise AI platform and a multi-provider control plane.
 
 ## Performance Considerations
 

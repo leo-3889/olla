@@ -9,6 +9,10 @@ Olla was created by [Thushan Fernando](https://www.thushanfernando.com), buildin
 
 Olla takes a step back to deliver a **clean, focused and high-performance proxy with model unification**, starting with a port of the Sherpa Proxy and refining it into something leaner, faster and easier to work with.
 
+## TensorFoundry
+
+Olla is an open-source project by [TensorFoundry](https://tensorfoundry.io), and remains free to use under the [Apache 2.0 licence](https://github.com/thushan/olla/blob/main/LICENSE). See the [Olla product page](https://tensorfoundry.io/products/olla) for more on how it fits into TensorFoundry's wider LLM infrastructure tooling.
+
 ## Core Principals
 
 Olla is built with a few guiding principles in mind:

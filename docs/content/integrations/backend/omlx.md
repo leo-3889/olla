@@ -520,3 +520,8 @@ llm = ChatOpenAI(
 - [Model Unification](../../concepts/model-unification.md) - Understand model management
 - [Load Balancing](../../concepts/load-balancing.md) - Scale with multiple oMLX instances
 - [API Translation](../../concepts/api-translation.md) - Anthropic passthrough and translation modes
+
+## Further Reading
+
+- TensorFoundry's [Run MLX Behind Olla on Your Mac](https://tensorfoundry.io/blog/running-mlx-with-olla) - a full walkthrough of this exact setup
+- TensorFoundry's [How MLX Runs LLMs on Apple Silicon](https://tensorfoundry.io/blog/mlx-apple-silicon) - background on the MLX framework

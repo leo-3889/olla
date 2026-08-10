@@ -8,6 +8,8 @@ keywords: olla architecture, hexagonal architecture, system design, implementati
 
 Olla follows **Hexagonal Architecture** (Ports & Adapters) principles, ensuring clean separation of concerns, testability, and maintainability.
 
+Olla sits at the proxy layer of a self-hosted LLM stack, between applications and inference backends; see TensorFoundry's [Deploying LLMs on Your Own Infrastructure](https://tensorfoundry.io/blog/deploying-llms-on-your-own-infrastructure) for how this layer fits alongside the backend, gateway and platform layers.
+
 ## High-Level Architecture
 
 ```mermaid
@@ -553,3 +555,7 @@ func TestProxyContract(t *testing.T, factory ProxyFactory) {
 - See [Circuit Breaker](circuit-breaker.md) for resilience patterns
 - Check [Testing Guide](testing.md) for testing strategies
 - Explore [Benchmarking](benchmarking.md) for performance testing
+
+## Further Reading
+
+- TensorFoundry's [Deploying LLMs on Your Own Infrastructure](https://tensorfoundry.io/blog/deploying-llms-on-your-own-infrastructure) - the four-layer stack Olla's proxy layer fits into

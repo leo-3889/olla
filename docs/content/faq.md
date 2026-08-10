@@ -12,7 +12,7 @@ keywords: olla faq, troubleshooting, common questions, proxy help
 
 Olla is a high-performance proxy and load balancer specifically designed for LLM infrastructure. It intelligently routes requests across multiple LLM backends (Ollama, LM Studio, llama.cpp, vLLM, vLLM-MLX, SGLang, Lemonade SDK, LiteLLM, LMDeploy, Docker Model Runner, oMLX, and OpenAI-compatible endpoints) while providing load balancing, health checking, and unified model management.
 
-See how Olla compares to [other tools](compare/overview.md) in the ecosystem.
+See how Olla compares to [other tools](compare/overview.md) in the ecosystem, or read TensorFoundry's [What is an LLM Proxy?](https://tensorfoundry.io/blog/what-is-an-llm-proxy) for background on the category.
 
 ### Why use Olla instead of connecting directly to backends?
 
@@ -23,6 +23,8 @@ Olla provides several benefits:
 - **Unified interface**: Single endpoint for all your LLM services
 - **Health monitoring**: Automatic detection and recovery from failures
 - **Performance optimisation**: Connection pooling and streaming optimisation
+
+Self-hosting also changes the cost profile compared to metered cloud APIs; see TensorFoundry's [Self-Hosted LLM vs Cloud API - A Cost Framework](https://tensorfoundry.io/blog/self-hosted-llm-vs-cloud-api-cost) for a breakdown.
 
 ### Which proxy engine should I use?
 

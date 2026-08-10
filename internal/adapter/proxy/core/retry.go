@@ -162,6 +162,11 @@ func (h *RetryHandler) ExecuteWithRetry(
 	var lastErr error
 	maxRetries := len(endpoints)
 	attemptCount := 0
+	// Tracked separately from lastErr because lastErr only ever reflects the
+	// final attempt: if earlier endpoints failed with real connection errors
+	// and the final one was CB-open, lastErr alone would mislabel the whole
+	// exhaustion as "circuit breaker open" and hide the network failures.
+	var cbOpenCount, connErrCount int
 
 	for attemptCount < maxRetries && len(availableEndpoints) > 0 {
 		if err := h.checkContextCancellation(ctx); err != nil {
@@ -182,10 +187,36 @@ func (h *RetryHandler) ExecuteWithRetry(
 			return nil
 		}
 
+		// A CB-open rejection is failover-eligible, but unlike a connection
+		// error it must NOT demote the endpoint's persisted health: the breaker
+		// already reflects accumulated failure state, and the proxy engine
+		// owns demotion for genuine connectivity failures. Remove the endpoint
+		// from this request's candidate list only, then continue. Evaluated
+		// before IsConnectionError so the sentinel never reaches the
+		// connection-error/handleConnectionFailure path below.
+		if errors.Is(lastErr, ErrCircuitBreakerOpen) {
+			cbOpenCount++
+			// For non-idempotent methods, once the response has started we
+			// cannot safely retry even on CB-open: the same partial-response
+			// hazard applies. The guard runs identically on every failover path.
+			if tracker.started && !isIdempotent(r.Method) {
+				h.logger.Debug("skipping retry: response already started for non-idempotent method",
+					"method", r.Method,
+					"endpoint", endpoint.Name)
+				return lastErr
+			}
+			h.logger.Debug("circuit breaker open, failing over to next endpoint",
+				"endpoint", endpoint.Name,
+				"remaining_endpoints", len(availableEndpoints)-1)
+			availableEndpoints = h.removeFailedEndpoint(availableEndpoints, endpoint)
+			continue
+		}
+
 		if !IsConnectionError(lastErr) {
 			// Non-connection error warrants immediate failure
 			return lastErr
 		}
+		connErrCount++
 
 		// For non-idempotent methods, once the response has started we cannot
 		// safely retry. The client would receive a partial response from this
@@ -202,7 +233,7 @@ func (h *RetryHandler) ExecuteWithRetry(
 		availableEndpoints = h.handleConnectionFailure(ctx, endpoint, lastErr, attemptCount, availableEndpoints, maxRetries)
 	}
 
-	return h.buildFinalError(availableEndpoints, maxRetries, lastErr)
+	return h.buildFinalError(availableEndpoints, maxRetries, lastErr, cbOpenCount, connErrCount)
 }
 
 // preserveRequestBody reads and preserves request body for potential retries
@@ -305,10 +336,25 @@ func (h *RetryHandler) removeFailedEndpoint(endpoints []*domain.Endpoint, failed
 	return endpoints
 }
 
-// buildFinalError constructs the appropriate error message for retry failure
-func (h *RetryHandler) buildFinalError(availableEndpoints []*domain.Endpoint, maxRetries int, lastErr error) error {
+// buildFinalError constructs the appropriate error message for retry failure.
+// cbOpenCount and connErrCount are tallied across every attempt, not just the
+// last one - lastErr alone can't distinguish "every endpoint was CB-open"
+// from "some failed on the network and the last one happened to be CB-open",
+// and conflating the two hides genuine connectivity failures from operators.
+func (h *RetryHandler) buildFinalError(availableEndpoints []*domain.Endpoint, maxRetries int, lastErr error, cbOpenCount, connErrCount int) error {
 	if len(availableEndpoints) == 0 {
-		return fmt.Errorf("all endpoints failed with connection errors: %w", lastErr)
+		switch {
+		case cbOpenCount > 0 && connErrCount > 0:
+			return fmt.Errorf("all endpoints unavailable (%d connection failure(s), %d circuit breaker open): %w",
+				connErrCount, cbOpenCount, lastErr)
+		case cbOpenCount > 0:
+			// CB-open exhaustion is reachable here now (FR-2 removes endpoints
+			// without demoting them); don't mislabel it a connection failure, which
+			// would imply a network outage that never happened.
+			return fmt.Errorf("all endpoints unavailable (circuit breaker open): %w", lastErr)
+		default:
+			return fmt.Errorf("all endpoints failed with connection errors: %w", lastErr)
+		}
 	}
 	return fmt.Errorf("max attempts (%d) reached: %w", maxRetries, lastErr)
 }

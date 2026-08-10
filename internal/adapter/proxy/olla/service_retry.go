@@ -74,7 +74,10 @@ func (s *Service) proxyToSingleEndpoint(ctx context.Context, w http.ResponseWrit
 		open, attempt = cb.IsOpen(HalfOpenStaleness)
 		if open {
 			rlog.Warn("Circuit breaker is open for endpoint", "endpoint", endpoint.Name)
-			err := fmt.Errorf("circuit breaker open for endpoint %s", endpoint.Name)
+			// Wrap the typed sentinel so ExecuteWithRetry can recognise this as
+			// failover-eligible via errors.Is without falling into the generic
+			// connection-error path (which would demote persisted health).
+			err := fmt.Errorf("%w: endpoint %s", core.ErrCircuitBreakerOpen, endpoint.Name)
 			s.RecordFailure(ctx, endpoint, resolvedModel, time.Since(stats.StartTime), err)
 			return err
 		}

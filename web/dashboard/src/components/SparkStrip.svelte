@@ -309,7 +309,7 @@
   }
   .spark-line {
     fill: none;
-    stroke: var(--neutral);
+    stroke: var(--blue);
     stroke-width: 1.5;
     vector-effect: non-scaling-stroke;
   }

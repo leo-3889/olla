@@ -1,0 +1,13 @@
+# Speed only, not correctness: the Dockerfile COPYs each runtime file by name,
+# so nothing here can change what ends up in the image. This just keeps the repo
+# root (Go source, node_modules, editor and agent scratch dirs) from being sent
+# to the daemon on every `make docker-build-local`.
+#
+# GoReleaser builds from its own synthesised context and never reads this file.
+
+# Exclude everything, then re-admit only what the Dockerfile COPYs.
+*
+!olla
+!build/docker-config.yaml
+!config/models.yaml
+!config/profiles

@@ -1,0 +1,99 @@
+name: Release (dry run)
+
+# Manually-triggered rehearsal of release.yml. Runs the full goreleaser
+# pipeline on the same runner image with the same pinned toolchains, then boots
+# the image it built and proves the dashboard actually serves. Nothing is
+# published: no tag, no ghcr push, no GitHub release. Run this before tagging.
+#
+# The only step release.yml does that this does not is the push itself - there
+# are no sboms/signs sections in .goreleaser.yml, so --skip=publish is the whole
+# difference. Keep the toolchain pins below in sync with release.yml.
+
+on:
+  workflow_dispatch:
+
+env:
+  GO_VERSION: 1.24.x
+  BUN_VERSION: "1.3.5"
+
+permissions:
+  contents: read
+
+jobs:
+  dryrun:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Configure Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Configure Bun
+        # goreleaser's before.hooks run `make build-web`, which needs Bun.
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Set up Docker QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          platforms: linux/amd64,linux/arm64
+
+      # No ghcr login: without credentials a stray push would fail loudly
+      # rather than quietly succeeding against the real registry.
+
+      - name: Run GoReleaser (build only, no publish)
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean --skip=publish,announce --snapshot
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PWD: ${{ github.workspace }}
+
+      - name: Dashboard serves from the built image
+        # The failure this exists to catch: a binary that compiled fine but
+        # embedded an empty SPA, which only shows up as a 503 at runtime.
+        run: |
+          set -euo pipefail
+          docker run -d --name olla-dryrun -p 40114:40114 ghcr.io/thushan/olla:latest-amd64
+          for i in $(seq 1 30); do
+            if curl -fsS -o /dev/null http://localhost:40114/internal/health; then break; fi
+            sleep 1
+          done
+
+          echo "--- dashboard ---"
+          code=$(curl -s -o /tmp/index.html -w '%{http_code}' http://localhost:40114/internal/ui/)
+          test "$code" = "200" || { echo "dashboard returned $code (503 means the SPA was not embedded)"; exit 1; }
+          grep -q '<div id="app"' /tmp/index.html || { echo "index.html is not the built SPA"; exit 1; }
+
+          echo "--- hashed assets ---"
+          for a in $(grep -o '/internal/ui/assets/[^"]*' /tmp/index.html); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:40114$a")
+            echo "$a -> $code"
+            test "$code" = "200" || exit 1
+          done
+
+          echo "--- access gate still enforced ---"
+          code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example' http://localhost:40114/internal/ui/)
+          test "$code" = "403" || { echo "expected 403 for a disallowed Host, got $code"; exit 1; }
+
+      - name: Image contents match the release manifest
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint sh ghcr.io/thushan/olla:latest-amd64 -c 'find /app | sort'
+
+      - name: Tear down
+        if: always()
+        run: docker rm -f olla-dryrun || true
