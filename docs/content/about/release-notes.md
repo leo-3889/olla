@@ -13,7 +13,7 @@ exact migration step if a behaviour change affects you.
 Breaking changes are tagged **Breaking**. Additions and fixes are tagged **Added** or
 **Fixed**. Quoted field names and config keys are the literal wire or YAML identifiers.
 
-## v0.0.29 (unreleased)
+## v0.0.29
 
 ### Breaking: userinfo URLs now fail startup
 
@@ -109,3 +109,85 @@ A binary built without `make build-web` (e.g. via `go install` or a plain `go bu
 now logs a clear startup line and serves `503` at `/internal/ui/` with a body naming the
 fix. Previously such a binary served a silent placeholder. See
 [Development Setup: building the dashboard](../development/setup.md#optional-bun-135-for-the-admin-dashboard).
+
+### Added: admin dashboard at `/internal/ui/`
+
+A read-only, single-page dashboard is now embedded in the binary and served from the
+same listener as the proxy: Overview (fleet status, success rate, latency, a live
+requests-per-second sparkline), Endpoints (per-endpoint health, priority, latency,
+model count), and Models (inventory grouped by family, with hosting endpoints). It
+polls the existing `/internal/status*` JSON every 5-15 seconds with `ETag`/`304`
+caching - no WebSocket, no push, and nothing in it changes state.
+
+There is no authentication. Access is controlled entirely by the new `dashboard.access_policy`
+config block (`allowed_cidrs` + `allowed_hosts`), which defaults to loopback-only. The
+published Docker image ships with `allowed_cidrs` pre-widened to the RFC1918 ranges and
+the listener bound to `0.0.0.0`, so `docker run -p 40114:40114 ghcr.io/thushan/olla:latest`
+followed by opening `/internal/ui/` works with no config mount - and also means the
+dashboard, and the container, are reachable from anyone else on the same LAN through that
+published port. The access policy gates `/internal/ui/` only: the `/internal/status*`,
+`/internal/health`, `/internal/metrics` and `/version` JSON it reads stay as reachable as
+they already were, `allowed_cidrs` or not. Unifying that gap under one policy is tracked
+in issue #214.
+
+See [Admin Dashboard](../configuration/dashboard.md) for the full security model and
+configuration reference.
+
+### Added: native `GET /internal/metrics`
+
+Prometheus-format metrics are now exposed directly, built from the same data as
+`/internal/status` and `/internal/stats/models` - system status, per-endpoint health,
+security counters, model usage and routing. No external exporter is required for core
+proxy monitoring. Thanks to **@Puupuls** for the contribution. See
+[System API](../api-reference/system.md) for the metric series.
+
+### Fixed: circuit-breaker-open no longer blocks failover
+
+A request that lands on an endpoint whose circuit breaker is open now fails over to the
+next available endpoint instead of the request failing outright. The endpoint is removed
+from that request's candidate list only; its persisted health is left untouched, because
+an open breaker already reflects accumulated failure state and demoting health on top of
+it is the proxy engine's job for genuine connectivity failures, not the retry path's.
+Exhaustion errors now distinguish circuit-breaker-open counts from connection-failure
+counts instead of conflating the two under one message.
+
+### Breaking: strict routing now fails fast on an unroutable alias
+
+A request for a `model_aliases` entry whose target model exists on no endpoint used to be
+logged as rejected but still proxied to a compatible backend anyway, returning `200` from
+the wrong model. It now returns `404`/`503` with `routing_action: rejected`, matching how
+unknown models are already handled. One side effect: `/olla/proxy/` with zero healthy
+endpoints now returns `503` instead of `502` - update any monitor keyed on that specific
+status code.
+
+### Breaking: `owned_by` in converted model listings may return the raw matched segment
+
+The organisation-extraction logic used by the vLLM, vLLM-MLX, SGLang, llama.cpp, LMDeploy
+and Lemonade converters is now shared. Alongside the existing `org/model` slash split, it
+also recognises a hyphen-separated leading segment against a known-organisation list and
+returns that segment verbatim - so a model ID like `Qwen2.5-7B` now yields `owned_by:
+"Qwen2.5"` rather than falling through to the converter's generic default. Anything
+parsing `owned_by` for exact organisation matching should treat it as a best-effort label,
+not a canonical identifier.
+
+### Fixed: `config/models.yaml` customisations are no longer silently discarded
+
+The shipped `config/models.yaml` used `\d` inside double-quoted YAML scalars, which is not
+a valid YAML escape - the file has never parsed, on any install. The failure was swallowed
+and Olla silently fell back to embedded defaults, so any customisation (e.g. capability
+tagging via `name_patterns`) had no effect and no diagnostic. The regex patterns are fixed
+to single-quoted scalars, config loading now happens eagerly at boot rather than lazily on
+first request, and a found-but-unparseable candidate logs a `WARN` with the path and YAML
+error instead of failing silently.
+
+### Added: `--validate-config` flag
+
+Run `olla --validate-config` to check the configuration and provider profiles without
+starting the server - a clear pass/warn/fail report with exit codes, useful in CI or
+before a restart.
+
+### Fixed: `logging.level` in config is now honoured
+
+The `logging.level` config field was parsed but never applied to the runtime logger.
+Precedence is `OLLA_LOGGING_LEVEL` env var, then config file, then default; an invalid
+value now warns and falls back instead of being silently ignored.
