@@ -83,6 +83,8 @@ Response includes:
 - Circuit breaker states
 - Performance metrics
 
+The `system.status` verdict is computed by the configured health mode (`health.mode`). The default `host` mode derives it from the endpoint fleet; `model` mode instead derives it from a configured list of models/aliases (`health.models`), so you can alert on the availability of specific models rather than the whole fleet. See [System Health Configuration](../reference.md#system-health-configuration) for the schema.
+
 ## Key Metrics
 
 ### Golden Signals

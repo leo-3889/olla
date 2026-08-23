@@ -225,9 +225,9 @@ The `last_check`, `next_check`, and relative strings on every status payload ren
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `status` | string | Aggregate status: `healthy`, `degraded`, `critical`. With no proxy traffic, derived purely from endpoint health so a healthy fresh boot no longer reports `critical` |
+| `status` | string | Aggregate status: `healthy`, `degraded`, `critical`. In `host` mode, derived from endpoint health and the proxy success rate (with no proxy traffic, purely from endpoint health so a healthy fresh boot no longer reports `critical`). In `model` mode, derived from the configured models (see `health_mode`) |
 | `endpoints_up` | string | Healthy / total endpoint count, human-readable |
-| `success_rate` | string | Aggregate proxy success percentage, or `"N/A"` when `has_traffic` is false |
+| `success_rate` | string | Success percentage, or `"N/A"` when `has_traffic` is false. In `host` mode this is the proxy-wide rate; in `model` mode it is scoped to the configured models' own traffic |
 | `avg_latency` | string | Human-readable average proxy latency |
 | `total_traffic` | string | Human-readable total bytes proxied |
 | `uptime` | string | Human-readable process uptime (relative, excluded from the ETag hash) |
@@ -239,6 +239,8 @@ The `last_check`, `next_check`, and relative strings on every status payload ren
 | `total_requests` | integer | Total proxy requests since startup |
 | `total_failures` | integer | Total failed proxy requests since startup |
 | `has_traffic` | boolean | Always present. `false` on a fresh boot or when `total_requests` is zero; lets clients branch on the no-traffic state without parsing `success_rate` |
+| `health_mode` | string | Always present. The computation that produced `status`: `host` (the endpoint fleet, the default) or `model` (a configured list of models/aliases). In `model` mode this is `model` only when at least one configured model resolved to an endpoint; otherwise Olla falls back to the host verdict and reports `host` |
+| `models` | array | Present only in `model` mode. One entry per configured model: `name`, `status` (`healthy`/`unhealthy`/`unknown`), `total_requests`, `successful_requests`, `failed_requests`, and `success_rate` (the model's own traffic, `"N/A"` with none) |
 
 ### Conditional requests and compression
 

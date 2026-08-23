@@ -27,6 +27,7 @@ type Config struct {
 	//       - gpt-oss-120b-MLX
 	//       - gguf_gpt_oss_120b.gguf
 	ModelAliases  map[string][]string `yaml:"model_aliases,omitempty"`
+	Health        HealthConfig        `yaml:"health"`
 	Logging       LoggingConfig       `yaml:"logging"`
 	Filename      string              `yaml:"-"`
 	Dashboard     DashboardConfig     `yaml:"dashboard"`
@@ -581,6 +582,82 @@ func (c *Config) ValidateModelAliases() error {
 			}
 			seen[modelName] = true
 		}
+	}
+
+	return nil
+}
+
+// HealthConfig controls how the overall system status shown on the dashboard
+// is computed. Two independent modes exist:
+//
+//   - "host" (default): the status is derived from the endpoint fleet, the
+//     historical behaviour. A healthy ratio of endpoints plus the proxy-wide
+//     success rate decide the verdict.
+//   - "model": the status is derived from a configured list of models/aliases
+//     (Models). Every model in the list must be healthy for the system to be
+//     healthy; a partial list is degraded; none healthy is critical.
+//
+// SuccessRate holds the success-rate thresholds applied in both modes. The
+// defaults (90/95) reproduce the historical hard-coded behaviour, so a
+// no-config startup is unchanged.
+type HealthConfig struct {
+	Mode        string                `yaml:"mode"`
+	Models      []string              `yaml:"models"`
+	SuccessRate SuccessRateThresholds `yaml:"success_rate"`
+}
+
+// SuccessRateThresholds are the proxy/model success-rate percentages below
+// which the verdict escalates. critical_below is the stricter (lower) bound:
+// a success rate below it forces "critical"; a rate between it and
+// degraded_below forces "degraded".
+type SuccessRateThresholds struct {
+	CriticalBelow float64 `yaml:"critical_below"`
+	DegradedBelow float64 `yaml:"degraded_below"`
+}
+
+// Validate checks the health configuration for values that would be a startup
+// error rather than a runtime surprise. An invalid mode is a config bug and
+// fails loudly; an empty model list is deliberately allowed because models
+// legitimately appear and disappear at runtime (the evaluator falls back to
+// host mode at compute time in that case).
+//
+// The success-rate thresholds are optional: when both are zero the standard
+// defaults (90/95) apply, so a config that omits them - or a hand-built config
+// that never sets them - still validates. When they are set, both must be in
+// (0, 100] and critical_below must not exceed degraded_below.
+func (c *HealthConfig) Validate() error {
+	switch c.Mode {
+	case "host", "model":
+		// valid
+	case "":
+		// Absent mode: DefaultConfig supplies "host". Tolerate an empty
+		// value here so a config that omits the whole health block still
+		// loads; the evaluator treats an empty mode as host.
+	default:
+		return fmt.Errorf("health.mode must be \"host\" or \"model\", got %q", c.Mode)
+	}
+
+	for i, name := range c.Models {
+		if name == "" {
+			return fmt.Errorf("health.models has an empty entry at position %d", i)
+		}
+		if strings.TrimSpace(name) != name {
+			return fmt.Errorf("health.models entry %q contains leading/trailing whitespace", name)
+		}
+	}
+
+	critical, degraded := c.SuccessRate.CriticalBelow, c.SuccessRate.DegradedBelow
+	switch {
+	case critical == 0 && degraded == 0:
+		// Unset: the standard defaults apply.
+	case critical == 0 || degraded == 0:
+		return fmt.Errorf("health.success_rate: critical_below and degraded_below must both be set or both left empty")
+	case critical <= 0 || critical > 100:
+		return fmt.Errorf("health.success_rate.critical_below must be between 0 and 100, got %g", critical)
+	case degraded <= 0 || degraded > 100:
+		return fmt.Errorf("health.success_rate.degraded_below must be between 0 and 100, got %g", degraded)
+	case critical > degraded:
+		return fmt.Errorf("health.success_rate.critical_below (%g) must not exceed degraded_below (%g)", critical, degraded)
 	}
 
 	return nil

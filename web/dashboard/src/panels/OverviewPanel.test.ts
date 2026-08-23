@@ -108,6 +108,7 @@ function buildStatus(over: DeepPartial<StatusResponse> = {}): StatusResponse {
       total_failures: 0,
       security_violations: 7,
       has_traffic: true,
+      health_mode: 'host',
       ...over.system,
     },
   };

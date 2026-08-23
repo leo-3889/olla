@@ -241,3 +241,18 @@ dashboard:
 #       - gpt-oss:120b          # Ollama format
 #       - gpt-oss-120b-MLX      # LM Studio MLX format
 #       - gguf_gpt_oss_120b.gguf  # llamacpp GGUF file
+
+# System health computation. "host" (the default) derives the overall status
+# from the endpoint fleet, as before. "model" derives it from the configured
+# list of models/aliases below: every model healthy -> healthy, some ->
+# degraded, none -> critical. The success-rate thresholds (percentages) apply
+# in both modes and default to 90/95, so a no-config startup is unchanged.
+# Uncomment to opt in to model-based health:
+#   health:
+#     mode: model
+#     models:
+#       - llama3:8b
+#       - qwen2.5:7b
+#     success_rate:
+#       critical_below: 90
+#       degraded_below: 95

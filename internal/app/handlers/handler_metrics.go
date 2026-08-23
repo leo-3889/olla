@@ -20,7 +20,7 @@ func (a *Application) metricsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := a.buildStatusResponse(snapshot)
+	response := a.buildStatusResponse(r.Context(), snapshot)
 
 	modelStats := make(map[string]ports.ModelStats)
 	modelEndpointStats := make(map[string]map[string]ports.EndpointModelStats)

@@ -42,6 +42,17 @@ var DefaultLocalNetworkTrustedCIDRs = []string{
 
 func DefaultConfig() *Config {
 	return &Config{
+		// host is the default so a no-config startup reproduces the historical
+		// endpoint-fleet status computation. The 90/95 success-rate thresholds
+		// match the previous hard-coded values, so the default verdict is
+		// byte-for-byte unchanged.
+		Health: HealthConfig{
+			Mode: "host",
+			SuccessRate: SuccessRateThresholds{
+				CriticalBelow: 90,
+				DegradedBelow: 95,
+			},
+		},
 		Server: ServerConfig{
 			Host:            DefaultHost,
 			Port:            DefaultPort,
@@ -216,6 +227,10 @@ func (c *Config) Validate() error {
 
 	if err := c.Translators.Validate(); err != nil {
 		return fmt.Errorf("translators config invalid: %w", err)
+	}
+
+	if err := c.Health.Validate(); err != nil {
+		return fmt.Errorf("health config invalid: %w", err)
 	}
 
 	if err := c.Server.Cors.Validate(); err != nil {

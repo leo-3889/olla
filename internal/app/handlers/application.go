@@ -10,6 +10,7 @@ import (
 	"github.com/thushan/olla/internal/adapter/converter"
 	"github.com/thushan/olla/internal/adapter/inspector"
 	"github.com/thushan/olla/internal/adapter/registry"
+	"github.com/thushan/olla/internal/app/handlers/health"
 	"github.com/thushan/olla/internal/adapter/registry/profile"
 	"github.com/thushan/olla/internal/adapter/security"
 	"github.com/thushan/olla/internal/adapter/translator"
@@ -112,9 +113,13 @@ type Application struct {
 	// closure so the handler layer does not need to import the balancer package.
 	stickyStatsFn func() *balancer.StickyStats
 	aliasResolver *registry.AliasResolver
-	server        *http.Server
-	errCh         chan error
-	StartTime     time.Time
+	// evaluator computes the overall system status for /internal/status. It is
+	// built from the health config (host or model mode) so the handler stays a
+	// thin dispatcher over the verdict.
+	evaluator   health.Evaluator
+	server      *http.Server
+	errCh       chan error
+	StartTime   time.Time
 }
 
 // NewApplication creates a new Application instance with all required dependencies
@@ -218,6 +223,7 @@ func NewApplication(
 		converterFactory:   converter.NewConverterFactory(),
 		translatorRegistry: translatorRegistry,
 		aliasResolver:      aliasResolver,
+		evaluator:          health.NewEvaluator(&cfg.Health),
 		server:             server,
 		errCh:              make(chan error, 1),
 		StartTime:          time.Now(),

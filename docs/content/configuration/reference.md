@@ -626,6 +626,35 @@ model_aliases:
 !!! note
     Alias names take priority over standard model routing. If no endpoints are found for the alias, Olla falls back to standard routing using the alias name as a regular model name, honouring the configured routing strategy. Under `strict` (the default) an alias whose targets are all unavailable is rejected (`404`/`503`), not proxied to a compatible-but-wrong backend. See [Model Aliases](../concepts/model-aliases.md) for details.
 
+## System Health Configuration
+
+Controls how the overall system status shown on the dashboard (`/internal/status`) is computed. Two independent modes exist:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `health.mode` | string | `host` | `host` (the endpoint fleet, the historical behaviour) or `model` (a configured list of models/aliases) |
+| `health.models` | []string | `nil` | In `model` mode, the models/aliases that define the system. A model is healthy when at least one endpoint hosting it is healthy |
+| `health.success_rate.critical_below` | number | `90` | Success-rate percentage below which the verdict escalates to `critical` |
+| `health.success_rate.degraded_below` | number | `95` | Success-rate percentage below which the verdict escalates to `degraded` |
+
+In `model` mode the verdict is: every configured model healthy → `healthy`; some → `degraded`; none → `critical`. A success-rate leg scoped to the configured models' own traffic is combined with that, taking the worse of the two. The success-rate thresholds apply in both modes and default to `90`/`95`, so a no-config startup is unchanged.
+
+Example:
+
+```yaml
+health:
+  mode: model
+  models:
+    - llama3:8b
+    - qwen2.5:7b
+  success_rate:
+    critical_below: 90
+    degraded_below: 95
+```
+
+!!! note
+    In `model` mode, a configured name that is a `model_aliases` key is expanded to its actual models before the health test and the success-rate aggregation. If no configured model resolves to any endpoint (for example a fresh boot before model discovery has run), Olla falls back to the `host` verdict rather than reporting a spurious `critical`; the response's `health_mode` field reflects the mode that actually produced the verdict.
+
 ## Routing Response Headers
 
 Routing decisions are exposed via response headers:
