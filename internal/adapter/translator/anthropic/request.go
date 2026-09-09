@@ -109,18 +109,38 @@ func (t *Translator) TransformRequest(ctx context.Context, r *http.Request) (*tr
 func (t *Translator) convertMessages(anthropicMessages []AnthropicMessage, systemPrompt interface{}) ([]map[string]interface{}, error) {
 	openaiMessages := make([]map[string]interface{}, 0, len(anthropicMessages)+1)
 
-	// openai wants system as first message, can be string or content blocks
+	// openai wants system as first message, can be string or content blocks.
+	//
+	// Claude Code also emits system-reminder turns as role:"system" entries
+	// *inside* messages: block content on the first request, string content when
+	// the same turn is replayed on later ones. Emitting those in place puts a
+	// system message at index > 0, which chat templates reject ("System message
+	// must be at the beginning"), so fold them into the leading system message.
+	systemParts := make([]string, 0, len(anthropicMessages)+1)
 	if systemPrompt != nil {
-		systemContent := t.convertSystemPrompt(systemPrompt)
-		if systemContent != nil {
-			openaiMessages = append(openaiMessages, map[string]interface{}{
-				"role":    "system",
-				"content": systemContent,
-			})
+		if s, ok := t.convertSystemPrompt(systemPrompt).(string); ok && s != "" {
+			systemParts = append(systemParts, s)
 		}
+	}
+	for _, msg := range anthropicMessages {
+		if msg.Role != "system" {
+			continue
+		}
+		if s, ok := t.convertSystemPrompt(msg.Content).(string); ok && s != "" {
+			systemParts = append(systemParts, s)
+		}
+	}
+	if len(systemParts) > 0 {
+		openaiMessages = append(openaiMessages, map[string]interface{}{
+			"role":    "system",
+			"content": strings.Join(systemParts, "\n\n"),
+		})
 	}
 
 	for _, msg := range anthropicMessages {
+		if msg.Role == "system" {
+			continue // already hoisted into the leading system message
+		}
 		converted, err := t.convertSingleMessage(msg)
 		if err != nil {
 			return nil, err
@@ -134,6 +154,12 @@ func (t *Translator) convertMessages(anthropicMessages []AnthropicMessage, syste
 // convert single message, might produce multiple openai messages (eg user + tool results)
 func (t *Translator) convertSingleMessage(msg AnthropicMessage) ([]map[string]interface{}, error) {
 	result := make([]map[string]interface{}, 0, 2)
+
+	// only user/assistant reach the wire; the string fast-path below copies
+	// msg.Role verbatim, so any other role would land at the wrong index.
+	if msg.Role != "user" && msg.Role != "assistant" {
+		return result, nil
+	}
 
 	if contentStr, ok := msg.Content.(string); ok {
 		if contentStr != "" {
