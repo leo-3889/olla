@@ -17,19 +17,20 @@ import (
 )
 
 type EndpointSummary struct {
-	AvgLatencyMs    *int64     `json:"avg_latency_ms,omitempty"`
-	NextCheckAt     *time.Time `json:"next_check_at,omitempty"`
-	HealthCheckAt   *time.Time `json:"health_check_at,omitempty"`
-	LastModelSyncAt *time.Time `json:"last_model_sync_at,omitempty"`
-	Name            string     `json:"name"`
-	Type            string     `json:"type"`
-	Status          string     `json:"status"`
-	LastModelSync   string     `json:"last_model_sync,omitempty"`
-	HealthCheck     string     `json:"health_check"`
-	ResponseTime    string     `json:"response_time,omitempty"`
-	SuccessRate     string     `json:"success_rate"`
-	Issues          string     `json:"issues,omitempty"`
-	URL             string     `json:"url"`
+	RuntimeMetrics  *EndpointRuntimeMetrics `json:"runtime_metrics,omitempty"`
+	AvgLatencyMs    *int64                  `json:"avg_latency_ms,omitempty"`
+	NextCheckAt     *time.Time              `json:"next_check_at,omitempty"`
+	HealthCheckAt   *time.Time              `json:"health_check_at,omitempty"`
+	LastModelSyncAt *time.Time              `json:"last_model_sync_at,omitempty"`
+	Name            string                  `json:"name"`
+	Type            string                  `json:"type"`
+	Status          string                  `json:"status"`
+	LastModelSync   string                  `json:"last_model_sync,omitempty"`
+	HealthCheck     string                  `json:"health_check"`
+	ResponseTime    string                  `json:"response_time,omitempty"`
+	SuccessRate     string                  `json:"success_rate"`
+	Issues          string                  `json:"issues,omitempty"`
+	URL             string                  `json:"url"`
 	// ID is a stable, opaque identifier derived from the SANITISED endpoint
 	// URL (scheme+host+port+path) via buildEndpointIDs, so credentials in the
 	// query string cannot influence it and credential rotation leaves it
@@ -188,6 +189,9 @@ func (a *Application) buildEndpointSummaryOptimised(endpoint *domain.Endpoint, s
 	}
 
 	summary.Issues = a.getEndpointIssuesSummaryOptimised(endpoint, stats, hasStats)
+	if a.runtimeMetrics != nil {
+		summary.RuntimeMetrics = a.runtimeMetrics.Snapshot(endpoint)
+	}
 
 	return summary
 }
@@ -358,6 +362,12 @@ func hashEndpointSummary(h hash.Hash, s *EndpointSummary) {
 	hashEtagInt64(h, s.MinLatencyMs)
 	hashEtagInt64(h, s.MaxLatencyMs)
 	hashEtagInt64(h, s.ActiveConnections)
+	if s.RuntimeMetrics != nil {
+		encoded, err := json.Marshal(s.RuntimeMetrics)
+		if err == nil {
+			hashEtagString(h, string(encoded))
+		}
+	}
 	hashEtagInt64Ptr(h, s.AvgLatencyMs)
 }
 

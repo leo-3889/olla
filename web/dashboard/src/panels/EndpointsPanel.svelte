@@ -6,10 +6,10 @@
   import StatusTag from '../components/StatusTag.svelte';
   import RangeBar from '../components/RangeBar.svelte';
   import PctBar from '../components/PctBar.svelte';
-  import { fmtAgo, fmtUntil } from '../lib/format';
+  import { fmtAgo, fmtPct, fmtUntil } from '../lib/format';
   import { stableId } from '../lib/dom-id';
   import { getNow as liveNow } from '../lib/clock.svelte';
-  import type { EndpointSummary } from '../lib/types';
+  import type { EndpointRuntimeMetrics, EndpointSummary } from '../lib/types';
 
   // View-model row: the contract row plus the numeric variants the table sorts
   // and the bars scale on. success_rate arrives pre-formatted ("98.5%") so a
@@ -20,6 +20,10 @@
   type EndpointRow = Omit<EndpointSummary, 'avg_latency_ms'> & {
     success_rate_num: number;
     avg_latency_ms: number | null;
+    generation_tps_current: number | null;
+    prefill_tps_current: number | null;
+    cache_hit_percent_current: number | null;
+    kv_cache_usage_percent: number | null;
   };
 
   const data = $derived(endpoints.data?.endpoints ?? []);
@@ -51,6 +55,10 @@
       ...e,
       success_rate_num: parseFloat(e.success_rate) || 0,
       avg_latency_ms: typeof e.avg_latency_ms === 'number' ? e.avg_latency_ms : null,
+      generation_tps_current: runtimeNumber(e.runtime_metrics, e.runtime_metrics?.generation_tps?.current),
+      prefill_tps_current: runtimeNumber(e.runtime_metrics, e.runtime_metrics?.prefill_tps?.current),
+      cache_hit_percent_current: runtimeNumber(e.runtime_metrics, e.runtime_metrics?.cache_hit_percent?.current),
+      kv_cache_usage_percent: runtimeNumber(e.runtime_metrics, e.runtime_metrics?.kv_cache_usage_percent),
     }))
   );
 
@@ -72,6 +80,10 @@
       title: 'Counts any streamed response, regardless of HTTP status',
     },
     { key: 'avg_latency_ms', label: 'Latency', sortable: true, num: true, align: 'right' },
+    { key: 'generation_tps_current', label: 'Gen tok/s', sortable: true, num: true, align: 'right', title: 'Backend-reported generation throughput: current, then average and maximum since available' },
+    { key: 'prefill_tps_current', label: 'Prefill tok/s', sortable: true, num: true, align: 'right', title: 'Backend-reported incremental prefill throughput: current, then average and maximum since available' },
+    { key: 'cache_hit_percent_current', label: 'Cache hit', sortable: true, num: true, align: 'right', title: 'Backend-reported prompt-cache hit rate: current and average since available' },
+    { key: 'kv_cache_usage_percent', label: 'KV used', sortable: true, num: true, align: 'right', title: 'Current backend KV-cache capacity utilisation' },
     { key: 'model_count', label: 'Models', sortable: true, num: true, align: 'right' },
     { key: 'request_count', label: 'Requests', sortable: true, num: true, align: 'right' },
     { key: 'active_connections', label: 'Conn', sortable: true, num: true, align: 'right' },
@@ -110,6 +122,23 @@
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
+  }
+
+  function runtimeNumber(metrics: EndpointRuntimeMetrics | undefined, value: unknown): number | null {
+    // A valid zero remains visible; only absent, invalid, or stale values are unavailable.
+    if (metrics?.stale || typeof value !== "number" || !Number.isFinite(value)) return null;
+    return value;
+  }
+
+  function fmtTps(value: number): string {
+    return value.toLocaleString("en-AU", { maximumFractionDigits: 1 });
+  }
+
+  function runtimeTitle(metrics: EndpointRuntimeMetrics | undefined, label: string): string {
+    if (!metrics) return label + ": unsupported by this backend";
+    if (metrics.stale) return metrics.sampled_at ? label + ": stale (last sampled " + metrics.sampled_at + ")" : label + ": stale";
+    const sampled = metrics.sampled_at ? ": sampled " + metrics.sampled_at : "";
+    return label + sampled + "; avg/max over last 10m";
   }
 </script>
 
@@ -165,7 +194,36 @@
             label="latency"
           />
         </td>
-        <td class={cellClass('model_count')}>{#if e.model_count === 0}<span class="dash">0</span>{:else}{e.model_count}{/if}</td>
+        <td class={cellClass("generation_tps_current")}>
+          <div class="runtime-metric" title={runtimeTitle(e.runtime_metrics, "Generation throughput")}>
+            {#if e.generation_tps_current !== null}
+              <span class="runtime-current">{fmtTps(e.generation_tps_current)} tok/s</span>
+              <span class="runtime-summary">avg {#if runtimeNumber(e.runtime_metrics, e.runtime_metrics?.generation_tps?.avg) !== null}{fmtTps(e.runtime_metrics?.generation_tps?.avg ?? 0)}{:else}—{/if} · max {#if runtimeNumber(e.runtime_metrics, e.runtime_metrics?.generation_tps?.max) !== null}{fmtTps(e.runtime_metrics?.generation_tps?.max ?? 0)}{:else}—{/if}</span>
+            {:else}<span class="dash">—</span>{/if}
+          </div>
+        </td>
+        <td class={cellClass("prefill_tps_current")}>
+          <div class="runtime-metric" title={runtimeTitle(e.runtime_metrics, "Incremental prefill throughput")}>
+            {#if e.prefill_tps_current !== null}
+              <span class="runtime-current">{fmtTps(e.prefill_tps_current)} tok/s</span>
+              <span class="runtime-summary">avg {#if runtimeNumber(e.runtime_metrics, e.runtime_metrics?.prefill_tps?.avg) !== null}{fmtTps(e.runtime_metrics?.prefill_tps?.avg ?? 0)}{:else}—{/if} · max {#if runtimeNumber(e.runtime_metrics, e.runtime_metrics?.prefill_tps?.max) !== null}{fmtTps(e.runtime_metrics?.prefill_tps?.max ?? 0)}{:else}—{/if}</span>
+            {:else}<span class="dash">—</span>{/if}
+          </div>
+        </td>
+        <td class={cellClass("cache_hit_percent_current")}>
+          <div class="runtime-metric" title={runtimeTitle(e.runtime_metrics, "Prompt-cache hit rate")}>
+            {#if e.cache_hit_percent_current !== null}
+              <span class="runtime-current">{fmtPct(e.cache_hit_percent_current)}</span>
+              <span class="runtime-summary">avg {#if runtimeNumber(e.runtime_metrics, e.runtime_metrics?.cache_hit_percent?.avg) !== null}{fmtPct(e.runtime_metrics?.cache_hit_percent?.avg ?? 0)}{:else}—{/if}</span>
+            {:else}<span class="dash">—</span>{/if}
+          </div>
+        </td>
+        <td class={cellClass("kv_cache_usage_percent")}>
+          <div class="runtime-metric" title={runtimeTitle(e.runtime_metrics, "KV-cache utilisation")}>
+            {#if e.kv_cache_usage_percent !== null}<span class="runtime-current">{fmtPct(e.kv_cache_usage_percent)}</span>{:else}<span class="dash">—</span>{/if}
+          </div>
+        </td>
+        <td class={cellClass("model_count")}>{#if e.model_count === 0}<span class="dash">0</span>{:else}{e.model_count}{/if}</td>
         <td class={cellClass('request_count')}>{e.request_count?.toLocaleString('en-AU') ?? 0}</td>
         <td class={cellClass('active_connections')}>{#if e.active_connections > 0}{e.active_connections}{:else}<span class="dash">0</span>{/if}</td>
         <td class="url-cell" title={e.url}>{e.url || '—'}</td>

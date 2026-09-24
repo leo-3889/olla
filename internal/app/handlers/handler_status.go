@@ -78,19 +78,20 @@ type ProxySummary struct {
 }
 
 type EndpointResponse struct {
-	AvgLatencyMs  *int64                 `json:"avg_latency_ms,omitempty"`
-	NextCheckAt   *time.Time             `json:"next_check_at,omitempty"`
-	HealthCheckAt *time.Time             `json:"health_check_at,omitempty"`
-	Models        EndpointModelsResponse `json:"models"`
-	Name          string                 `json:"name"`
-	Status        string                 `json:"status"`
-	SuccessRate   string                 `json:"success_rate"`
-	AvgLatency    string                 `json:"avg_latency"`
-	Traffic       string                 `json:"traffic"`
-	LastCheck     string                 `json:"last_check"`
-	NextCheck     string                 `json:"next_check"`
-	Issues        string                 `json:"issues"`
-	URL           string                 `json:"url"`
+	RuntimeMetrics *EndpointRuntimeMetrics `json:"runtime_metrics,omitempty"`
+	AvgLatencyMs   *int64                  `json:"avg_latency_ms,omitempty"`
+	NextCheckAt    *time.Time              `json:"next_check_at,omitempty"`
+	HealthCheckAt  *time.Time              `json:"health_check_at,omitempty"`
+	Models         EndpointModelsResponse  `json:"models"`
+	Name           string                  `json:"name"`
+	Status         string                  `json:"status"`
+	SuccessRate    string                  `json:"success_rate"`
+	AvgLatency     string                  `json:"avg_latency"`
+	Traffic        string                  `json:"traffic"`
+	LastCheck      string                  `json:"last_check"`
+	NextCheck      string                  `json:"next_check"`
+	Issues         string                  `json:"issues"`
+	URL            string                  `json:"url"`
 	// ID is a stable, opaque identifier derived from the SANITISED endpoint
 	// URL via buildEndpointIDs; see handler_status_endpoints.go.
 	ID          string `json:"id"`
@@ -359,6 +360,12 @@ func (a *Application) buildUnifiedEndpoints(all []*domain.Endpoint, statsMap map
 		}
 
 		endpoints[i] = EndpointResponse{
+			RuntimeMetrics: func() *EndpointRuntimeMetrics {
+				if a.runtimeMetrics == nil {
+					return nil
+				}
+				return a.runtimeMetrics.Snapshot(endpoint)
+			}(),
 			Name:        endpoint.Name,
 			Status:      endpoint.Status.String(),
 			Priority:    endpoint.Priority,
@@ -696,6 +703,12 @@ func hashEndpointResponse(h hash.Hash, ep *EndpointResponse) {
 	hashEtagInt64(h, ep.MinLatencyMs)
 	hashEtagInt64(h, ep.MaxLatencyMs)
 	hashEtagInt64Ptr(h, ep.AvgLatencyMs)
+	if ep.RuntimeMetrics != nil {
+		encoded, err := json.Marshal(ep.RuntimeMetrics)
+		if err == nil {
+			hashEtagString(h, string(encoded))
+		}
+	}
 	hashEtagTime(h, ep.Models.LastUpdated)
 	hashEtagInt64(h, ep.Models.Count)
 }

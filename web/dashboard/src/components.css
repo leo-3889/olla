@@ -187,8 +187,6 @@
 /* MAIN */
 main {
   padding: var(--space-4);
-  max-width: 1680px;
-  margin: 0 auto;
 }
 .panel {
   display: none;
@@ -379,7 +377,7 @@ main {
 table {
   border-collapse: collapse;
   width: 100%;
-  min-width: 860px;
+  min-width: 1180px;
   font-size: 0.78rem;
 }
 thead th {
@@ -404,7 +402,8 @@ td.align-right {
 }
 td.align-right > .pct-cell,
 td.align-right > .range-wrap,
-td.align-right > .endpoint-pills {
+td.align-right > .endpoint-pills,
+td.align-right > .runtime-metric {
   margin-left: auto;
 }
 .sort-btn {
@@ -577,6 +576,25 @@ tbody tr:hover .col-sticky {
 }
 .range-labels .peak {
   color: var(--text-faint);
+}
+
+/* Backend-native endpoint telemetry. */
+.runtime-metric {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  min-width: 92px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.runtime-current {
+  color: var(--text);
+  font-weight: 700;
+}
+.runtime-summary {
+  color: var(--text-faint);
+  font-size: 0.66rem;
+  margin-top: 2px;
 }
 
 /* PCT BAR */

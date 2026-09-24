@@ -10,11 +10,11 @@ import (
 	"github.com/thushan/olla/internal/adapter/converter"
 	"github.com/thushan/olla/internal/adapter/inspector"
 	"github.com/thushan/olla/internal/adapter/registry"
-	"github.com/thushan/olla/internal/app/handlers/health"
 	"github.com/thushan/olla/internal/adapter/registry/profile"
 	"github.com/thushan/olla/internal/adapter/security"
 	"github.com/thushan/olla/internal/adapter/translator"
 	"github.com/thushan/olla/internal/adapter/translator/anthropic"
+	"github.com/thushan/olla/internal/app/handlers/health"
 	"github.com/thushan/olla/internal/app/middleware"
 	"github.com/thushan/olla/internal/config"
 	"github.com/thushan/olla/internal/core/domain"
@@ -113,13 +113,18 @@ type Application struct {
 	// closure so the handler layer does not need to import the balancer package.
 	stickyStatsFn func() *balancer.StickyStats
 	aliasResolver *registry.AliasResolver
+	// runtimeMetrics periodically samples the allow-listed Prometheus endpoint
+	// exposed by supported local inference engines. It deliberately lives at the
+	// handler boundary: dashboard and Prometheus callers share one cached view,
+	// and no browser ever needs network access to a backend directly.
+	runtimeMetrics *endpointRuntimeMetricsSampler
 	// evaluator computes the overall system status for /internal/status. It is
 	// built from the health config (host or model mode) so the handler stays a
 	// thin dispatcher over the verdict.
-	evaluator   health.Evaluator
-	server      *http.Server
-	errCh       chan error
-	StartTime   time.Time
+	evaluator health.Evaluator
+	server    *http.Server
+	errCh     chan error
+	StartTime time.Time
 }
 
 // NewApplication creates a new Application instance with all required dependencies
@@ -207,7 +212,7 @@ func NewApplication(
 	// The Factory.GetAnthropicSupport method provides the required functionality
 	profileLookup := profileFactory
 
-	return &Application{
+	app := &Application{
 		Config:             cfg,
 		logger:             logger,
 		proxyService:       proxyService,
@@ -227,7 +232,10 @@ func NewApplication(
 		server:             server,
 		errCh:              make(chan error, 1),
 		StartTime:          time.Now(),
-	}, nil
+	}
+	app.runtimeMetrics = newEndpointRuntimeMetricsSampler(repository, logger)
+	app.runtimeMetrics.Start(ctx)
+	return app, nil
 }
 
 // GetRouteRegistry returns the route registry for wiring up routes

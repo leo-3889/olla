@@ -206,3 +206,54 @@ describe('EndpointsPanel banner isolation from panel dim', () => {
     expect(banner!.parentElement).toBe(panel);
   });
 });
+
+
+describe("EndpointsPanel runtime metrics", () => {
+  it("renders fresh current/avg/max values and hides stale or unsupported values", async () => {
+    component = mount(EndpointsPanel, { target: document.body });
+    flushSync();
+
+    await refreshWithEndpoint({
+      name: "runtime-node",
+      type: "vllm",
+      status: "healthy",
+      priority: 100,
+      success_rate: "99.0%",
+      request_count: 40,
+      model_count: 1,
+      min_latency_ms: 10,
+      max_latency_ms: 90,
+      runtime_metrics: {
+        sampled_at: "2026-09-24T20:00:00Z",
+        available_since: "2026-09-24T14:32:10Z",
+        generation_tps: { current: 70.06, avg: 62, max: 91 },
+        prefill_tps: { current: 502, avg: 440, max: 690 },
+        cache_hit_percent: { current: 98.1, avg: 96.8 },
+        kv_cache_usage_percent: 37,
+      },
+    });
+
+    expect([...document.querySelectorAll(".runtime-current")].map((el) => el.textContent!.trim())).toEqual([
+      "70.1 tok/s", "502 tok/s", "98.1%", "37.0%",
+    ]);
+    expect([...document.querySelectorAll(".runtime-summary")].map((el) => el.textContent!.trim())).toEqual([
+      "avg 62 · max 91", "avg 440 · max 690", "avg 96.8%",
+    ]);
+    expect(document.querySelector(".runtime-metric")!.getAttribute("title")).toContain("avg/max over last 10m");
+
+    await refreshWithEndpoint({
+      name: "runtime-node-stale",
+      type: "vllm",
+      status: "healthy",
+      priority: 100,
+      success_rate: "99.0%",
+      request_count: 40,
+      model_count: 1,
+      min_latency_ms: 10,
+      max_latency_ms: 90,
+      runtime_metrics: { stale: true, sampled_at: "2026-09-24T20:00:00Z", generation_tps: { current: 70.06 } },
+    });
+    expect([...document.querySelectorAll(".runtime-metric .dash")]).toHaveLength(4);
+    expect(document.querySelector(".runtime-metric")!.getAttribute("title")).toContain("stale");
+  });
+});

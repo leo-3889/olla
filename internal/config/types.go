@@ -297,6 +297,13 @@ type AuthConfig struct {
 }
 
 // EndpointConfig holds configuration for an AI inference endpoint
+type RuntimeMetricsConfig struct {
+	Enabled  bool          `yaml:"enabled"`
+	Interval time.Duration `yaml:"interval"`
+	Timeout  time.Duration `yaml:"timeout"`
+}
+
+// EndpointConfig holds configuration for an AI inference endpoint.
 type EndpointConfig struct {
 	ModelFilter *domain.FilterConfig `yaml:"model_filter,omitempty"`
 	Auth        *AuthConfig          `yaml:"auth,omitempty"`
@@ -304,15 +311,16 @@ type EndpointConfig struct {
 	// Priority uses a pointer so nil means "omitted in config" rather than explicitly zero.
 	// This lets applyEndpointDefaults distinguish "user set 0" from "user said nothing",
 	// since 0 is a valid, lower-than-default priority value.
-	Priority       *int          `yaml:"priority"`
-	URL            string        `yaml:"url"`
-	Name           string        `yaml:"name"`
-	Type           string        `yaml:"type"`
-	HealthCheckURL string        `yaml:"health_check_url"`
-	ModelURL       string        `yaml:"model_url"`
-	CheckInterval  time.Duration `yaml:"check_interval"`
-	CheckTimeout   time.Duration `yaml:"check_timeout"`
-	PreservePath   bool          `yaml:"preserve_path"`
+	Priority       *int                  `yaml:"priority"`
+	URL            string                `yaml:"url"`
+	Name           string                `yaml:"name"`
+	Type           string                `yaml:"type"`
+	HealthCheckURL string                `yaml:"health_check_url"`
+	ModelURL       string                `yaml:"model_url"`
+	CheckInterval  time.Duration         `yaml:"check_interval"`
+	CheckTimeout   time.Duration         `yaml:"check_timeout"`
+	RuntimeMetrics *RuntimeMetricsConfig `yaml:"runtime_metrics,omitempty"`
+	PreservePath   bool                  `yaml:"preserve_path"`
 }
 
 // LoggingConfig holds logging configuration

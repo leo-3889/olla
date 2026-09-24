@@ -44,14 +44,17 @@ type Endpoint struct {
 	AuthHeaderName string `json:"-"`
 	// AuthHeaderValue is the fully composed header value (e.g. "Bearer tok", "Basic base64(...)").
 	// Never serialised; leaking credentials through logs or status endpoints would be a security issue.
-	AuthHeaderValue     string `json:"-"`
-	LastLatency         time.Duration
-	CheckInterval       time.Duration
-	CheckTimeout        time.Duration
-	Priority            int
-	ConsecutiveFailures int
-	BackoffMultiplier   int
-	PreservePath        bool
+	AuthHeaderValue        string `json:"-"`
+	LastLatency            time.Duration
+	CheckInterval          time.Duration
+	CheckTimeout           time.Duration
+	Priority               int
+	ConsecutiveFailures    int
+	BackoffMultiplier      int
+	RuntimeMetricsEnabled  bool
+	RuntimeMetricsInterval time.Duration
+	RuntimeMetricsTimeout  time.Duration
+	PreservePath           bool
 }
 
 func (e *Endpoint) GetURLString() string {

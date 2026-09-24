@@ -99,6 +99,10 @@ func (r *StaticEndpointRepository) GetRoutable(ctx context.Context) ([]*domain.E
 	return routable, nil
 }
 
+// UpdateEndpoint refreshes only health-checker-owned runtime state
+// (status, latency, backoff). It intentionally does NOT propagate
+// config-derived fields (RuntimeMetrics*, priority, tags): config changes
+// flow exclusively through LoadFromConfig, which rebuilds the endpoint set.
 func (r *StaticEndpointRepository) UpdateEndpoint(ctx context.Context, endpoint *domain.Endpoint) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -185,23 +189,26 @@ func (r *StaticEndpointRepository) LoadFromConfig(ctx context.Context, configs [
 		}
 
 		newEndpoint := &domain.Endpoint{
-			Name:                  cfg.Name,
-			URL:                   endpointURL,
-			Type:                  cfg.Type,
-			Priority:              *cfg.Priority,
-			HealthCheckURL:        healthCheckURL,
-			ModelUrl:              modelURL,
-			ModelFilter:           cfg.ModelFilter,
-			CheckInterval:         cfg.CheckInterval,
-			CheckTimeout:          cfg.CheckTimeout,
-			Status:                domain.StatusUnknown,
-			URLString:             urlString,
-			HealthCheckPathString: healthCheckPath,
-			HealthCheckURLString:  healthCheckURLString,
-			ModelURLString:        modelURLString,
-			BackoffMultiplier:     1,
-			NextCheckTime:         now,
-			PreservePath:          cfg.PreservePath,
+			Name:                   cfg.Name,
+			URL:                    endpointURL,
+			Type:                   cfg.Type,
+			Priority:               *cfg.Priority,
+			HealthCheckURL:         healthCheckURL,
+			ModelUrl:               modelURL,
+			ModelFilter:            cfg.ModelFilter,
+			CheckInterval:          cfg.CheckInterval,
+			CheckTimeout:           cfg.CheckTimeout,
+			Status:                 domain.StatusUnknown,
+			URLString:              urlString,
+			HealthCheckPathString:  healthCheckPath,
+			HealthCheckURLString:   healthCheckURLString,
+			ModelURLString:         modelURLString,
+			BackoffMultiplier:      1,
+			NextCheckTime:          now,
+			RuntimeMetricsEnabled:  cfg.RuntimeMetrics != nil && cfg.RuntimeMetrics.Enabled,
+			PreservePath:           cfg.PreservePath,
+			RuntimeMetricsInterval: runtimeMetricsInterval(cfg.RuntimeMetrics),
+			RuntimeMetricsTimeout:  runtimeMetricsTimeout(cfg.RuntimeMetrics),
 		}
 
 		if cfg.Auth != nil {
@@ -283,6 +290,19 @@ func (r *StaticEndpointRepository) applyProfileDefaults(endpointType, healthChec
 // so that omitting them in YAML config is equivalent to specifying the defaults.
 // Priority is a pointer so we can distinguish "omitted" (nil) from "explicitly 0",
 // which is a valid lower-than-default value.
+func runtimeMetricsInterval(cfg *config.RuntimeMetricsConfig) time.Duration {
+	if cfg == nil {
+		return 0
+	}
+	return cfg.Interval
+}
+func runtimeMetricsTimeout(cfg *config.RuntimeMetricsConfig) time.Duration {
+	if cfg == nil {
+		return 0
+	}
+	return cfg.Timeout
+}
+
 func applyEndpointDefaults(cfg *config.EndpointConfig) {
 	if cfg.CheckInterval == 0 {
 		cfg.CheckInterval = DefaultCheckInterval

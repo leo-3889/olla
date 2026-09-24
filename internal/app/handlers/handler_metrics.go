@@ -39,11 +39,11 @@ func (a *Application) metricsHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set(constants.HeaderContentType, constants.ContentTypePrometheus)
 	w.WriteHeader(http.StatusOK)
-	writePrometheusMetrics(w, response, snapshot, a.Config.Proxy, time.Since(a.StartTime), summary, modelStats, modelEndpointStats)
+	writePrometheusMetrics(w, response, snapshot, a.Config.Proxy, time.Since(a.StartTime), summary, modelStats, modelEndpointStats, a.runtimeMetrics)
 }
 
 func writePrometheusMetrics(w http.ResponseWriter, response StatusResponse, snapshot *statusSnapshot, proxyConfig config.ProxyConfig, uptime time.Duration,
-	summary ModelStatsSummary, modelStats map[string]ports.ModelStats, modelEndpointStats map[string]map[string]ports.EndpointModelStats) {
+	summary ModelStatsSummary, modelStats map[string]ports.ModelStats, modelEndpointStats map[string]map[string]ports.EndpointModelStats, runtimeMetrics *endpointRuntimeMetricsSampler) {
 	var b strings.Builder
 
 	writePrometheusHelpType(&b, "olla_info", "gauge", "Olla build and proxy configuration")
@@ -101,6 +101,9 @@ func writePrometheusMetrics(w http.ResponseWriter, response StatusResponse, snap
 	writePrometheusGauge(&b, "olla_security_status", securityStatusValue(response.Security.Status))
 
 	writeEndpointPrometheusMetrics(&b, snapshot.all, snapshot.endpointStats, snapshot.connectionStats, snapshot.endpointModels)
+	if runtimeMetrics != nil {
+		writeEndpointRuntimePrometheusMetrics(&b, snapshot.all, runtimeMetrics)
+	}
 	writeModelPrometheusMetrics(&b, summary, modelStats, modelEndpointStats)
 
 	_, _ = w.Write([]byte(b.String()))

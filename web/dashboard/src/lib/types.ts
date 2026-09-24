@@ -127,6 +127,35 @@ export interface EndpointSummary {
   min_latency_ms: number;
   max_latency_ms: number;
   active_connections: number;
+  // Optional backend-native runtime telemetry. Older Olla versions and
+  // backends without a supported metrics adapter omit this object entirely;
+  // individual measurements may also be absent when a backend cannot supply
+  // them. `current` is the latest sample; `avg`/`max` cover the 10-minute
+  // reporting window. `stale` means Olla retained a previous scrape after the
+  // collector stopped receiving fresh data, so the UI must not present its
+  // values as live measurements.
+  runtime_metrics?: EndpointRuntimeMetrics;
+}
+
+export interface EndpointRuntimeRate {
+  current?: number;
+  avg?: number;
+  max?: number;
+}
+
+export interface EndpointRuntimePercentage {
+  current?: number;
+  avg?: number;
+}
+
+export interface EndpointRuntimeMetrics {
+  sampled_at?: string;
+  available_since?: string;
+  stale?: boolean;
+  generation_tps?: EndpointRuntimeRate;
+  prefill_tps?: EndpointRuntimeRate;
+  cache_hit_percent?: EndpointRuntimePercentage;
+  kv_cache_usage_percent?: number;
 }
 
 export interface EndpointStatusResponse {

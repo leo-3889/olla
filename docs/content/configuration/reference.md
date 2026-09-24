@@ -310,6 +310,7 @@ discovery:
 | `static.endpoints[].model_url` | string | No | Model discovery path (optional, uses profile default if not specified) |
 | `static.endpoints[].check_interval` | duration | No | Health check interval (default: `5s`) |
 | `static.endpoints[].check_timeout` | duration | No | Health check timeout (default: `2s`) |
+| `static.endpoints[].runtime_metrics` | object | No | Opt-in server-side `/metrics` sampler (see below) |
 | `static.endpoints[].model_filter` | object | No | Model filtering for this endpoint |
 | `static.endpoints[].auth` | object | No | Outbound authentication credentials (see below) |
 | `static.endpoints[].headers` | map[string]string | No | Custom outbound headers applied on every forwarded request |
@@ -416,6 +417,48 @@ Filter models at the endpoint level during discovery. See [Filter Concepts](filt
 |-------|------|-------------|
 | `model_filter.include` | []string | Models to include (glob patterns) |
 | `model_filter.exclude` | []string | Models to exclude (glob patterns) |
+
+#### Endpoint Runtime Metrics (`runtime_metrics:`)
+
+Olla can sample each backend's Prometheus `/metrics` endpoint server-side and surface a compact, capability-aware runtime view (generation/prefill throughput, prompt-cache hit rate, KV-cache utilisation) beside the endpoint. The browser never contacts the backend metrics endpoint directly; Olla caches one snapshot per endpoint and shares it between the dashboard API and the Olla Prometheus output. The data is also included in `/internal/status`, `/internal/status/endpoints`, and `/internal/metrics`, and status ETags change when the metrics change.
+
+This is **opt-in and disabled by default**. Add a `runtime_metrics` block to an endpoint to enable it:
+
+```yaml
+discovery:
+  static:
+    endpoints:
+      - url: "http://vllm.local:8000"
+        name: "vllm-qwen38"
+        type: "vllm"
+        runtime_metrics:
+          enabled: true     # required to turn the sampler on for this endpoint
+          interval: 10s     # how often to scrape this endpoint (default: 10s)
+          timeout: 3s       # per-scrape HTTP timeout (default: 3s)
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `runtime_metrics.enabled` | bool | Turn the sampler on for this endpoint. When the whole `runtime_metrics` block is absent the sampler is disabled for the endpoint. |
+| `runtime_metrics.interval` | duration | How often to scrape the endpoint's `/metrics` (default: `10s`). |
+| `runtime_metrics.timeout` | duration | Per-scrape HTTP timeout (default: `3s`). |
+
+Scrapes inherit the endpoint's custom `headers` and resolved `auth` headers, so authenticated backends work without extra configuration.
+
+**Exposed signals.** Generation and incremental-prefill throughput report the current value (latest sample), the average over the 10-minute reporting window, and the maximum within that window. Cache hit reports the current value and the window average. KV-cache usage is current-only. Signals the backend does not publish are omitted (rendered as `—` in the dashboard and absent from Prometheus).
+
+**Stale-data policy.** A failed scrape marks the last good snapshot *stale* and keeps its timestamp; the stale snapshot is retained for as long as the endpoint remains healthy. In the dashboard, stale values render as `—` with a tooltip carrying the last sample time, rather than displaying the last known numbers. An *availability epoch* restarts when the endpoint becomes unavailable or when the backend's counters reset, which clears the reporting window so averages never mix data across a restart.
+
+**Supported backends and metric mappings.** Only vLLM and Halogen/llama.cpp endpoints are sampled today. The sampler reads the backend's Prometheus exposition at `<endpoint>/metrics` and maps counters as follows:
+
+| Signal | vLLM | Halogen / llama.cpp |
+|--------|------|---------------------|
+| Generation throughput | `vllm:generation_tokens_total` / `vllm:request_decode_time_seconds_sum` | `llamacpp:tokens_predicted_total` / `llamacpp:tokens_predicted_seconds_total` |
+| Prefill throughput | `vllm:request_prefill_kv_computed_tokens_sum` / `vllm:request_prefill_time_seconds_sum` | `llamacpp:prompt_tokens_total` / `llamacpp:prompt_seconds_total` |
+| Cache hit | `vllm:prefix_cache_hits_total` / `vllm:prefix_cache_queries_total` | `halogen:prompt_tokens_cached_total` / (`halogen:prompt_tokens_cached_total` + `llamacpp:prompt_tokens_total`) |
+| KV-cache usage | `vllm:kv_cache_usage_ratio` (or `vllm:kv_cache_usage_perc` / `vllm:gpu_cache_usage_perc`) | `llamacpp:kv_cache_usage_ratio` |
+
+Throughput and cache-hit rates require counter movement between two samples, so the first sample after enabling (or after an availability-epoch reset) provides only the current KV-cache usage.
 
 #### Path Preservation
 

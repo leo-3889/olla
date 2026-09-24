@@ -12,7 +12,7 @@
 # go:embed picks it up at compile time in stage 1.
 
 # ---- Stage 1: compile -------------------------------------------------------
-FROM golang:1.24 AS build
+FROM golang:1.24.13-bookworm AS build
 # CGO_ENABLED=0 is required: the golang image is glibc-based, but the runtime
 # stage is alpine (musl). A cgo build would link against glibc and fail to
 # exec on alpine. The repo's own docker build sets this for the same reason.
