@@ -156,6 +156,18 @@ export interface EndpointRuntimeMetrics {
   prefill_tps?: EndpointRuntimeRate;
   cache_hit_percent?: EndpointRuntimePercentage;
   kv_cache_usage_percent?: number;
+  // Scheduler backlog: requests waiting for a slot. Saturation signal - on an
+  // engine pinned near its memory ceiling the queue grows before throughput
+  // moves. Plain gauge, so no avg/max window; absent means the backend does
+  // not report a queue at all.
+  queue_depth?: number | null;
+  // Requests executing right now, i.e. the concurrency the batch-aggregate
+  // throughput figures are summed over. Same availability caveat as queue_depth.
+  requests_running?: number | null;
+  // Speculative-decode draft acceptance: how much of the draft model's output
+  // the target model kept. It qualifies generation_tps rather than standing on
+  // its own, so the UI surfaces it on the generation cell, not as a column.
+  spec_accept_percent?: EndpointRuntimePercentage;
 }
 
 export interface EndpointStatusResponse {

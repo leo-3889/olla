@@ -343,6 +343,10 @@ func hashEndpointStatusResponse(resp *EndpointStatusResponse) string {
 //     defeating the point of caching.
 //   - LastModelSyncAt: same problem, tied to the periodic model-list sync
 //     rather than an actual model-list change.
+//   - RuntimeMetrics SampledAt/AvailableSince: they advance on every sampler
+//     scrape even when every rendered value is unchanged, churning the ETag
+//     on an idle opted-in endpoint; hashEndpointRuntimeMetrics feeds only the
+//     values and the stale flag.
 //
 // ResponseTime is kept: it renders from endpoint.LastLatency, an absolute
 // measurement that only changes when a real request completes, not the wall
@@ -362,12 +366,7 @@ func hashEndpointSummary(h hash.Hash, s *EndpointSummary) {
 	hashEtagInt64(h, s.MinLatencyMs)
 	hashEtagInt64(h, s.MaxLatencyMs)
 	hashEtagInt64(h, s.ActiveConnections)
-	if s.RuntimeMetrics != nil {
-		encoded, err := json.Marshal(s.RuntimeMetrics)
-		if err == nil {
-			hashEtagString(h, string(encoded))
-		}
-	}
+	hashEndpointRuntimeMetrics(h, s.RuntimeMetrics)
 	hashEtagInt64Ptr(h, s.AvgLatencyMs)
 }
 

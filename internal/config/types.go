@@ -296,11 +296,20 @@ type AuthConfig struct {
 	Type         string `yaml:"type,omitempty"`
 }
 
-// EndpointConfig holds configuration for an AI inference endpoint
+// RuntimeMetricsConfig opts an endpoint into Prometheus exposition sampling
+// of its own inference engine.
 type RuntimeMetricsConfig struct {
 	Enabled  bool          `yaml:"enabled"`
 	Interval time.Duration `yaml:"interval"`
 	Timeout  time.Duration `yaml:"timeout"`
+	// Kind pins the metric dialect ("vllm", "llamacpp", "radiance") for
+	// endpoints whose type alone does not identify it, e.g. a radiance
+	// backend registered as openai-compatible. Omit to auto-detect.
+	Kind string `yaml:"kind,omitempty"`
+	// Path overrides the metrics scrape target path (default "/metrics").
+	// An absolute URL is honoured too, for engines serving metrics on a
+	// separate port.
+	Path string `yaml:"path,omitempty"`
 }
 
 // EndpointConfig holds configuration for an AI inference endpoint.

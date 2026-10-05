@@ -54,7 +54,14 @@ type Endpoint struct {
 	RuntimeMetricsEnabled  bool
 	RuntimeMetricsInterval time.Duration
 	RuntimeMetricsTimeout  time.Duration
-	PreservePath           bool
+	// RuntimeMetricsKind pins the Prometheus metric dialect ("vllm",
+	// "llamacpp", "radiance") when the endpoint type alone does not identify
+	// it; empty means detect from type and name.
+	RuntimeMetricsKind string
+	// RuntimeMetricsPath overrides the metrics scrape path (an absolute URL
+	// is honoured too); empty means "/metrics".
+	RuntimeMetricsPath string
+	PreservePath       bool
 }
 
 func (e *Endpoint) GetURLString() string {

@@ -687,7 +687,9 @@ func hashStatusResponse(resp *StatusResponse) string {
 // change on every poll; NextCheckAt/HealthCheckAt are skipped too - they
 // advance on every health-check tick (30s, see internal/adapter/health)
 // regardless of whether the endpoint's status actually changed, which
-// churned this ETag under zero traffic and defeated caching.
+// churned this ETag under zero traffic and defeated caching. The runtime
+// metrics contribution is hashed values-only for the same reason (see
+// hashEndpointRuntimeMetrics).
 func hashEndpointResponse(h hash.Hash, ep *EndpointResponse) {
 	hashEtagString(h, ep.ID)
 	hashEtagString(h, ep.Name)
@@ -703,12 +705,7 @@ func hashEndpointResponse(h hash.Hash, ep *EndpointResponse) {
 	hashEtagInt64(h, ep.MinLatencyMs)
 	hashEtagInt64(h, ep.MaxLatencyMs)
 	hashEtagInt64Ptr(h, ep.AvgLatencyMs)
-	if ep.RuntimeMetrics != nil {
-		encoded, err := json.Marshal(ep.RuntimeMetrics)
-		if err == nil {
-			hashEtagString(h, string(encoded))
-		}
-	}
+	hashEndpointRuntimeMetrics(h, ep.RuntimeMetrics)
 	hashEtagTime(h, ep.Models.LastUpdated)
 	hashEtagInt64(h, ep.Models.Count)
 }

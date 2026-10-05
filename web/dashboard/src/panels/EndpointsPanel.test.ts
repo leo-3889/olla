@@ -230,14 +230,17 @@ describe("EndpointsPanel runtime metrics", () => {
         prefill_tps: { current: 502, avg: 440, max: 690 },
         cache_hit_percent: { current: 98.1, avg: 96.8 },
         kv_cache_usage_percent: 37,
+        queue_depth: 6,
+        requests_running: 3,
+        spec_accept_percent: { current: 61.4, avg: 60.2 },
       },
     });
 
     expect([...document.querySelectorAll(".runtime-current")].map((el) => el.textContent!.trim())).toEqual([
-      "70.1 tok/s", "502 tok/s", "98.1%", "37.0%",
+      "70.1 tok/s", "502 tok/s", "98.1%", "37.0%", "6",
     ]);
     expect([...document.querySelectorAll(".runtime-summary")].map((el) => el.textContent!.trim())).toEqual([
-      "avg 62 · max 91", "avg 440 · max 690", "avg 96.8%",
+      "avg 62 · max 91", "avg 440 · max 690", "avg 96.8%", "3 running",
     ]);
     expect(document.querySelector(".runtime-metric")!.getAttribute("title")).toContain("avg/max over last 10m");
 
@@ -251,9 +254,176 @@ describe("EndpointsPanel runtime metrics", () => {
       model_count: 1,
       min_latency_ms: 10,
       max_latency_ms: 90,
-      runtime_metrics: { stale: true, sampled_at: "2026-09-24T20:00:00Z", generation_tps: { current: 70.06 } },
+      runtime_metrics: {
+        stale: true,
+        sampled_at: "2026-09-24T20:00:00Z",
+        generation_tps: { current: 70.06 },
+        queue_depth: 6,
+        requests_running: 3,
+        spec_accept_percent: { current: 61.4 },
+      },
     });
-    expect([...document.querySelectorAll(".runtime-metric .dash")]).toHaveLength(4);
+    expect([...document.querySelectorAll(".runtime-metric .dash")]).toHaveLength(5);
     expect(document.querySelector(".runtime-metric")!.getAttribute("title")).toContain("stale");
+  });
+});
+
+
+describe("EndpointsPanel queue column and radiance rate caveats", () => {
+  // Radiance reports engine-wide batch throughput and a scheduler queue; halogen
+  // reports neither. The queue column therefore has to degrade to the same
+  // "unsupported" em-dash as the other telemetry columns, and the rate cells
+  // have to warn before an operator reads a batch figure as a per-stream speed.
+  const BATCH_NOTE = "Engine throughput (batch-aggregate across concurrent requests), not per-stream speed";
+
+  // Cells in column order: Gen, Prefill, Cache hit, KV used, Queue.
+  function cell(index: number): { text: string; title: string } {
+    const el = document.querySelectorAll(".runtime-metric")[index]!;
+    return {
+      text: el.textContent!.replace(/\s+/g, " ").trim(),
+      title: el.getAttribute("title") ?? "",
+    };
+  }
+
+  const base = {
+    status: "healthy",
+    priority: 100,
+    success_rate: "99.0%",
+    request_count: 40,
+    model_count: 1,
+    min_latency_ms: 10,
+    max_latency_ms: 90,
+  };
+
+  it("shows queue depth with its running sub-line and folds spec acceptance into the Gen tooltip", async () => {
+    component = mount(EndpointsPanel, { target: document.body });
+    flushSync();
+
+    await refreshWithEndpoint({
+      ...base,
+      name: "radiance-qfn",
+      type: "radiance",
+      runtime_metrics: {
+        sampled_at: "2026-10-05T09:00:00Z",
+        available_since: "2026-10-05T08:00:00Z",
+        generation_tps: { current: 288.4 },
+        prefill_tps: { current: 1904 },
+        kv_cache_usage_percent: 96.5,
+        queue_depth: 8,
+        requests_running: 7,
+        spec_accept_percent: { current: 55.3, avg: 54.1 },
+      },
+    });
+
+    expect(cell(4).text).toBe("8 7 running");
+    expect(cell(4).title).toContain("Queue depth");
+    expect(cell(4).title).toContain("sampled 2026-10-05T09:00:00Z");
+
+    // The batch caveat belongs on both rate cells; the acceptance figure only
+    // explains generation, so it never rides on prefill or the other columns.
+    expect(cell(0).title).toContain(BATCH_NOTE);
+    expect(cell(0).title).toContain("Speculative decode acceptance: 55.3% (avg 54.1)");
+    expect(cell(1).title).toContain(BATCH_NOTE);
+    expect(cell(1).title).not.toContain("Speculative decode");
+    expect(cell(2).title).not.toContain(BATCH_NOTE);
+    expect(cell(3).title).not.toContain(BATCH_NOTE);
+  });
+
+  it("drops the average from the acceptance tooltip when the engine reports a gauge only", async () => {
+    component = mount(EndpointsPanel, { target: document.body });
+    flushSync();
+
+    await refreshWithEndpoint({
+      ...base,
+      name: "radiance-gauge",
+      type: "radiance",
+      runtime_metrics: {
+        sampled_at: "2026-10-05T09:00:00Z",
+        generation_tps: { current: 300 },
+        spec_accept_percent: { current: 55.3 },
+      },
+    });
+
+    expect(cell(0).title).toContain("Speculative decode acceptance: 55.3%");
+    expect(cell(0).title).not.toContain("(avg");
+  });
+
+  it("keeps the batch caveat without an acceptance figure the engine never emitted", async () => {
+    component = mount(EndpointsPanel, { target: document.body });
+    flushSync();
+
+    await refreshWithEndpoint({
+      ...base,
+      name: "radiance-no-spec",
+      type: "radiance",
+      runtime_metrics: {
+        sampled_at: "2026-10-05T09:00:00Z",
+        generation_tps: { current: 300 },
+        queue_depth: 0,
+      },
+    });
+
+    expect(cell(0).title).toContain(BATCH_NOTE);
+    expect(cell(0).title).not.toContain("Speculative decode");
+    // A genuine zero backlog stays visible rather than collapsing to a dash.
+    expect(cell(4).text).toBe("0 — running");
+  });
+
+  it("dashes the queue column for a backend whose metrics carry no queue gauge", async () => {
+    component = mount(EndpointsPanel, { target: document.body });
+    flushSync();
+
+    await refreshWithEndpoint({
+      ...base,
+      name: "halogen-395",
+      type: "vllm",
+      runtime_metrics: {
+        sampled_at: "2026-10-05T09:00:00Z",
+        available_since: "2026-10-05T08:00:00Z",
+        generation_tps: { current: 47.2, avg: 44, max: 51 },
+        cache_hit_percent: { current: 99.6, avg: 98.4 },
+      },
+    });
+
+    expect(cell(4).text).toBe("—");
+    expect(cell(4).title).toBe("Queue depth: unsupported by this backend");
+    // A single-stream backend must not inherit the batch caveat either.
+    expect(cell(0).title).not.toContain(BATCH_NOTE);
+    expect(cell(0).title).not.toContain("Speculative decode");
+  });
+
+  it("dashes the queue column when the backend reports no runtime metrics at all", async () => {
+    component = mount(EndpointsPanel, { target: document.body });
+    flushSync();
+
+    await refreshWithEndpoint({ ...base, name: "ollama-1", type: "ollama" });
+
+    expect(cell(4).text).toBe("—");
+    expect(cell(4).title).toBe("Queue depth: unsupported by this backend");
+  });
+
+  it("hides queue depth and acceptance while the scrape is stale", async () => {
+    component = mount(EndpointsPanel, { target: document.body });
+    flushSync();
+
+    await refreshWithEndpoint({
+      ...base,
+      name: "radiance-stale",
+      type: "radiance",
+      runtime_metrics: {
+        stale: true,
+        sampled_at: "2026-10-05T08:55:00Z",
+        generation_tps: { current: 288.4 },
+        queue_depth: 8,
+        requests_running: 7,
+        spec_accept_percent: { current: 55.3, avg: 54.1 },
+      },
+    });
+
+    expect(cell(4).text).toBe("—");
+    expect(cell(4).title).toContain("stale (last sampled 2026-10-05T08:55:00Z)");
+    // Frozen figures are never presented as live measurements.
+    expect(cell(0).title).toContain("stale");
+    expect(cell(0).title).not.toContain("Speculative decode");
   });
 });

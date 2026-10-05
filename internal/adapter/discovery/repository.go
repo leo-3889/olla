@@ -209,6 +209,8 @@ func (r *StaticEndpointRepository) LoadFromConfig(ctx context.Context, configs [
 			PreservePath:           cfg.PreservePath,
 			RuntimeMetricsInterval: runtimeMetricsInterval(cfg.RuntimeMetrics),
 			RuntimeMetricsTimeout:  runtimeMetricsTimeout(cfg.RuntimeMetrics),
+			RuntimeMetricsKind:     runtimeMetricsKind(cfg.RuntimeMetrics),
+			RuntimeMetricsPath:     runtimeMetricsPath(cfg.RuntimeMetrics),
 		}
 
 		if cfg.Auth != nil {
@@ -301,6 +303,18 @@ func runtimeMetricsTimeout(cfg *config.RuntimeMetricsConfig) time.Duration {
 		return 0
 	}
 	return cfg.Timeout
+}
+func runtimeMetricsKind(cfg *config.RuntimeMetricsConfig) string {
+	if cfg == nil {
+		return ""
+	}
+	return cfg.Kind
+}
+func runtimeMetricsPath(cfg *config.RuntimeMetricsConfig) string {
+	if cfg == nil {
+		return ""
+	}
+	return cfg.Path
 }
 
 func applyEndpointDefaults(cfg *config.EndpointConfig) {

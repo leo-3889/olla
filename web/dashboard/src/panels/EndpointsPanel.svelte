@@ -24,6 +24,8 @@
     prefill_tps_current: number | null;
     cache_hit_percent_current: number | null;
     kv_cache_usage_percent: number | null;
+    queue_depth_current: number | null;
+    requests_running_current: number | null;
   };
 
   const data = $derived(endpoints.data?.endpoints ?? []);
@@ -59,6 +61,8 @@
       prefill_tps_current: runtimeNumber(e.runtime_metrics, e.runtime_metrics?.prefill_tps?.current),
       cache_hit_percent_current: runtimeNumber(e.runtime_metrics, e.runtime_metrics?.cache_hit_percent?.current),
       kv_cache_usage_percent: runtimeNumber(e.runtime_metrics, e.runtime_metrics?.kv_cache_usage_percent),
+      queue_depth_current: runtimeNumber(e.runtime_metrics, e.runtime_metrics?.queue_depth),
+      requests_running_current: runtimeNumber(e.runtime_metrics, e.runtime_metrics?.requests_running),
     }))
   );
 
@@ -84,6 +88,7 @@
     { key: 'prefill_tps_current', label: 'Prefill tok/s', sortable: true, num: true, align: 'right', title: 'Backend-reported incremental prefill throughput: current, then average and maximum since available' },
     { key: 'cache_hit_percent_current', label: 'Cache hit', sortable: true, num: true, align: 'right', title: 'Backend-reported prompt-cache hit rate: current and average since available' },
     { key: 'kv_cache_usage_percent', label: 'KV used', sortable: true, num: true, align: 'right', title: 'Current backend KV-cache capacity utilisation' },
+    { key: 'queue_depth_current', label: 'Queue', sortable: true, num: true, align: 'right', title: 'Backend-reported scheduler backlog: requests waiting, then requests running concurrently' },
     { key: 'model_count', label: 'Models', sortable: true, num: true, align: 'right' },
     { key: 'request_count', label: 'Requests', sortable: true, num: true, align: 'right' },
     { key: 'active_connections', label: 'Conn', sortable: true, num: true, align: 'right' },
@@ -130,15 +135,54 @@
     return value;
   }
 
-  function fmtTps(value: number): string {
+  function fmtNum(value: number): string {
     return value.toLocaleString("en-AU", { maximumFractionDigits: 1 });
   }
 
-  function runtimeTitle(metrics: EndpointRuntimeMetrics | undefined, label: string): string {
+  // `caveat` qualifies what the numbers cover: windowed rates average/max over
+  // the reporting window, gauges only ever carry the latest scrape.
+  function runtimeTitle(metrics: EndpointRuntimeMetrics | undefined, label: string, caveat = "avg/max over last 10m"): string {
     if (!metrics) return label + ": unsupported by this backend";
     if (metrics.stale) return metrics.sampled_at ? label + ": stale (last sampled " + metrics.sampled_at + ")" : label + ": stale";
     const sampled = metrics.sampled_at ? ": sampled " + metrics.sampled_at : "";
-    return label + sampled + "; avg/max over last 10m";
+    return label + sampled + "; " + caveat;
+  }
+
+  // A present metrics object does not mean the backend reports every signal -
+  // an engine with no scheduler queue exposes no queue gauge - so a fresh
+  // absent field is unsupported for THIS measurement, not sampled. Stale stays
+  // owned by runtimeTitle so the last scrape time still surfaces.
+  function fieldTitle(metrics: EndpointRuntimeMetrics | undefined, label: string, value: number | null): string {
+    if (metrics && !metrics.stale && value === null) return label + ": unsupported by this backend";
+    return runtimeTitle(metrics, label, "current gauge, latest scrape only");
+  }
+
+  // Radiance throughput is engine-wide: every concurrent stream in the batch
+  // is summed, while a single-stream backend reports its own rate. Side by side
+  // the two read as a head-to-head race, so the rate cells qualify themselves.
+  const BATCH_NOTE = "Engine throughput (batch-aggregate across concurrent requests), not per-stream speed";
+
+  // Speculative-decode acceptance explains WHY generation is high (a draft
+  // model did part of the work), so it rides on the generation tooltip instead
+  // of costing the table another column.
+  function specAcceptTitle(metrics: EndpointRuntimeMetrics | undefined): string | null {
+    const current = runtimeNumber(metrics, metrics?.spec_accept_percent?.current);
+    if (current === null) return null;
+    const avg = runtimeNumber(metrics, metrics?.spec_accept_percent?.avg);
+    return "Speculative decode acceptance: " + fmtPct(current) + (avg !== null ? " (avg " + fmtNum(avg) + ")" : "");
+  }
+
+  function rateTitle(row: EndpointRow, label: string, withSpecAccept = false): string {
+    const metrics = row.runtime_metrics;
+    const parts = [runtimeTitle(metrics, label)];
+    if (row.type === "radiance") {
+      parts.push(BATCH_NOTE);
+      if (withSpecAccept) {
+        const spec = specAcceptTitle(metrics);
+        if (spec) parts.push(spec);
+      }
+    }
+    return parts.join("; ");
   }
 </script>
 
@@ -195,18 +239,18 @@
           />
         </td>
         <td class={cellClass("generation_tps_current")}>
-          <div class="runtime-metric" title={runtimeTitle(e.runtime_metrics, "Generation throughput")}>
+          <div class="runtime-metric" title={rateTitle(e, "Generation throughput", true)}>
             {#if e.generation_tps_current !== null}
-              <span class="runtime-current">{fmtTps(e.generation_tps_current)} tok/s</span>
-              <span class="runtime-summary">avg {#if runtimeNumber(e.runtime_metrics, e.runtime_metrics?.generation_tps?.avg) !== null}{fmtTps(e.runtime_metrics?.generation_tps?.avg ?? 0)}{:else}—{/if} · max {#if runtimeNumber(e.runtime_metrics, e.runtime_metrics?.generation_tps?.max) !== null}{fmtTps(e.runtime_metrics?.generation_tps?.max ?? 0)}{:else}—{/if}</span>
+              <span class="runtime-current">{fmtNum(e.generation_tps_current)} tok/s</span>
+              <span class="runtime-summary">avg {#if runtimeNumber(e.runtime_metrics, e.runtime_metrics?.generation_tps?.avg) !== null}{fmtNum(e.runtime_metrics?.generation_tps?.avg ?? 0)}{:else}—{/if} · max {#if runtimeNumber(e.runtime_metrics, e.runtime_metrics?.generation_tps?.max) !== null}{fmtNum(e.runtime_metrics?.generation_tps?.max ?? 0)}{:else}—{/if}</span>
             {:else}<span class="dash">—</span>{/if}
           </div>
         </td>
         <td class={cellClass("prefill_tps_current")}>
-          <div class="runtime-metric" title={runtimeTitle(e.runtime_metrics, "Incremental prefill throughput")}>
+          <div class="runtime-metric" title={rateTitle(e, "Incremental prefill throughput")}>
             {#if e.prefill_tps_current !== null}
-              <span class="runtime-current">{fmtTps(e.prefill_tps_current)} tok/s</span>
-              <span class="runtime-summary">avg {#if runtimeNumber(e.runtime_metrics, e.runtime_metrics?.prefill_tps?.avg) !== null}{fmtTps(e.runtime_metrics?.prefill_tps?.avg ?? 0)}{:else}—{/if} · max {#if runtimeNumber(e.runtime_metrics, e.runtime_metrics?.prefill_tps?.max) !== null}{fmtTps(e.runtime_metrics?.prefill_tps?.max ?? 0)}{:else}—{/if}</span>
+              <span class="runtime-current">{fmtNum(e.prefill_tps_current)} tok/s</span>
+              <span class="runtime-summary">avg {#if runtimeNumber(e.runtime_metrics, e.runtime_metrics?.prefill_tps?.avg) !== null}{fmtNum(e.runtime_metrics?.prefill_tps?.avg ?? 0)}{:else}—{/if} · max {#if runtimeNumber(e.runtime_metrics, e.runtime_metrics?.prefill_tps?.max) !== null}{fmtNum(e.runtime_metrics?.prefill_tps?.max ?? 0)}{:else}—{/if}</span>
             {:else}<span class="dash">—</span>{/if}
           </div>
         </td>
@@ -221,6 +265,14 @@
         <td class={cellClass("kv_cache_usage_percent")}>
           <div class="runtime-metric" title={runtimeTitle(e.runtime_metrics, "KV-cache utilisation")}>
             {#if e.kv_cache_usage_percent !== null}<span class="runtime-current">{fmtPct(e.kv_cache_usage_percent)}</span>{:else}<span class="dash">—</span>{/if}
+          </div>
+        </td>
+        <td class={cellClass("queue_depth_current")}>
+          <div class="runtime-metric" title={fieldTitle(e.runtime_metrics, "Queue depth", e.queue_depth_current)}>
+            {#if e.queue_depth_current !== null}
+              <span class="runtime-current">{fmtNum(e.queue_depth_current)}</span>
+              <span class="runtime-summary">{#if e.requests_running_current !== null}{fmtNum(e.requests_running_current)}{:else}—{/if} running</span>
+            {:else}<span class="dash">—</span>{/if}
           </div>
         </td>
         <td class={cellClass("model_count")}>{#if e.model_count === 0}<span class="dash">0</span>{:else}{e.model_count}{/if}</td>
