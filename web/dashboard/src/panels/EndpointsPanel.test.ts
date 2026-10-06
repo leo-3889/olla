@@ -426,4 +426,67 @@ describe("EndpointsPanel queue column and radiance rate caveats", () => {
     expect(cell(0).title).toContain("stale");
     expect(cell(0).title).not.toContain("Speculative decode");
   });
+
+  it("keys batch semantics on the resolved kind, not the endpoint type", async () => {
+    component = mount(EndpointsPanel, { target: document.body });
+    flushSync();
+
+    // The documented deployment shape: radiance registered as
+    // openai-compatible. It ships engine-batch-aggregated rates, so it must
+    // carry the caveat the type check alone would miss.
+    await refreshWithEndpoint({
+      ...base,
+      name: "rad-openai",
+      type: "openai-compatible",
+      runtime_metrics: {
+        kind: "radiance",
+        sampled_at: "2026-10-05T09:00:00Z",
+        generation_tps: { current: 288.4 },
+        spec_accept_percent: { current: 40 },
+      },
+    });
+    expect(cell(0).title).toContain(BATCH_NOTE);
+    expect(cell(0).title).toContain("Speculative decode acceptance: 40.0%");
+  });
+
+  it("withholds the batch caveat from a per-stream dialect pinned under a radiance type", async () => {
+    component = mount(EndpointsPanel, { target: document.body });
+    flushSync();
+
+    await refreshWithEndpoint({
+      ...base,
+      name: "vllm-under-radiance-type",
+      type: "radiance",
+      runtime_metrics: {
+        kind: "vllm",
+        sampled_at: "2026-10-05T09:00:00Z",
+        generation_tps: { current: 70 },
+      },
+    });
+    // vLLM's decode-time denominator is per request time; no batch note, and
+    // acceptance is not a vLLM signal.
+    expect(cell(0).title).not.toContain(BATCH_NOTE);
+    expect(cell(0).title).not.toContain("Speculative decode");
+  });
+
+  it("marks fresh-but-absent gauge columns unsupported instead of implying hidden samples", async () => {
+    component = mount(EndpointsPanel, { target: document.body });
+    flushSync();
+
+    await refreshWithEndpoint({
+      ...base,
+      name: "halogen-no-queue",
+      type: "halogen",
+      runtime_metrics: {
+        kind: "llamacpp",
+        sampled_at: "2026-10-05T09:00:00Z",
+        cache_hit_percent: { current: 55, avg: 50 },
+      },
+    });
+    // Fresh payload, no KV gauge published: the tooltip must say so plainly.
+    expect(cell(3).text).toBe("—");
+    expect(cell(3).title).toBe("KV-cache utilisation: unsupported by this backend");
+    expect(cell(2).title).toContain("avg over last 10m");
+    expect(cell(2).title).not.toContain("max");
+  });
 });

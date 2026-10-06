@@ -368,7 +368,7 @@ main {
   padding: 3px var(--space-3);
   border-bottom: 1px dashed var(--border);
 }
-@media (max-width: 860px) {
+@media (max-width: 1180px) {
   .scroll-hint {
     display: block;
   }

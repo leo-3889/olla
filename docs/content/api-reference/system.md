@@ -238,7 +238,7 @@ The `last_check`, `next_check`, and relative strings on every status payload ren
 | `security_violations` | integer | Total rate-limit + size-limit violations |
 | `total_requests` | integer | Total proxy requests since startup |
 | `total_failures` | integer | Total failed proxy requests since startup |
-| `has_traffic` | boolean | Always present. `false` on a fresh boot or when `total_requests` is zero; lets clients branch on the no-traffic state without parsing `success_rate` |
+| `has_traffic` | boolean | Always present. In `host` mode (and in `model` mode before the model verdict has signal) `false` on a fresh boot or when `total_requests` is zero. In `model` mode with a live model-scoped verdict it reflects the configured models' own traffic instead, so it can be `false` while proxy-wide `total_requests` is non-zero; it is not derivable from `total_requests` in that mode |
 | `health_mode` | string | Always present. The computation that produced `status`: `host` (the endpoint fleet, the default) or `model` (a configured list of models/aliases). In `model` mode this is `model` only when at least one configured model resolved to an endpoint; otherwise Olla falls back to the host verdict and reports `host` |
 | `models` | array | Present only in `model` mode. One entry per configured model: `name`, `status` (`healthy`/`unhealthy`/`unknown`), `total_requests`, `successful_requests`, `failed_requests`, and `success_rate` (the model's own traffic, `"N/A"` with none) |
 

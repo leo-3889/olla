@@ -80,7 +80,7 @@ radiance:draft_acceptance_ratio{engine="0"} 0.55
 func TestRuntimeMetricsVLLMEpochAggregates(t *testing.T) {
 	t.Parallel()
 	s := newEndpointRuntimeMetricsSampler(nil, nil)
-	ep := &domain.Endpoint{Name: "vllm", URLString: "http://vllm", Type: "vllm", Status: domain.StatusHealthy}
+	ep := &domain.Endpoint{Name: "vllm", URLString: "http://vllm", Type: "vllm", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true}
 	start := time.Date(2026, 9, 24, 14, 0, 0, 0, time.UTC)
 	s.record(ep.URLString, start, parseRuntimeCounters("vllm", `
 vllm:generation_tokens_total 0
@@ -118,7 +118,7 @@ vllm:kv_cache_usage_ratio 0.42
 func TestRuntimeMetricsHalogenCacheUsesTokenWeightedDemand(t *testing.T) {
 	t.Parallel()
 	s := newEndpointRuntimeMetricsSampler(nil, nil)
-	ep := &domain.Endpoint{Name: "halogen", URLString: "http://halogen", Type: "halogen", Status: domain.StatusHealthy}
+	ep := &domain.Endpoint{Name: "halogen", URLString: "http://halogen", Type: "halogen", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true}
 	at := time.Now().UTC()
 	s.record(ep.URLString, at, parseRuntimeCounters("llamacpp", `
 llamacpp:tokens_predicted_total 0
@@ -182,7 +182,7 @@ func TestRuntimeMetricsCounterResetStartsNewAvailabilityEpoch(t *testing.T) {
 	first := parseRuntimeCounters("vllm", "vllm:generation_tokens_total 100\nvllm:request_decode_time_seconds_sum 1")
 	s.record("x", at, first)
 	s.record("x", at.Add(time.Second), parseRuntimeCounters("vllm", "vllm:generation_tokens_total 5\nvllm:request_decode_time_seconds_sum 0.1"))
-	ep := &domain.Endpoint{URLString: "x", Type: "vllm", Status: domain.StatusHealthy}
+	ep := &domain.Endpoint{URLString: "x", Type: "vllm", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true}
 	got := s.Snapshot(ep)
 	require.NotNil(t, got)
 	assert.Equal(t, at.Add(time.Second), got.AvailableSince)
@@ -235,7 +235,7 @@ func TestRuntimeMetricsETagIgnoresSampleTimestampsButTracksValues(t *testing.T) 
 func TestRuntimeMetricsPrometheusOutputOmitsUnsupportedValues(t *testing.T) {
 	t.Parallel()
 	s := newEndpointRuntimeMetricsSampler(nil, nil)
-	ep := &domain.Endpoint{Name: "vllm", URLString: "x", Type: "vllm", Status: domain.StatusHealthy}
+	ep := &domain.Endpoint{Name: "vllm", URLString: "x", Type: "vllm", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true}
 	at := time.Now()
 	s.record("x", at, parseRuntimeCounters("vllm", "vllm:generation_tokens_total 0\nvllm:request_decode_time_seconds_sum 0"))
 	s.record("x", at.Add(time.Second), parseRuntimeCounters("vllm", "vllm:generation_tokens_total 70\nvllm:request_decode_time_seconds_sum 1"))
@@ -288,7 +288,7 @@ func TestRuntimeMetricsPrometheusOutputSkipsUncoveredEndpoints(t *testing.T) {
 	s.record("x", at, parseRuntimeCounters("vllm", "vllm:generation_tokens_total 0\nvllm:request_decode_time_seconds_sum 0"))
 	s.record("x", at.Add(time.Second), parseRuntimeCounters("vllm", "vllm:generation_tokens_total 70\nvllm:request_decode_time_seconds_sum 1"))
 	endpoints := []*domain.Endpoint{
-		{Name: "vllm", URLString: "x", Type: "vllm", Status: domain.StatusHealthy},
+		{Name: "vllm", URLString: "x", Type: "vllm", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true},
 		{Name: "offline-ep", URLString: "y", Type: "vllm", Status: domain.StatusOffline},
 		{Name: "not-opted-in", URLString: "z", Type: "ollama", Status: domain.StatusHealthy},
 	}
@@ -306,7 +306,7 @@ func TestRuntimeMetricsVLLMKVUsagePerCNormalised(t *testing.T) {
 	s := newEndpointRuntimeMetricsSampler(nil, nil)
 	at := time.Now()
 	s.record("x", at, parseRuntimeCounters("vllm", "vllm:kv_cache_usage_perc 0.26068376068376065"))
-	ep := &domain.Endpoint{URLString: "x", Type: "vllm", Status: domain.StatusHealthy}
+	ep := &domain.Endpoint{URLString: "x", Type: "vllm", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true}
 	got := s.Snapshot(ep)
 	require.NotNil(t, got)
 	require.NotNil(t, got.KVCacheUsagePercent)
@@ -332,7 +332,7 @@ func TestRuntimeMetricsVLLMGPUCacheUsagePerCIsNormalised(t *testing.T) {
 func TestRuntimeMetricsWindowAveragesAndMaxEvictsOldSamples(t *testing.T) {
 	t.Parallel()
 	s := newEndpointRuntimeMetricsSampler(nil, nil)
-	ep := &domain.Endpoint{URLString: "x", Type: "vllm", Status: domain.StatusHealthy}
+	ep := &domain.Endpoint{URLString: "x", Type: "vllm", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true}
 	at := time.Date(2026, 9, 24, 14, 0, 0, 0, time.UTC)
 	// A slow sample (10 tok/s) that must age out of the window.
 	s.record("x", at, parseRuntimeCounters("vllm", "vllm:generation_tokens_total 0\nvllm:request_decode_time_seconds_sum 0"))
@@ -415,7 +415,7 @@ func TestRuntimeMetricsVLLMPrefillFallsBackToPromptTokens(t *testing.T) {
 	s := newEndpointRuntimeMetricsSampler(nil, nil)
 	s.record("x", time.Unix(0, 0), parseRuntimeCounters("vllm", "vllm:prompt_tokens_total 0\nvllm:request_prefill_time_seconds_sum 0"))
 	s.record("x", time.Unix(10, 0), parseRuntimeCounters("vllm", "vllm:prompt_tokens_total 1000\nvllm:request_prefill_time_seconds_sum 2"))
-	ep := &domain.Endpoint{URLString: "x", Type: "vllm", Status: domain.StatusHealthy}
+	ep := &domain.Endpoint{URLString: "x", Type: "vllm", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true}
 	got := s.Snapshot(ep)
 	require.NotNil(t, got.PrefillTPS)
 	assert.InDelta(t, 500, *got.PrefillTPS.Current, .001)
@@ -424,7 +424,7 @@ func TestRuntimeMetricsVLLMPrefillFallsBackToPromptTokens(t *testing.T) {
 func TestRuntimeMetricsRadianceCounterDeltasAndSaturationFields(t *testing.T) {
 	t.Parallel()
 	s := newEndpointRuntimeMetricsSampler(nil, nil)
-	ep := &domain.Endpoint{Name: "radiance-qfn", URLString: "http://radiance", Type: "openai-compatible", RuntimeMetricsKind: "radiance", Status: domain.StatusHealthy}
+	ep := &domain.Endpoint{Name: "radiance-qfn", URLString: "http://radiance", Type: "openai-compatible", RuntimeMetricsKind: "radiance", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true}
 	kind := runtimeMetricsKind(ep)
 	require.Equal(t, "radiance", kind)
 	at := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
@@ -501,14 +501,14 @@ func TestRuntimeMetricsRadianceGaugeFallbackWhenCountersAbsent(t *testing.T) {
 	s := newEndpointRuntimeMetricsSampler(nil, nil)
 	at := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
 	s.record("x", at, parseRuntimeCounters("radiance", radianceGaugeOnlyT0))
-	first := s.Snapshot(&domain.Endpoint{URLString: "x", Type: "vllm", Status: domain.StatusHealthy})
+	first := s.Snapshot(&domain.Endpoint{URLString: "x", Type: "vllm", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true})
 	require.NotNil(t, first)
 	require.NotNil(t, first.GenerationTPS, "gauge-only backends render from the first scrape")
 	assert.InDelta(t, 288.5, *first.GenerationTPS.Current, .001)
 	require.NotNil(t, first.CacheHitPercent)
 	assert.InDelta(t, 76, *first.CacheHitPercent.Current, .001, "hit-rate gauge x100")
 	s.record("x", at.Add(10*time.Second), parseRuntimeCounters("radiance", radianceGaugeOnlyT1))
-	got := s.Snapshot(&domain.Endpoint{URLString: "x", Type: "vllm", Status: domain.StatusHealthy})
+	got := s.Snapshot(&domain.Endpoint{URLString: "x", Type: "vllm", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true})
 	require.NotNil(t, got.GenerationTPS)
 	assert.InDelta(t, 300.5, *got.GenerationTPS.Current, .001)
 	assert.InDelta(t, 294.5, *got.GenerationTPS.Avg, .001)
@@ -548,7 +548,7 @@ radiance:linear_prefix_cache_hit_rate{engine="0"} 0.78
 	at := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
 	s.record("x", at, parseRuntimeCounters("radiance", partial0))
 	s.record("x", at.Add(time.Second), parseRuntimeCounters("radiance", partial1))
-	got := s.Snapshot(&domain.Endpoint{URLString: "x", Type: "vllm", Status: domain.StatusHealthy})
+	got := s.Snapshot(&domain.Endpoint{URLString: "x", Type: "vllm", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true})
 	require.NotNil(t, got.GenerationTPS)
 	assert.InDelta(t, 50, *got.GenerationTPS.Current, .001)
 	require.NotNil(t, got.CacheHitPercent)
@@ -571,7 +571,7 @@ radiance:decode_tokens_total{engine="0"} 5
 radiance:engine_step_seconds_decode_total{engine="0"} 0.1
 `
 	s.record("x", at.Add(20*time.Second), parseRuntimeCounters("radiance", reset))
-	got := s.Snapshot(&domain.Endpoint{URLString: "x", Type: "vllm", Status: domain.StatusHealthy})
+	got := s.Snapshot(&domain.Endpoint{URLString: "x", Type: "vllm", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true})
 	require.NotNil(t, got)
 	assert.Equal(t, at.Add(20*time.Second), got.AvailableSince)
 	assert.Nil(t, got.GenerationTPS)
@@ -583,8 +583,8 @@ radiance:engine_step_seconds_decode_total{engine="0"} 0.1
 func TestRuntimeMetricsRadianceSaturationReExports(t *testing.T) {
 	t.Parallel()
 	s := newEndpointRuntimeMetricsSampler(nil, nil)
-	radiance := &domain.Endpoint{Name: "radiance-qfn", URLString: "http://radiance", Type: "radiance", Status: domain.StatusHealthy}
-	halogen := &domain.Endpoint{Name: "halogen-395", URLString: "http://halogen", Type: "halogen", Status: domain.StatusHealthy}
+	radiance := &domain.Endpoint{Name: "radiance-qfn", URLString: "http://radiance", Type: "radiance", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true}
+	halogen := &domain.Endpoint{Name: "halogen-395", URLString: "http://halogen", Type: "halogen", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true}
 	at := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
 	s.record(radiance.URLString, at, parseRuntimeCounters("radiance", radianceT0))
 	s.record(radiance.URLString, at.Add(10*time.Second), parseRuntimeCounters("radiance", radianceT1))
@@ -689,7 +689,7 @@ func TestRuntimeMetricsStaleSnapshotExpires(t *testing.T) {
 	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
 	s := newEndpointRuntimeMetricsSampler(nil, nil)
 	s.now = func() time.Time { return now }
-	ep := &domain.Endpoint{URLString: "x", Type: "vllm", Status: domain.StatusHealthy}
+	ep := &domain.Endpoint{URLString: "x", Type: "vllm", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true}
 	s.record("x", now, parseRuntimeCounters("vllm", "vllm:generation_tokens_total 1"))
 	s.mu.Lock()
 	s.states["x"].stale = true
@@ -719,4 +719,162 @@ func TestRuntimeMetricsHonoursConfiguredScrapePath(t *testing.T) {
 	got := s.Snapshot(ep)
 	require.NotNil(t, got)
 	assert.False(t, got.Stale)
+}
+
+// --- Audit regression tests (2026-10-06) ---
+
+// TestRuntimeMetricsIdleScrapesNeverFreezeCurrent pins the two idle-engine
+// defects: (radiance) an idle scrape must not fold the instantaneous rate
+// gauge into the counter-delta window, and (vLLM) a rejected zero-delta
+// sample must DROP the stale current instead of leaving last-burst numbers
+// presented as live under a fresh sampled_at.
+func TestRuntimeMetricsIdleScrapesNeverFreezeCurrent(t *testing.T) {
+	t.Parallel()
+	s := newEndpointRuntimeMetricsSampler(nil, nil)
+	ep := &domain.Endpoint{Name: "radiance", URLString: "http://radiance", Type: "radiance", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true}
+	start := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	s.record(ep.URLString, start, parseRuntimeCounters("radiance", radianceT0))
+	s.record(ep.URLString, start.Add(10*time.Second), parseRuntimeCounters("radiance", radianceT1))
+	got := s.Snapshot(ep)
+	require.NotNil(t, got)
+	require.NotNil(t, got.GenerationTPS)
+	require.NotNil(t, got.GenerationTPS.Current)
+	assert.InDelta(t, 70, *got.GenerationTPS.Current, 0.001) // 700 tokens / 10s
+
+	// Idle: counters frozen (delta seconds == 0) while the engine still
+	// publishes a non-zero rate gauge (in the T1 capture).
+	s.record(ep.URLString, start.Add(20*time.Second), parseRuntimeCounters("radiance", radianceT1))
+	got = s.Snapshot(ep)
+	require.NotNil(t, got.GenerationTPS)
+	assert.Nil(t, got.GenerationTPS.Current, "idle scrape must drop current, not freeze 70 or mix in the gauge")
+	// The window keeps the one real counter-delta sample; the gauge value
+	// never entered it (avg would move toward ~301 if it had).
+	require.NotNil(t, got.GenerationTPS.Avg)
+	assert.InDelta(t, 70, *got.GenerationTPS.Avg, 0.001)
+
+	// Prolonged idle past the 10-minute window: every sample has decayed,
+	// so the whole signal drops out of the payload (omitted, not zeroed).
+	s.record(ep.URLString, start.Add(11*time.Minute), parseRuntimeCounters("radiance", radianceT1))
+	got = s.Snapshot(ep)
+	assert.Nil(t, got.GenerationTPS)
+}
+
+func TestRuntimeMetricsVLLMIdleDropsStaleCurrent(t *testing.T) {
+	t.Parallel()
+	s := newEndpointRuntimeMetricsSampler(nil, nil)
+	ep := &domain.Endpoint{URLString: "x", Type: "vllm", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true}
+	start := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	counters := func(tokens, seconds float64) runtimeCounters {
+		return parseRuntimeCounters("vllm", "vllm:generation_tokens_total "+strconv.FormatFloat(tokens, 'f', -1, 64)+
+			"\nvllm:request_decode_time_seconds_sum "+strconv.FormatFloat(seconds, 'f', -1, 64)+"\n")
+	}
+	s.record("x", start, counters(0, 0))
+	s.record("x", start.Add(10*time.Second), counters(700, 10))
+	require.NotNil(t, s.Snapshot(ep).GenerationTPS.Current)
+	s.record("x", start.Add(20*time.Second), counters(700, 10)) // idle, no rate gauges in vLLM
+	got := s.Snapshot(ep)
+	assert.Nil(t, got.GenerationTPS.Current, "idle vLLM must not present the last burst rate as current")
+	require.NotNil(t, got.GenerationTPS.Avg)
+	assert.InDelta(t, 70, *got.GenerationTPS.Avg, 0.001)
+}
+
+// TestRuntimeMetricsOptOutInvalidatesSnapshot pins that disabling the
+// opt-in (or losing dialect detection) invalidates the sampler state both
+// through a refresh pass and through Snapshot itself - no frozen pre-opt-out
+// snapshot may keep serving as fresh to the dashboard or /metrics.
+func TestRuntimeMetricsOptOutInvalidatesSnapshot(t *testing.T) {
+	t.Parallel()
+	ep := &domain.Endpoint{Name: "v", URLString: "http://127.0.0.1:1", Type: "vllm", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true}
+	s := newEndpointRuntimeMetricsSampler(&mockStatusEndpointRepository{endpoints: []*domain.Endpoint{ep}}, nil)
+	start := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	s.record(ep.URLString, start, parseRuntimeCounters("vllm", "vllm:generation_tokens_total 700\nvllm:request_decode_time_seconds_sum 10\n"))
+	require.NotNil(t, s.Snapshot(ep))
+
+	ep.RuntimeMetricsEnabled = false
+	assert.Nil(t, s.Snapshot(ep), "Snapshot must refuse opted-out endpoints immediately")
+	s.Refresh(t.Context())
+	assert.Nil(t, s.Snapshot(ep))
+
+	ep.RuntimeMetricsEnabled = true
+	ep.Type = "ollama" // no dialect resolves for generic types without a name marker
+	assert.Nil(t, s.Snapshot(ep), "Snapshot must refuse endpoints without a resolvable dialect")
+}
+
+// TestRuntimeMetricsRoutableBusyKeepsMetrics pins that Busy/Warming - which
+// the scheduler still routes to - keep being sampled and rendered: metrics
+// must not vanish precisely when a backend is slow under load.
+func TestRuntimeMetricsRoutableBusyKeepsMetrics(t *testing.T) {
+	t.Parallel()
+	ep := &domain.Endpoint{Name: "v", URLString: "http://127.0.0.1:1", Type: "vllm", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true}
+	s := newEndpointRuntimeMetricsSampler(&mockStatusEndpointRepository{endpoints: []*domain.Endpoint{ep}}, nil)
+	start := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	clock := start.Add(time.Minute) // past both due deadlines; window still covers the samples
+	s.now = func() time.Time { return clock }
+	s.record(ep.URLString, start, parseRuntimeCounters("vllm", "vllm:generation_tokens_total 0\nvllm:request_decode_time_seconds_sum 0\n"))
+	s.record(ep.URLString, start.Add(10*time.Second), parseRuntimeCounters("vllm", "vllm:generation_tokens_total 700\nvllm:request_decode_time_seconds_sum 10\n"))
+
+	ep.Status = domain.StatusBusy
+	got := s.Snapshot(ep)
+	require.NotNil(t, got, "Busy endpoints still serve traffic and must keep their metrics")
+	require.NotNil(t, got.GenerationTPS)
+	assert.InDelta(t, 70, *got.GenerationTPS.Avg, 0.001)
+
+	ep.Status = domain.StatusWarming
+	require.NotNil(t, s.Snapshot(ep))
+
+	// A refresh pass on the Busy endpoint must attempt the scrape (the dead
+	// port turns it into a recorded failure/stale) rather than wiping the
+	// epoch via markUnavailable: stale keeps the last good numbers rendered.
+	s.Refresh(t.Context())
+	got = s.Snapshot(ep)
+	require.NotNil(t, got, "Busy endpoint scrape failure marks stale, not unavailable")
+	assert.True(t, got.Stale)
+
+	ep.Status = domain.StatusOffline
+	assert.Nil(t, s.Snapshot(ep), "non-routable states still drop the snapshot")
+}
+
+// TestRuntimeMetricsSnapshotCarriesResolvedKind pins the payload field the
+// dashboard uses to key batch-semantics caveats: the RESOLVED dialect, not
+// the endpoint type (an openai-compatible endpoint pinned to radiance must
+// report radiance).
+func TestRuntimeMetricsSnapshotCarriesResolvedKind(t *testing.T) {
+	t.Parallel()
+	s := newEndpointRuntimeMetricsSampler(nil, nil)
+	ep := &domain.Endpoint{Name: "r", URLString: "x", Type: "openai-compatible", RuntimeMetricsKind: "radiance", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true}
+	start := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	s.record("x", start, parseRuntimeCounters("radiance", radianceT0))
+	got := s.Snapshot(ep)
+	require.NotNil(t, got)
+	assert.Equal(t, "radiance", got.Kind)
+}
+
+// TestRuntimeMetricsOversizedExpositionFailsLoud pins that a body over the
+// scrape limit is a failure (backoff + stale), never a partial parse: half a
+// counter family would read as a counter reset and wipe the window epoch.
+func TestRuntimeMetricsOversizedExpositionFailsLoud(t *testing.T) {
+	t.Parallel()
+	filler := strings.Repeat("unrelated_metric_series_total{a=\"b\"} 1\n", 600*1024) // >4 MiB limit
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("vllm:generation_tokens_total 700\nvllm:request_decode_time_seconds_sum 10\n"))
+		_, _ = w.Write([]byte(filler))
+	}))
+	defer server.Close()
+	ep := &domain.Endpoint{Name: "v", URLString: server.URL, Type: "vllm", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true, RuntimeMetricsInterval: time.Nanosecond}
+	s := newEndpointRuntimeMetricsSampler(&mockStatusEndpointRepository{endpoints: []*domain.Endpoint{ep}}, nil)
+	fixed := time.Date(2026, 10, 6, 12, 5, 0, 0, time.UTC) // past every deadline, inside the 15m stale age
+	s.now = func() time.Time { return fixed }
+	s.Refresh(t.Context())
+	assert.Nil(t, s.Snapshot(ep), "an over-limit exposition must not produce a snapshot")
+
+	// And after a good epoch, an over-limit scrape marks stale instead of
+	// silently parsing the truncated prefix.
+	start := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	s.record(ep.URLString, start, parseRuntimeCounters("vllm", "vllm:generation_tokens_total 0\nvllm:request_decode_time_seconds_sum 0\n"))
+	s.record(ep.URLString, start.Add(10*time.Second), parseRuntimeCounters("vllm", "vllm:generation_tokens_total 700\nvllm:request_decode_time_seconds_sum 10\n"))
+	require.NotNil(t, s.Snapshot(ep))
+	s.Refresh(t.Context())
+	got := s.Snapshot(ep)
+	require.NotNil(t, got)
+	assert.True(t, got.Stale, "over-limit scrape must mark the epoch stale, not wipe or silently trim it")
 }

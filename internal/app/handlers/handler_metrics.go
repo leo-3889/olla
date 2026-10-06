@@ -64,8 +64,8 @@ func writePrometheusMetrics(w http.ResponseWriter, response StatusResponse, snap
 	writePrometheusHelpType(&b, "olla_endpoints_healthy", "gauge", "Number of healthy endpoints")
 	writePrometheusGauge(&b, "olla_endpoints_healthy", float64(len(snapshot.healthy)))
 
-	writePrometheusHelpType(&b, "olla_success_rate_percent", "gauge", "Proxy success rate percentage")
-	writePrometheusGauge(&b, "olla_success_rate_percent", parsePercentage(response.System.SuccessRate))
+	writePrometheusHelpType(&b, "olla_success_rate_percent", "gauge", "Proxy-wide success rate percentage (independent of health.mode)")
+	writePrometheusGauge(&b, "olla_success_rate_percent", proxySuccessRatePercent(snapshot.proxyStats))
 
 	writePrometheusHelpType(&b, "olla_avg_latency_ms", "gauge", "Average proxy latency in milliseconds")
 	writePrometheusGauge(&b, "olla_avg_latency_ms", float64(snapshot.proxyStats.AverageLatency))
@@ -362,6 +362,21 @@ func securityStatusValue(status string) float64 {
 		return 1
 	}
 	return 0
+}
+
+// proxySuccessRatePercent is the proxy-wide success rate this metric has
+// always reported, computed from the proxy stats directly rather than from
+// response.System.SuccessRate, which health.mode=model re-scopes to the
+// configured models' own traffic (rendering "N/A" - and via parsing a
+// misleading 0 - when those models are idle on an otherwise busy proxy).
+// A monitoring surface named "proxy success rate" must not silently change
+// scope with the health computation. No traffic means no measured rate; the
+// historical 0 stands for that state.
+func proxySuccessRatePercent(stats ports.ProxyStats) float64 {
+	if stats.TotalRequests <= 0 {
+		return 0
+	}
+	return float64(stats.SuccessfulRequests) / float64(stats.TotalRequests) * 100
 }
 
 func parsePercentage(value string) float64 {

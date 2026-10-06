@@ -76,6 +76,7 @@ export interface EndpointModelsResponse {
 
 export interface EndpointResponse {
   avg_latency_ms?: number;
+  runtime_metrics?: EndpointRuntimeMetrics;
   next_check_at?: string;
   health_check_at?: string;
   models: EndpointModelsResponse;
@@ -152,6 +153,10 @@ export interface EndpointRuntimeMetrics {
   sampled_at?: string;
   available_since?: string;
   stale?: boolean;
+  // Backend dialect the sampler resolved (vllm | llamacpp | radiance). The
+  // panel keys semantics (batch-aggregate caveat, acceptance column) off
+  // THIS, not the endpoint type: a radiance engine can sit behind any type.
+  kind?: string;
   generation_tps?: EndpointRuntimeRate;
   prefill_tps?: EndpointRuntimeRate;
   cache_hit_percent?: EndpointRuntimePercentage;

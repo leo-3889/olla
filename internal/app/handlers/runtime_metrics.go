@@ -3,6 +3,7 @@ package handlers
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"hash"
 	"io"
 	"math"
@@ -53,6 +54,7 @@ type EndpointRuntimeMetrics struct {
 	SampledAt           time.Time          `json:"sampled_at"`
 	AvailableSince      time.Time          `json:"available_since"`
 	Stale               bool               `json:"stale"`
+	Kind                string             `json:"kind,omitempty"`
 	GenerationTPS       *RuntimeThroughput `json:"generation_tps,omitempty"`
 	PrefillTPS          *RuntimeThroughput `json:"prefill_tps,omitempty"`
 	CacheHitPercent     *RuntimeAverage    `json:"cache_hit_percent,omitempty"`
@@ -121,7 +123,11 @@ type ratioAggregate struct {
 // appendWindowed appends a sample and drops anything older than the
 // reporting window.
 func appendWindowed(samples []runtimeSample, at time.Time, value float64) []runtimeSample {
-	samples = append(samples, runtimeSample{at: at, value: value})
+	return trimWindowed(append(samples, runtimeSample{at: at, value: value}), at)
+}
+
+// trimWindowed drops samples older than the reporting window.
+func trimWindowed(samples []runtimeSample, at time.Time) []runtimeSample {
 	cutoff := at.Add(-runtimeMetricsWindow)
 	i := 0
 	for i < len(samples) && samples[i].at.Before(cutoff) {
@@ -210,10 +216,22 @@ func (s *endpointRuntimeMetricsSampler) refresh(ctx context.Context) time.Durati
 	s.pruneStates(endpoints)
 	var wg sync.WaitGroup
 	for _, endpoint := range endpoints {
-		if endpoint == nil || !endpoint.RuntimeMetricsEnabled || runtimeMetricsKind(endpoint) == "" {
+		if endpoint == nil {
 			continue
 		}
-		if endpoint.Status != domain.StatusHealthy {
+		if !endpoint.RuntimeMetricsEnabled || runtimeMetricsKind(endpoint) == "" {
+			if endpoint.RuntimeMetricsEnabled {
+				// An enabled opt-in whose dialect cannot be detected would
+				// otherwise die silently at this very skip line.
+				s.warnUnknownKindOnce("", endpoint.Name)
+			}
+			// Opting out (or losing dialect detection) must also invalidate
+			// whatever state the endpoint left behind, or the last
+			// pre-opt-out snapshot keeps serving as "fresh" forever.
+			s.markUnavailable(endpoint.URLString)
+			continue
+		}
+		if !endpoint.Status.IsRoutable() {
 			s.markUnavailable(endpoint.URLString)
 			continue
 		}
@@ -290,7 +308,7 @@ func (s *endpointRuntimeMetricsSampler) wakeDelay(endpoints []*domain.Endpoint) 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, endpoint := range endpoints {
-		if endpoint == nil || !endpoint.RuntimeMetricsEnabled || runtimeMetricsKind(endpoint) == "" || endpoint.Status != domain.StatusHealthy {
+		if endpoint == nil || !endpoint.RuntimeMetricsEnabled || runtimeMetricsKind(endpoint) == "" || !endpoint.Status.IsRoutable() {
 			continue
 		}
 		due := s.nextDueLocked(endpoint)
@@ -344,7 +362,20 @@ func (s *endpointRuntimeMetricsSampler) refreshEndpoint(parent context.Context, 
 	s.warnUnknownKindOnce(kind, endpoint.Name)
 	// Stream the exposition: a whole-body io.ReadAll turns every scrape into
 	// a multi-MB string copy on top of the parse pass itself.
-	counters := parseRuntimeCountersFrom(kind, io.LimitReader(resp.Body, runtimeMetricsBodyLimit))
+	counters, err := parseRuntimeCountersFrom(kind, io.LimitReader(resp.Body, runtimeMetricsBodyLimit))
+	if err == nil {
+		// Probe past the body limit: a surviving byte means the exposition
+		// was cut mid-stream, and half a counter family would parse as a
+		// decreased (reset) counter and wipe the window epoch.
+		var probe [1]byte
+		if n, _ := io.ReadFull(resp.Body, probe[:]); n > 0 {
+			err = fmt.Errorf("exposition exceeds %d byte scrape limit", runtimeMetricsBodyLimit)
+		}
+	}
+	if err != nil {
+		s.noteFailure(endpoint, err.Error())
+		return
+	}
 	s.record(endpoint.URLString, s.now(), counters)
 }
 
@@ -395,12 +426,23 @@ func (s *endpointRuntimeMetricsSampler) warnUnknownKindOnce(kind, endpointName s
 	if s.logger == nil || isKnownRuntimeKind(kind) {
 		return
 	}
+	// Undetected dialects (empty kind) are keyed per endpoint so one
+	// misconfigured endpoint cannot mask the warning for the others;
+	// non-empty unknown values keep their warn-once-per-value semantics.
+	key := kind
+	if key == "" {
+		key = "\x00" + endpointName
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, done := s.warnedKinds[kind]; done {
+	if _, done := s.warnedKinds[key]; done {
 		return
 	}
-	s.warnedKinds[kind] = struct{}{}
+	s.warnedKinds[key] = struct{}{}
+	if kind == "" {
+		s.logger.Debug("runtime metrics enabled but no backend dialect detected; sampling nothing", "endpoint", endpointName)
+		return
+	}
 	s.logger.Debug("unknown runtime metrics kind; sampling nothing", "endpoint", endpointName, "kind", kind)
 }
 
@@ -418,15 +460,9 @@ func (s *endpointRuntimeMetricsSampler) record(key string, at time.Time, next ru
 	state.sampledAt, state.stale = at, false
 	state.failures, state.nextAttempt = 0, time.Time{}
 	if state.hasLast {
-		if !recordThroughput(&state.generation, at, state.last.generationTokens, next.generationTokens, state.last.generationSeconds, next.generationSeconds) {
-			recordGaugeThroughput(&state.generation, at, next.genRate)
-		}
-		if !recordThroughput(&state.prefill, at, state.last.prefillTokens, next.prefillTokens, state.last.prefillSeconds, next.prefillSeconds) {
-			recordGaugeThroughput(&state.prefill, at, next.prefillRate)
-		}
-		if !recordRatio(&state.cache, at, state.last, next) {
-			recordGaugeRatio(&state.cache, at, next.cacheRatePercent)
-		}
+		recordThroughputSignal(&state.generation, at, state.last.generationTokens, next.generationTokens, state.last.generationSeconds, next.generationSeconds, next.genRate)
+		recordThroughputSignal(&state.prefill, at, state.last.prefillTokens, next.prefillTokens, state.last.prefillSeconds, next.prefillSeconds, next.prefillRate)
+		recordRatioSignal(&state.cache, at, state.last, next)
 	} else {
 		// First sample: counter deltas have nothing to diff against. Record
 		// the gauge only when the exposition lacks the counter pair at all -
@@ -451,9 +487,10 @@ func (s *endpointRuntimeMetricsSampler) record(key string, at time.Time, next ru
 // aggregate as counter deltas. The gauge value is appended to the window -
 // not just set as current - so avg/max and the Prometheus re-exports behave
 // uniformly for both sources; windowing the engine's own instantaneous rate
-// client-side is the honest way to graph it. Mixing sources inside one window
-// cannot happen: a backend publishes either the counter pair or the gauge for
-// a given signal, never both meaningfully.
+// client-side is the honest way to graph it. recordThroughputSignal keeps
+// the sources apart per signal: while a backend publishes the counter pair,
+// only counter deltas enter the window - the gauge is never folded in
+// alongside.
 func recordGaugeThroughput(a *throughputAggregate, at time.Time, rate *float64) {
 	if rate == nil {
 		return
@@ -474,7 +511,7 @@ func recordGaugeRatio(a *ratioAggregate, at time.Time, percent *float64) {
 }
 
 func (s *endpointRuntimeMetricsSampler) Snapshot(endpoint *domain.Endpoint) *EndpointRuntimeMetrics {
-	if s == nil || endpoint == nil || endpoint.Status != domain.StatusHealthy {
+	if s == nil || endpoint == nil || !endpoint.RuntimeMetricsEnabled || runtimeMetricsKind(endpoint) == "" || !endpoint.Status.IsRoutable() {
 		return nil
 	}
 	s.mu.RLock()
@@ -488,7 +525,7 @@ func (s *endpointRuntimeMetricsSampler) Snapshot(endpoint *domain.Endpoint) *End
 	if state.stale && s.now().Sub(state.sampledAt) > runtimeMetricsMaxStaleAge {
 		return nil
 	}
-	return &EndpointRuntimeMetrics{SampledAt: state.sampledAt, AvailableSince: state.availableSince, Stale: state.stale,
+	return &EndpointRuntimeMetrics{SampledAt: state.sampledAt, AvailableSince: state.availableSince, Stale: state.stale, Kind: runtimeMetricsKind(endpoint),
 		GenerationTPS: copyThroughput(state.generation), PrefillTPS: copyThroughput(state.prefill), CacheHitPercent: copyRatio(state.cache), KVCacheUsagePercent: copyFloat(state.kvUsage),
 		QueueDepth: copyFloat(state.queueDepth), RequestsRunning: copyFloat(state.requestsRunning), SpecAcceptPercent: copyRatio(state.specAccept)}
 }
@@ -531,6 +568,60 @@ func recordRatio(a *ratioAggregate, at time.Time, old, next runtimeCounters) boo
 	a.samples = appendWindowed(a.samples, at, *a.current)
 	a.avg, _ = windowStats(a.samples)
 	return true
+}
+
+// ratioCountersPresent reports whether either cache-hit counter pair
+// (hits/queries, or llama.cpp's cached/computed) is available on both
+// samples, i.e. a delta ratio is computable in principle.
+func ratioCountersPresent(old, next runtimeCounters) bool {
+	return (old.cacheHits != nil && next.cacheHits != nil && old.cacheQueries != nil && next.cacheQueries != nil) ||
+		(old.cachedPromptTokens != nil && next.cachedPromptTokens != nil && old.computedPromptTokens != nil && next.computedPromptTokens != nil)
+}
+
+// recordThroughputSignal records one throughput signal from a scrape pair.
+// While the backend publishes the counter pair on both samples, counters are
+// authoritative: the delta is recorded, and when the delta is not computable
+// (idle engine: no elapsed decode seconds) the stale current is DROPPED
+// instead of substituting the engine's rate gauge - that gauge would fold an
+// instantaneous engine-wide value into a counter-delta window and present the
+// last burst (or the gauge) as a live measurement. The gauge is used only
+// when the pair is absent, mirroring the first-sample branch.
+func recordThroughputSignal(a *throughputAggregate, at time.Time, oldTokens, newTokens, oldSeconds, newSeconds, gauge *float64) {
+	if oldTokens != nil && newTokens != nil && oldSeconds != nil && newSeconds != nil {
+		if !recordThroughput(a, at, oldTokens, newTokens, oldSeconds, newSeconds) {
+			clearThroughputCurrent(a, at)
+		}
+		return
+	}
+	recordGaugeThroughput(a, at, gauge)
+}
+
+// recordRatioSignal is the ratio counterpart of recordThroughputSignal.
+func recordRatioSignal(a *ratioAggregate, at time.Time, old, next runtimeCounters) {
+	if ratioCountersPresent(old, next) {
+		if !recordRatio(a, at, old, next) {
+			clearRatioCurrent(a, at)
+		}
+		return
+	}
+	recordGaugeRatio(a, at, next.cacheRatePercent)
+}
+
+// clearThroughputCurrent drops the current rate after a scrape that produced
+// no new measurement despite live counters, re-deriving window stats from
+// samples still inside the reporting window so avg/max decay honestly during
+// a prolonged idle instead of being presented as fresh indefinitely.
+func clearThroughputCurrent(a *throughputAggregate, at time.Time) {
+	a.current = nil
+	a.samples = trimWindowed(a.samples, at)
+	a.avg, a.max = windowStats(a.samples)
+}
+
+// clearRatioCurrent is the ratio counterpart of clearThroughputCurrent.
+func clearRatioCurrent(a *ratioAggregate, at time.Time) {
+	a.current = nil
+	a.samples = trimWindowed(a.samples, at)
+	a.avg, _ = windowStats(a.samples)
 }
 func countersReset(old, next runtimeCounters) bool {
 	for _, p := range [][2]*float64{{old.generationTokens, next.generationTokens}, {old.generationSeconds, next.generationSeconds}, {old.prefillTokens, next.prefillTokens}, {old.prefillSeconds, next.prefillSeconds}, {old.cacheHits, next.cacheHits}, {old.cacheQueries, next.cacheQueries}, {old.cachedPromptTokens, next.cachedPromptTokens}, {old.computedPromptTokens, next.computedPromptTokens}} {
@@ -617,11 +708,13 @@ func runtimeMetricsKind(endpoint *domain.Endpoint) string {
 var vllmKVUsageNames = []string{"vllm:kv_cache_usage_ratio", "vllm_kv_cache_usage_ratio", "vllm:kv_cache_usage_perc", "vllm_kv_cache_usage_perc", "vllm:gpu_cache_usage_perc", "vllm_gpu_cache_usage_perc"}
 
 func parseRuntimeCounters(kind, exposition string) runtimeCounters {
-	return parseRuntimeCountersFrom(kind, strings.NewReader(exposition))
+	counters, _ := parseRuntimeCountersFrom(kind, strings.NewReader(exposition))
+	return counters
 }
 
-func parseRuntimeCountersFrom(kind string, r io.Reader) runtimeCounters {
-	return selectRuntimeCounters(kind, parsePrometheusExposition(r))
+func parseRuntimeCountersFrom(kind string, r io.Reader) (runtimeCounters, error) {
+	values, err := parsePrometheusExposition(r)
+	return selectRuntimeCounters(kind, values), err
 }
 
 func selectRuntimeCounters(kind string, values map[string]float64) runtimeCounters {
@@ -700,7 +793,8 @@ func normalisePercent(v *float64) *float64 {
 // callers holding the exposition in memory; scrapes stream through
 // parsePrometheusExposition directly.
 func parsePrometheusSums(exposition string) map[string]float64 {
-	return parsePrometheusExposition(strings.NewReader(exposition))
+	sums, _ := parsePrometheusExposition(strings.NewReader(exposition))
+	return sums
 }
 
 // parsePrometheusExposition aggregates an exposition in one streaming pass.
@@ -710,7 +804,7 @@ func parsePrometheusSums(exposition string) map[string]float64 {
 // nonsense above 100%, while the worst series is the operator-relevant value.
 // Names with no `# TYPE` line keep the historic summing behaviour
 // (single-series payloads aggregate identically either way).
-func parsePrometheusExposition(r io.Reader) map[string]float64 {
+func parsePrometheusExposition(r io.Reader) (map[string]float64, error) {
 	out := make(map[string]float64)
 	gauges := make(map[string]bool)
 	s := bufio.NewScanner(r)
@@ -748,7 +842,7 @@ func parsePrometheusExposition(r io.Reader) map[string]float64 {
 		}
 		out[name] += value
 	}
-	return out
+	return out, s.Err()
 }
 
 // hashEndpointRuntimeMetrics feeds the value-bearing fields of a runtime
@@ -763,6 +857,7 @@ func hashEndpointRuntimeMetrics(h hash.Hash, m *EndpointRuntimeMetrics) {
 		return
 	}
 	hashEtagString(h, strconv.FormatBool(m.Stale))
+	hashEtagString(h, m.Kind)
 	hashRuntimeThroughput(h, m.GenerationTPS)
 	hashRuntimeThroughput(h, m.PrefillTPS)
 	hashRuntimeAverage(h, m.CacheHitPercent)

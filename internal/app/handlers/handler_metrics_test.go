@@ -228,6 +228,25 @@ func TestFormatPrometheusFloat(t *testing.T) {
 	assert.Equal(t, "99.6", formatPrometheusFloat(99.6))
 }
 
+// TestSuccessRateGaugeStaysProxyWideInModelMode pins the scope of
+// olla_success_rate_percent: response.System.SuccessRate is re-scoped to the
+// configured models' own traffic when health.mode=model (rendering "N/A",
+// which parses as 0, when those models idle on an otherwise busy proxy), but
+// the Prometheus gauge named "proxy success rate" must keep reporting the
+// proxy-wide rate in every mode.
+func TestSuccessRateGaugeStaysProxyWideInModelMode(t *testing.T) {
+	rec := httptest.NewRecorder()
+	response := StatusResponse{}
+	response.System.SuccessRate = "N/A"
+	response.System.HasTraffic = false
+	snapshot := &statusSnapshot{proxyStats: ports.ProxyStats{TotalRequests: 100, SuccessfulRequests: 99}}
+	writePrometheusMetrics(rec, response, snapshot, config.ProxyConfig{}, time.Minute, ModelStatsSummary{}, nil, nil, nil)
+
+	body := rec.Body.String()
+	require.Contains(t, body, "olla_success_rate_percent 99")
+	assert.NotContains(t, body, "olla_success_rate_percent 0")
+}
+
 func TestParsePercentage(t *testing.T) {
 	t.Parallel()
 

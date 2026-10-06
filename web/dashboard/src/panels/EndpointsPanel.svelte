@@ -152,9 +152,9 @@
   // an engine with no scheduler queue exposes no queue gauge - so a fresh
   // absent field is unsupported for THIS measurement, not sampled. Stale stays
   // owned by runtimeTitle so the last scrape time still surfaces.
-  function fieldTitle(metrics: EndpointRuntimeMetrics | undefined, label: string, value: number | null): string {
+  function fieldTitle(metrics: EndpointRuntimeMetrics | undefined, label: string, value: number | null, caveat = "current gauge, latest scrape only"): string {
     if (metrics && !metrics.stale && value === null) return label + ": unsupported by this backend";
-    return runtimeTitle(metrics, label, "current gauge, latest scrape only");
+    return runtimeTitle(metrics, label, caveat);
   }
 
   // Radiance throughput is engine-wide: every concurrent stream in the batch
@@ -172,10 +172,18 @@
     return "Speculative decode acceptance: " + fmtPct(current) + (avg !== null ? " (avg " + fmtNum(avg) + ")" : "");
   }
 
+  // Radiance semantics follow the RESOLVED dialect, not the endpoint type:
+  // an engine pinned via runtime_metrics.kind (or matched by name) behind a
+  // generic type still reports batch-aggregated throughput. The type check
+  // only covers legacy payloads without a kind.
+  function isRadianceDialect(row: EndpointRow): boolean {
+    return row.runtime_metrics?.kind === "radiance" || (!row.runtime_metrics?.kind && row.type === "radiance");
+  }
+
   function rateTitle(row: EndpointRow, label: string, withSpecAccept = false): string {
     const metrics = row.runtime_metrics;
     const parts = [runtimeTitle(metrics, label)];
-    if (row.type === "radiance") {
+    if (isRadianceDialect(row)) {
       parts.push(BATCH_NOTE);
       if (withSpecAccept) {
         const spec = specAcceptTitle(metrics);
@@ -255,7 +263,7 @@
           </div>
         </td>
         <td class={cellClass("cache_hit_percent_current")}>
-          <div class="runtime-metric" title={runtimeTitle(e.runtime_metrics, "Prompt-cache hit rate")}>
+          <div class="runtime-metric" title={fieldTitle(e.runtime_metrics, "Prompt-cache hit rate", e.cache_hit_percent_current, "avg over last 10m")}>
             {#if e.cache_hit_percent_current !== null}
               <span class="runtime-current">{fmtPct(e.cache_hit_percent_current)}</span>
               <span class="runtime-summary">avg {#if runtimeNumber(e.runtime_metrics, e.runtime_metrics?.cache_hit_percent?.avg) !== null}{fmtPct(e.runtime_metrics?.cache_hit_percent?.avg ?? 0)}{:else}—{/if}</span>
@@ -263,7 +271,7 @@
           </div>
         </td>
         <td class={cellClass("kv_cache_usage_percent")}>
-          <div class="runtime-metric" title={runtimeTitle(e.runtime_metrics, "KV-cache utilisation")}>
+          <div class="runtime-metric" title={fieldTitle(e.runtime_metrics, "KV-cache utilisation", e.kv_cache_usage_percent)}>
             {#if e.kv_cache_usage_percent !== null}<span class="runtime-current">{fmtPct(e.kv_cache_usage_percent)}</span>{:else}<span class="dash">—</span>{/if}
           </div>
         </td>

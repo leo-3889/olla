@@ -435,6 +435,8 @@ discovery:
           enabled: true     # required to turn the sampler on for this endpoint
           interval: 10s     # how often to scrape this endpoint (default: 10s)
           timeout: 3s       # per-scrape HTTP timeout (default: 3s)
+          kind: radiance    # metric dialect override (default: auto-detect)
+          path: /metrics    # scrape target path (or absolute URL)
 ```
 
 | Field | Type | Description |
@@ -442,21 +444,28 @@ discovery:
 | `runtime_metrics.enabled` | bool | Turn the sampler on for this endpoint. When the whole `runtime_metrics` block is absent the sampler is disabled for the endpoint. |
 | `runtime_metrics.interval` | duration | How often to scrape the endpoint's `/metrics` (default: `10s`). |
 | `runtime_metrics.timeout` | duration | Per-scrape HTTP timeout (default: `3s`). |
+| `runtime_metrics.kind` | string | Metric dialect: `vllm`, `llamacpp` (also accepted: `halogen`), or `radiance`. Pin it when the endpoint `type` alone does not identify the engine - e.g. a radiance backend registered as `openai-compatible`. Omit to auto-detect from the endpoint type, then the endpoint name (a name containing `radiance` or `halogen`). An unrecognised value is kept as-is and sampled as nothing, with one warning logged. |
+| `runtime_metrics.path` | string | Scrape target appended to the endpoint URL (default `/metrics`). An absolute URL is honoured too, for engines serving metrics on a separate port. |
 
 Scrapes inherit the endpoint's custom `headers` and resolved `auth` headers, so authenticated backends work without extra configuration.
 
-**Exposed signals.** Generation and incremental-prefill throughput report the current value (latest sample), the average over the 10-minute reporting window, and the maximum within that window. Cache hit reports the current value and the window average. KV-cache usage is current-only. Signals the backend does not publish are omitted (rendered as `—` in the dashboard and absent from Prometheus).
+**Exposed signals.** Generation and incremental-prefill throughput report the current value (latest sample), the average over the 10-minute reporting window, and the maximum within that window. Cache hit reports the current value and the window average. KV-cache usage is current-only. Signals the backend does not publish are omitted (rendered as `—` in the dashboard and absent from Prometheus). While a backend's counters keep publishing but stop moving (an idle engine), the *current* throughput values are dropped rather than frozen: the last measured rate is not presented as a live one.
 
-**Stale-data policy.** A failed scrape marks the last good snapshot *stale* and keeps its timestamp; the stale snapshot is retained for as long as the endpoint remains healthy. In the dashboard, stale values render as `—` with a tooltip carrying the last sample time, rather than displaying the last known numbers. An *availability epoch* restarts when the endpoint becomes unavailable or when the backend's counters reset, which clears the reporting window so averages never mix data across a restart.
+**Stale-data policy.** A failed scrape marks the last good snapshot *stale* and keeps its timestamp; the stale snapshot is retained while the endpoint keeps a routable status (`healthy`, `busy`, or `warming` - the states that still receive traffic). Endpoints that are not routable, opted out, or no longer resolve to a dialect serve no snapshot at all. In the dashboard, stale values render as `—` with a tooltip carrying the last sample time, rather than displaying the last known numbers. An *availability epoch* restarts when the endpoint becomes unavailable or when the backend's counters reset, which clears the reporting window so averages never mix data across a restart.
 
-**Supported backends and metric mappings.** Only vLLM and Halogen/llama.cpp endpoints are sampled today. The sampler reads the backend's Prometheus exposition at `<endpoint>/metrics` and maps counters as follows:
+**Supported backends and metric mappings.** vLLM, Halogen/llama.cpp, and Radiance endpoints are sampled. The sampler reads the backend's Prometheus exposition at `<endpoint><runtime_metrics.path>` (default `/metrics`) and maps counters as follows:
 
-| Signal | vLLM | Halogen / llama.cpp |
-|--------|------|---------------------|
-| Generation throughput | `vllm:generation_tokens_total` / `vllm:request_decode_time_seconds_sum` | `llamacpp:tokens_predicted_total` / `llamacpp:tokens_predicted_seconds_total` |
-| Prefill throughput | `vllm:request_prefill_kv_computed_tokens_sum` / `vllm:request_prefill_time_seconds_sum` | `llamacpp:prompt_tokens_total` / `llamacpp:prompt_seconds_total` |
-| Cache hit | `vllm:prefix_cache_hits_total` / `vllm:prefix_cache_queries_total` | `halogen:prompt_tokens_cached_total` / (`halogen:prompt_tokens_cached_total` + `llamacpp:prompt_tokens_total`) |
-| KV-cache usage | `vllm:kv_cache_usage_ratio` (or `vllm:kv_cache_usage_perc` / `vllm:gpu_cache_usage_perc`) | `llamacpp:kv_cache_usage_ratio` |
+| Signal | vLLM | Halogen / llama.cpp | Radiance |
+|--------|------|---------------------|----------|
+| Generation throughput | `vllm:generation_tokens_total` / `vllm:request_decode_time_seconds_sum` | `llamacpp:tokens_predicted_total` / `llamacpp:tokens_predicted_seconds_total` | `radiance:decode_tokens_total` / `radiance:engine_step_seconds_decode_total` |
+| Prefill throughput | `vllm:request_prefill_kv_computed_tokens_sum` / `vllm:request_prefill_time_seconds_sum` | `llamacpp:prompt_tokens_total` / `llamacpp:prompt_seconds_total` | `radiance:prefill_tokens_total` / `radiance:engine_step_seconds_prefill_total` |
+| Cache hit | `vllm:prefix_cache_hits_total` / `vllm:prefix_cache_queries_total` | `halogen:prompt_tokens_cached_total` / (`halogen:prompt_tokens_cached_total` + `llamacpp:prompt_tokens_total`) | `radiance:linear_prefix_cache_hit_rate` (gauge) |
+| KV-cache usage | `vllm:kv_cache_usage_ratio` (or `vllm:kv_cache_usage_perc` / `vllm:gpu_cache_usage_perc`) | `llamacpp:kv_cache_usage_ratio` | `vllm:kv_cache_usage_*` (compat names) |
+| Queue depth | — | — | `radiance:http_queue_depth` |
+| Requests running | — | — | `vllm:num_requests_running` |
+| Speculative acceptance | — | — | `radiance:draft_acceptance_ratio` |
+
+Radiance throughput counters are engine-wide batch aggregates summed across all concurrent streams, not per-stream speed; its rate gauges (`radiance:decode_tokens_per_second`, `radiance:prefill_tokens_per_second`) are used only when the counter pair is absent from the exposition.
 
 Throughput and cache-hit rates require counter movement between two samples, so the first sample after enabling (or after an availability-epoch reset) provides only the current KV-cache usage.
 

@@ -54,12 +54,16 @@ type SystemSummary struct {
 	TotalRequests      int64     `json:"total_requests"`
 	TotalFailures      int64     `json:"total_failures"`
 	// HasTraffic lets the dashboard branch on the no-traffic state without
-	// parsing SuccessRate. Always present (not omitempty): it is derivable from
-	// TotalRequests, which is itself always emitted, so every payload carries
-	// an explicit true/false. SuccessRate becomes "N/A" when this is false,
-	// mirroring the endpoint-level convention in handler_status_endpoints.go;
-	// previously it reported "0%" on a healthy fresh boot, which coupled with
-	// the legacy status threshold produced a misleading "critical" verdict.
+	// parsing SuccessRate. Always present (not omitempty). In host mode - and
+	// in model mode while the model verdict has no signal yet - it is exactly
+	// TotalRequests > 0. In model mode with a live model-scoped verdict it
+	// instead reflects the CONFIGURED MODELS' own traffic, so it can be false
+	// while TotalRequests (proxy-wide) is non-zero: it is NOT derivable from
+	// TotalRequests in that mode. SuccessRate becomes "N/A" when this is
+	// false, mirroring the endpoint-level convention in
+	// handler_status_endpoints.go; previously it reported "0%" on a healthy
+	// fresh boot, which coupled with the legacy status threshold produced a
+	// misleading "critical" verdict.
 	HasTraffic bool `json:"has_traffic"`
 	// HealthMode is the computation that produced Status: "host" (the endpoint
 	// fleet, the historical behaviour) or "model" (a configured list of
