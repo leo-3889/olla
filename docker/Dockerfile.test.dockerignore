@@ -1,0 +1,9 @@
+# Test-build override, honoured by BuildKit for
+# `docker build -f docker/Dockerfile.test`. The repo-root .dockerignore is
+# "exclude everything except a pre-built binary", which would strip the Go
+# source out of the context and break the `COPY . .` in Dockerfile.test. This permissive
+# override keeps the whole source tree and only drops VCS metadata and any
+# frontend dependency trees, so the build context stays small but complete.
+.git/
+**/node_modules/
+web/dashboard/node_modules/

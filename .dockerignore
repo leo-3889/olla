@@ -1,8 +1,13 @@
-# Throwaway test build: the repo's own .dockerignore is "exclude everything
-# except a pre-built binary", which would strip the Go source out of the
-# context and break the `COPY . .` in Dockerfile.test. This permissive
-# override keeps the whole source tree and only drops VCS metadata and any
-# frontend dependency trees, so the build context stays small but complete.
-.git/
-**/node_modules/
-web/dashboard/node_modules/
+# Speed only, not correctness: the Dockerfile COPYs each runtime file by name,
+# so nothing here can change what ends up in the image. This just keeps the repo
+# root (Go source, node_modules, editor and agent scratch dirs) from being sent
+# to the daemon on every `make docker-build-local`.
+#
+# GoReleaser builds from its own synthesised context and never reads this file.
+
+# Exclude everything, then re-admit only what the Dockerfile COPYs.
+*
+!olla
+!build/docker-config.yaml
+!config/models.yaml
+!config/profiles
