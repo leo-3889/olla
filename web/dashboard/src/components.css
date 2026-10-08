@@ -368,6 +368,15 @@ main {
   padding: 3px var(--space-3);
   border-bottom: 1px dashed var(--border);
 }
+/* Loading placeholder text inside a table body. Deliberately NOT .scroll-hint:
+   that rule is display:none except on <1180px viewports (it is a "the table
+   scrolls sideways" hint), so reusing it for the loading label made "loading…"
+   literally invisible on normal screens. Plain always-visible text. */
+.table-loading {
+  padding: 10px;
+  font-size: 0.78rem;
+  color: var(--text-faint);
+}
 @media (max-width: 1180px) {
   .scroll-hint {
     display: block;
@@ -381,14 +390,15 @@ table {
   font-size: 0.78rem;
 }
 thead th {
-  position: sticky;
-  top: 0;
+  /* No sticky header: these tables only overflow HORIZONTALLY (.table-scroll
+     scrolls x; vertical growth is page-level), and position:sticky inside an
+     x-overflow container never pins across page scroll - it only forced an
+     opaque background and z-index for no effect. */
   background: var(--bg-inset);
   text-align: left;
   border-bottom: 1px solid var(--border-strong);
   padding: 0;
   white-space: nowrap;
-  z-index: 2;
 }
 /* `align-right` is the ONLY thing that right-aligns a column, on both the
    header and the cell - driven by `column.align` in SortableTable, never by

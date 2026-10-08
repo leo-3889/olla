@@ -337,16 +337,20 @@ func hashEndpointStatusResponse(resp *EndpointStatusResponse) string {
 // happened. Deliberately excluded, beyond the already-skipped relative
 // strings (HealthCheck, LastModelSync):
 //
-//   - NextCheckAt/HealthCheckAt: advance on every health-check tick (30s,
-//     see internal/adapter/health) regardless of whether the endpoint's
-//     status changed, so including them churned the ETag under zero traffic -
-//     defeating the point of caching.
-//   - LastModelSyncAt: same problem, tied to the periodic model-list sync
-//     rather than an actual model-list change.
+//   - NextCheckAt/HealthCheckAt/LastModelSyncAt: these advance on every
+//     health-check / model-sync tick (30s probes, see internal/adapter/health)
+//     even when nothing rendered has changed. Hashing them raw churned the
+//     ETag twice per minute under zero traffic; hashing them NOT AT ALL was
+//     worse - a 304 froze the dashboard's "Last chk / Next chk" columns
+//     indefinitely, and those columns render these very fields while the
+//     header claims live data. They are hashed through hashMinuteBucket:
+//     coarse UTC minutes, so an idle endpoint costs at most one extra 200 per
+//     minute and the rendered (minute-truncated) instants can never lag
+//     behind a cache hit.
 //   - RuntimeMetrics SampledAt/AvailableSince: they advance on every sampler
 //     scrape even when every rendered value is unchanged, churning the ETag
 //     on an idle opted-in endpoint; hashEndpointRuntimeMetrics feeds only the
-//     values and the stale flag.
+//     values and the stale flag. The dashboard renders no instant from them.
 //
 // ResponseTime is kept: it renders from endpoint.LastLatency, an absolute
 // measurement that only changes when a real request completes, not the wall
@@ -368,6 +372,22 @@ func hashEndpointSummary(h hash.Hash, s *EndpointSummary) {
 	hashEtagInt64(h, s.ActiveConnections)
 	hashEndpointRuntimeMetrics(h, s.RuntimeMetrics)
 	hashEtagInt64Ptr(h, s.AvgLatencyMs)
+	hashMinuteBucket(h, s.NextCheckAt)
+	hashMinuteBucket(h, s.HealthCheckAt)
+	hashMinuteBucket(h, s.LastModelSyncAt)
+}
+
+// hashMinuteBucket folds a wall-clock instant down to its UTC minute. The
+// dashboard truncates these fields to minute precision when rendering, so
+// anything finer carries no visible information - hashing at the minute keeps
+// the ETag honest about what a 304 would hide without letting
+// second-granularity probe ticks defeat caching. nil hashes as "".
+func hashMinuteBucket(h hash.Hash, t *time.Time) {
+	if t == nil {
+		hashEtagString(h, "")
+		return
+	}
+	hashEtagString(h, t.UTC().Truncate(time.Minute).Format(time.RFC3339))
 }
 
 // unparseableURLSentinel is returned by sanitiseDisplayURL when url.Parse

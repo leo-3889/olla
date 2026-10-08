@@ -1,19 +1,34 @@
-# Throwaway 2-stage build for the test/health-feature branch.
+# Throwaway 3-stage build for the test/health-feature branch.
 #
 # The repo's own Dockerfile is single-stage and only wraps a pre-built binary,
 # so it cannot be used here: neither this host nor the build host has a Go
-# toolchain to produce that binary. This file compiles the Go source inside
-# Docker (stage 1) and packages it into a minimal alpine runtime (stage 2),
-# mirroring the runtime layout of the repo's Dockerfile so the resulting image
-# behaves like the production one.
+# or Node toolchain to produce those inputs. This file builds the dashboard
+# with bun (stage 0), compiles the Go source inside Docker (stage 1) and
+# packages it into a minimal alpine runtime (stage 2), mirroring the runtime
+# layout of the repo's Dockerfile so the resulting image behaves like the
+# production one.
 #
 # The permissive Dockerfile.test.dockerignore next to this file (honoured by
-# BuildKit for -f docker/Dockerfile.test) keeps the Go source in the build
-# context; the repo-root .dockerignore stays production-tight.
+# BuildKit for -f docker/Dockerfile.test) keeps the Go source and the
+# dashboard source in the build context; the repo-root .dockerignore stays
+# production-tight.
+#
+# The dashboard dist is BUILT HERE, never shipped pre-built: stage 1 overwrites
+# internal/app/handlers/dashboard/dist with the stage-0 output, so the embedded
+# UI can never silently lag web/dashboard/src (dist is gitignored; a stale
+# local dist previously sailed into the image unnoticed).
 
-# The pre-built dashboard (internal/app/handlers/dashboard/dist) is shipped in
-# the build context separately, because it is gitignored and not in the bundle.
-# go:embed picks it up at compile time in stage 1.
+# ---- Stage 0: dashboard build (bun + vite) ----------------------------------
+FROM oven/bun:1.3.5 AS webbuild
+# Layout mirrors the repo root so vite's outDir (../../internal/app/handlers/
+# dashboard/dist, see web/dashboard/vite.config.js) lands exactly where the
+# go:embed directive in stage 1 reads it.
+WORKDIR /src
+COPY web/dashboard/package.json web/dashboard/bun.lock ./web/dashboard/
+WORKDIR /src/web/dashboard
+RUN bun install --frozen-lockfile
+COPY web/dashboard/ ./
+RUN bun run build
 
 # ---- Stage 1: compile -------------------------------------------------------
 FROM golang:1.24.13-bookworm AS build
@@ -23,8 +38,12 @@ FROM golang:1.24.13-bookworm AS build
 ENV CGO_ENABLED=0
 WORKDIR /src
 # Dockerfile.test.dockerignore keeps the context to the Go source plus the
-# pre-built dashboard; node_modules is excluded.
+# dashboard source; node_modules is excluded.
 COPY . .
+# Overwrite whatever dist the context happened to carry with the freshly
+# built one. This is what makes "edit dashboard source, rebuild image"
+# actually reach the browser.
+COPY --from=webbuild /src/internal/app/handlers/dashboard/dist ./internal/app/handlers/dashboard/dist
 # -trimpath keeps the binary reproducible; -s -w strips symbols to shrink it.
 RUN go build -trimpath -ldflags "-s -w" -o /app/olla .
 
@@ -42,7 +61,16 @@ COPY --from=build /app/olla /usr/local/bin/olla
 COPY config/config.yaml config/config.yaml
 COPY config/models.yaml config/models.yaml
 COPY config/profiles/ config/profiles/
+# Widen the dashboard CIDR allowlist to the private ranges the container can
+# be reached through (docker bridge gateways live in 172.16/12; host-LAN
+# access arrives from the machine's own RFC1918 address). Loopback entries
+# stay. Without this the published port 403s for every non-container-local
+# client while the healthcheck (from inside) stays green. The grep guard
+# fails the BUILD if the anchor ever stops matching, instead of silently
+# shipping a dashboard nobody can open.
 RUN sed -i 's|host: "localhost"|host: "0.0.0.0"|' config/config.yaml && \
+    sed -i 's|^      - "::1/128"$|      - "::1/128"\n      - "10.0.0.0/8"\n      - "172.16.0.0/12"\n      - "192.168.0.0/16"|' config/config.yaml && \
+    if ! grep -q '^      - "172.16.0.0/12"$' config/config.yaml; then echo "FATAL: dashboard CIDR widening did not apply" >&2; exit 1; fi && \
     chown -R olla:olla /app
 USER olla
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \

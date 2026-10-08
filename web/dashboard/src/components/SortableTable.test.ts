@@ -85,6 +85,48 @@ describe('SortableTable grouped sorting', () => {
     expect(rowIdsFor('beta')).toEqual(['b-1', 'b-50']);
   });
 
+  // Null/mixed values in a grouped numeric column: the comparator coalesces
+  // null/undefined to 0 (documented in SortableTable.svelte), so the position
+  // of a missing value must be DETERMINISTIC - identical in every group and
+  // stable across both sort directions. An "arbitrary but stable-across-runs"
+  // ordering would silently reshuffle the Models panel between identical
+  // polls; this pins the actual contract: null sorts exactly where 0 sorts.
+  it('null values in a grouped numeric column sort deterministically as zero', () => {
+    const nullGroups = [
+      {
+        id: 'alpha',
+        rows: [
+          { id: 'a-hi', name: 'a-hi', n: 5 },
+          { id: 'a-null', name: 'a-null', n: null },
+          { id: 'a-two', name: 'a-two', n: 2 },
+        ],
+      },
+      {
+        id: 'beta',
+        rows: [
+          { id: 'b-null', name: 'b-null', n: null },
+          { id: 'b-one', name: 'b-one', n: 1 },
+        ],
+      },
+    ] as unknown as FixtureGroup[];
+
+    component = mount(Fixture, { target: document.body, props: { columns, groups: nullGroups } });
+    flushSync();
+
+    const header = Array.from(document.querySelectorAll<HTMLButtonElement>('button.sort-btn')).find(
+      (b) => b.textContent?.includes('Count')
+    );
+    header!.click(); // first click -> descending: null(0) lands LAST in both groups
+    flushSync();
+    expect(rowIdsFor('alpha')).toEqual(['a-hi', 'a-two', 'a-null']);
+    expect(rowIdsFor('beta')).toEqual(['b-one', 'b-null']);
+
+    header!.click(); // ascending: null(0) lands FIRST in both groups
+    flushSync();
+    expect(rowIdsFor('alpha')).toEqual(['a-null', 'a-two', 'a-hi']);
+    expect(rowIdsFor('beta')).toEqual(['b-null', 'b-one']);
+  });
+
   it('aria-sort on the header matches the order actually rendered', () => {
     component = mount(Fixture, { target: document.body, props: { columns, groups } });
     flushSync();

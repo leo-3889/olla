@@ -212,7 +212,7 @@
     data-state={endpoints.status === 'error' || endpoints.status === 'stale' ? endpoints.status : null}
   >
   {#if loading}
-    <div class="table-scroll"><div class="scroll-hint">loading…</div>
+    <div class="table-scroll"><div class="table-loading">loading…</div>
       {#each Array(6) as _, i}<div class="skeleton row-skel" style="margin:6px 10px"></div>{/each}
     </div>
   {:else}

@@ -118,15 +118,18 @@ describe('theme toggle', () => {
     expect(theme.resolved).toBe('light');
   });
 
-  it('stops tracking OS changes after destroy(), leaving no dangling listener', async () => {
+  it('survives re-import with the OS listener still armed (no destroy)', async () => {
+    // The singleton has no destroy(): App.svelte used to call it from its
+    // $effect cleanup (HMR/unmount), killing OS-follow for the rest of the
+    // page's life because nothing re-armed the listener. Re-importing must
+    // hand back the SAME live instance.
     const mm = mockMatchMedia(false);
-    const { theme } = await import('./theme.svelte');
-    expect(theme.resolved).toBe('light');
+    const first = await import('./theme.svelte');
+    const again = await import('./theme.svelte');
+    expect(again.theme).toBe(first.theme);
 
-    theme.destroy();
     mm.fireChange(true);
-
-    expect(theme.resolved).toBe('light');
+    expect(again.theme.resolved).toBe('dark');
   });
 });
 

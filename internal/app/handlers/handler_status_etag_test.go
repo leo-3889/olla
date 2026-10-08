@@ -217,9 +217,14 @@ func TestStatusResponse_ETagStableAcrossRelativeTimeChurn(t *testing.T) {
 func TestEndpointStatusResponse_ETagStableAcrossRelativeTimeChurn(t *testing.T) {
 	t.Parallel()
 
-	checkAt1 := time.Now()
-	nextAt1 := checkAt1.Add(30 * time.Second)
-	syncAt1 := checkAt1.Add(-time.Minute)
+	// Pinned to a fixed instant inside a minute so the 15s tick below can
+	// never straddle a minute boundary: hashMinuteBucket truncates the *At
+	// fields to UTC minutes, and the point of THIS test is intra-minute
+	// stability. Boundary behaviour gets its own test below.
+	minute := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	checkAt1 := minute.Add(5 * time.Second)
+	nextAt1 := minute.Add(35 * time.Second)
+	syncAt1 := minute.Add(-30 * time.Second)
 
 	r1 := EndpointStatusResponse{
 		Timestamp:     time.Now(),
@@ -240,14 +245,15 @@ func TestEndpointStatusResponse_ETagStableAcrossRelativeTimeChurn(t *testing.T) 
 		}},
 	}
 
-	// A later health-check tick with no real change: HealthCheckAt/NextCheckAt
-	// advance every 30s (see internal/adapter/health) and LastModelSyncAt
-	// advances on its own periodic sync, none of which the dashboard needs to
-	// invalidate its cache over - this is exactly the campaign-found ETag
-	// churn-under-zero-traffic bug.
-	checkAt2 := checkAt1.Add(30 * time.Second)
-	nextAt2 := checkAt2.Add(30 * time.Second)
-	syncAt2 := syncAt1.Add(time.Minute)
+	// A later health-check tick with no real change, still inside the same
+	// UTC minute: HealthCheckAt/NextCheckAt advance on every 30s probe (see
+	// internal/adapter/health) and LastModelSyncAt on its periodic sync. Raw
+	// hashing churned the ETag twice per minute under zero traffic (the
+	// campaign-found bug); minute-bucket hashing keeps a same-minute tick a
+	// cache hit while a boundary crossing is covered by the test below.
+	checkAt2 := minute.Add(20 * time.Second)
+	nextAt2 := minute.Add(50 * time.Second)
+	syncAt2 := minute.Add(-10 * time.Second)
 
 	r2 := r1
 	r2.Endpoints = append([]EndpointSummary(nil), r1.Endpoints...)
@@ -260,6 +266,56 @@ func TestEndpointStatusResponse_ETagStableAcrossRelativeTimeChurn(t *testing.T) 
 
 	assert.Equal(t, hashEndpointStatusResponse(&r1), hashEndpointStatusResponse(&r2))
 }
+
+// TestEndpointStatusResponse_ETagChangesAcrossMinuteBuckets is the honest half
+// of the minute-bucket contract: the dashboard renders these instants
+// (minute-truncated) in "Last chk / Next chk", so a health-check tick that
+// crosses a minute boundary MUST change the ETag. Without this, a 304 freezes
+// columns that claim to be live.
+func TestEndpointStatusResponse_ETagChangesAcrossMinuteBuckets(t *testing.T) {
+	t.Parallel()
+
+	minute := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	r1 := EndpointStatusResponse{
+		TotalCount:   1,
+		HealthyCount: 1,
+		RoutableCount: 1,
+		Endpoints: []EndpointSummary{{
+			ID:             "abc",
+			Name:           "ep1",
+			Type:           "ollama",
+			Status:         healthyStatus,
+			URL:            "http://localhost:11434",
+			HealthCheckAt:  ptr(minute.Add(10 * time.Second)),
+			NextCheckAt:    ptr(minute.Add(40 * time.Second)),
+			LastModelSyncAt: ptr(minute.Add(-time.Hour)),
+		}},
+	}
+	r2 := r1
+	r2.Endpoints = append([]EndpointSummary(nil), r1.Endpoints...)
+	r2.Endpoints[0].HealthCheckAt = ptr(minute.Add(time.Minute + 10*time.Second))
+	r2.Endpoints[0].NextCheckAt = ptr(minute.Add(time.Minute + 40*time.Second))
+
+	assert.NotEqual(t, hashEndpointStatusResponse(&r1), hashEndpointStatusResponse(&r2),
+		"ETag must change when a health-check instant crosses its rendered minute")
+
+	// Sub-minute jitter must NOT change it (same contract as the churn test,
+	// pinned on the second bucket alone).
+	r3 := r1
+	r3.Endpoints = append([]EndpointSummary(nil), r1.Endpoints...)
+	r3.Endpoints[0].NextCheckAt = ptr(minute.Add(41 * time.Second))
+	assert.Equal(t, hashEndpointStatusResponse(&r1), hashEndpointStatusResponse(&r3),
+		"sub-minute drift inside the same rendered minute must stay a cache hit")
+
+	// nil -> present is a rendered change (column goes from dash to instant).
+	r4 := r1
+	r4.Endpoints = append([]EndpointSummary(nil), r1.Endpoints...)
+	r4.Endpoints[0].LastModelSyncAt = nil
+	assert.NotEqual(t, hashEndpointStatusResponse(&r1), hashEndpointStatusResponse(&r4),
+		"a rendered instant appearing/disappearing must change the ETag")
+}
+
+func ptr(t time.Time) *time.Time { return &t }
 
 // TestEndpointStatusResponse_ETagChangesOnStatusFlip guards the inverse of
 // the churn-stability test above: a genuine status change must still produce

@@ -12,6 +12,7 @@
   import { jumpToEndpoint } from '../lib/jump-to-endpoint';
   import { getNow as liveNow } from '../lib/clock.svelte';
   import type { EndpointSummary } from '../lib/types';
+  import { statusMeta, statusRank } from '../lib/status';
 
   const sys = $derived(overview.data?.system);
   const proxy = $derived(overview.data?.proxy);
@@ -122,12 +123,7 @@
 
   // Default sort is unhealthy-first: an ops glance view should surface the
   // backends that need attention before the ones already fine.
-  function statusRank(s: string): number {
-    if (s === 'offline' || s === 'critical') return 0;
-    if (s === 'degraded' || s === 'unhealthy') return 1;
-    if (s === 'healthy') return 2;
-    return 3;
-  }
+
 
   // avg_latency_ms is the API's numeric average PROXY latency field - never
   // derive it from response_time (last HEALTH-CHECK probe latency, a
@@ -147,12 +143,7 @@
   const now = $derived(liveNow());
   const uptimeText = $derived(sys?.start_time ? fmtUptime(sys.start_time, now) : '—');
 
-  function statusGlyph(s: string): string {
-    return s === 'healthy' ? '●' : s === 'degraded' || s === 'unhealthy' ? '◐' : '○';
-  }
-  function statusCls(s: string): string {
-    return s === 'healthy' ? 'green' : s === 'degraded' || s === 'unhealthy' ? 'amber' : 'red';
-  }
+
 
   // total_traffic arrives formatted as e.g. "172.02 GB". Re-parse to bytes so
   // fmtBytes (our single formatting authority) renders it consistently.
@@ -208,7 +199,7 @@
       <div class="tile-grid">
         <StatTile label="System status">
           {#snippet children()}
-            <span class="glyph g-{statusCls(sys.status)}" aria-hidden="true">{statusGlyph(sys.status)}</span>
+            <span class="glyph g-{statusMeta(sys.status).cls}" aria-hidden="true">{statusMeta(sys.status).glyph}</span>
             {sys.status}
           {/snippet}
           {#snippet subSnippet()}
@@ -321,7 +312,7 @@
               onclick={() => jumpToEndpoint(endpointIdentity(e))}
               title="Open {e.name} in the Endpoints panel"
             >
-              <span class="glyph g-{statusCls(e.status)}" aria-hidden="true">{statusGlyph(e.status)}</span>
+              <span class="glyph g-{statusMeta(e.status).cls}" aria-hidden="true">{statusMeta(e.status).glyph}</span>
               <span class="txt">{e.name}</span>
             </button>
           </td>

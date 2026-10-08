@@ -32,10 +32,14 @@ import (
 
 // DashboardRoute is the mux subtree the dashboard owns. Go's http.ServeMux
 // treats the trailing slash as a catch-all, so this single registration covers
-// /internal/ui/ and every sub-path. Mounted under /internal/ so its assets
-// share the same access-policy zone as the data they display, and so no
+// /internal/ui/ and every sub-path. Mounted under /internal/ so no
 // profile-driven provider route can collide (provider routes are always
-// under /olla/).
+// under /olla/). Note the zone is NOT access-gated as a whole: this
+// middleware wraps ONLY the /internal/ui* paths. /internal/status and
+// /internal/metrics ride the same listener unauthenticated by design
+// (config gate_internal_api is currently inert), so the dashboard's own
+// data endpoints are no more restricted than they were before this
+// middleware existed - the policy here protects the UI shell, not the API.
 const DashboardRoute = "/internal/ui/"
 
 // SlashlessDashboardRoute is the exact-match path without the trailing slash.
@@ -54,7 +58,9 @@ const SlashlessDashboardRoute = "/internal/ui"
 
 // AccessMiddleware returns a handler that enforces the dashboard's
 // network-layer policy before delegating to next. cfg must already be Validated
-// (RegisterRoutes guarantees this); an unvalidated config with nil parsed CIDRs
+// - config.Load -> Config.Validate parses the CIDR strings at startup, which
+// is the guarantee this relies on (RegisterRoutes itself does not validate).
+// An unvalidated config with nil parsed CIDRs
 // rejects every request, which is the safe failure mode. log may be nil: the
 // registry has tests that construct handlers without one, and in that case
 // rejections still surface in the response body, just without the Warn line.

@@ -6,7 +6,6 @@
   import ModelsPanel from './panels/ModelsPanel.svelte';
   import { pollScheduler } from './lib/poll-scheduler';
   import { startClock } from './lib/clock.svelte';
-  import { theme } from './lib/stores/theme.svelte';
   import { navigation } from './lib/stores/navigation.svelte';
   // Overview is always-on (StatusStrip renders on every panel), so App owns
   // its lifecycle. Endpoints/models stores are started/stopped by their panels.
@@ -32,8 +31,11 @@
     overview.start();
     pollScheduler.start();
     return () => {
+      // Only the scheduler is torn down. The theme singleton (and its
+      // matchMedia listener) deliberately outlives App: on HMR/unmount
+      // nothing re-arms a destroyed listener, and OS-follow died for the
+      // whole remaining page life.
       pollScheduler.stop();
-      theme.destroy();
     };
   });
 

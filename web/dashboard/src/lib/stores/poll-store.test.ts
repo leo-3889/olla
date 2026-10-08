@@ -182,3 +182,164 @@ describe('createPollStore: onTick callback', () => {
     expect(ticks.length).toBe(0);
   });
 });
+
+// Aborts must never masquerade as data errors. When the scheduler supersedes
+// a tick (manual refresh, tab-return burst) or stops the job, the fetch is
+// aborted - and if that lands while resp.json() is streaming, the body
+// promise rejects too. The old body-catch had no abort check, so every
+// "Retry now" click during a slow response flashed a bogus "invalid JSON"
+// failure over perfectly good cached data.
+describe('createPollStore: abort handling', () => {
+  it('a supersede during the response body read is silent and the newer tick wins', async () => {
+    const ticks: Array<{ data: unknown; ok: boolean }> = [];
+    let call = 0;
+    global.fetch = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      call++;
+      if (call === 1) {
+        // Headers "arrive", then the body stalls until the signal aborts -
+        // exactly what a real fetch does when superseded mid-download.
+        return {
+          status: 200,
+          ok: true,
+          headers: { get: () => null },
+          json: () =>
+            new Promise((_res, rej) => {
+              init?.signal?.addEventListener('abort', () =>
+                rej(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+              );
+            }),
+        };
+      }
+      return jsonResponse(SAMPLE_BODY);
+    });
+
+    const { createPollStore } = await import('./poll-store.svelte');
+    const store = createPollStore<StatusResponse>({
+      name: 'test-abort-body',
+      url: '/test',
+      intervalMs: 60_000, // keep the scheduler's own timer out of the picture
+      onTick: (data, ok) => ticks.push({ data, ok }),
+    });
+
+    store.refresh(); // tick 1: in-flight, body stalled
+    await vi.waitFor(() => expect(call).toBe(1));
+    store.refresh(); // tick 2 supersedes: scheduler aborts tick 1's signal
+    await vi.waitFor(() => expect(ticks.length).toBe(1));
+
+    expect(store.status).toBe('ok'); // tick 2's success
+    expect(store.error).toBeNull(); // the abort produced no error state
+    expect(ticks.every((t) => t.ok)).toBe(true); // no failure tick from the abort
+  });
+});
+
+// Failures must walk loading -> error -> stale on a schedule that matches how
+// often we actually poll, including when the tab is hidden and the scheduler
+// throttles ticks by BACKGROUND_BACKOFF.
+describe('createPollStore: error/stale escalation', () => {
+  it('non-2xx escalates error -> stale once the last success is older than 3 intervals', async () => {
+    vi.useFakeTimers();
+    try {
+      let mode: 'ok' | 'fail' = 'ok';
+      global.fetch = vi.fn(async () =>
+        mode === 'ok' ? jsonResponse(SAMPLE_BODY) : jsonResponse(null, { status: 500 })
+      );
+
+      const { createPollStore } = await import('./poll-store.svelte');
+      const store = createPollStore<StatusResponse>({
+        name: 'test-escalate',
+        url: '/test',
+        intervalMs: 1000, // stale threshold: 3000ms (visible)
+      });
+
+      store.refresh();
+      await vi.waitFor(() => expect(store.status).toBe('ok'));
+
+      mode = 'fail';
+      vi.advanceTimersByTime(2000); // still inside the 3x window
+      store.refresh();
+      await vi.waitFor(() => expect(store.status).toBe('error'));
+      expect(store.error?.message).toBe('HTTP 500');
+
+      vi.advanceTimersByTime(2000); // last success now 4000ms old
+      store.refresh();
+      await vi.waitFor(() => expect(store.status).toBe('stale'));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not escalate to stale on the first background failure: the threshold scales with the backoff', async () => {
+    vi.useFakeTimers();
+    const vis = Object.getOwnPropertyDescriptor(document, 'visibilityState');
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+    try {
+      let mode: 'ok' | 'fail' = 'ok';
+      global.fetch = vi.fn(async () =>
+        mode === 'ok' ? jsonResponse(SAMPLE_BODY) : jsonResponse(null, { status: 500 })
+      );
+
+      const { createPollStore } = await import('./poll-store.svelte');
+      const store = createPollStore<StatusResponse>({
+        name: 'test-hidden-stale',
+        url: '/test',
+        intervalMs: 1000, // hidden threshold: 3 * BACKGROUND_BACKOFF(4) * 1000 = 12000
+      });
+
+      store.refresh();
+      await vi.waitFor(() => expect(store.status).toBe('ok'));
+
+      mode = 'fail';
+      // 4000ms: an UNSCALED 3x threshold would already say "stale" here,
+      // making the error state unreachable the moment the tab is backgrounded.
+      vi.advanceTimersByTime(4000);
+      store.refresh();
+      await vi.waitFor(() => expect(store.status).toBe('error'));
+
+      vi.advanceTimersByTime(10_000); // 14s old > 12s scaled window -> stale
+      store.refresh();
+      await vi.waitFor(() => expect(store.status).toBe('stale'));
+    } finally {
+      if (vis) Object.defineProperty(document, 'visibilityState', vis);
+      else delete (document as unknown as Record<string, unknown>).visibilityState;
+      vi.useRealTimers();
+    }
+  });
+
+  it('a blown response deadline fails the tick instead of hanging the store forever', async () => {
+    // The real AbortSignal.timeout runs on a native timer that fake timers
+    // cannot fast-forward; stub it with a hand-controlled signal so this test
+    // pins the WIRING (deadline abort -> failure tick), not the clock.
+    const ctrl = new AbortController();
+    const realTimeout = AbortSignal.timeout;
+    AbortSignal.timeout = (() => ctrl.signal) as typeof AbortSignal.timeout;
+    try {
+      global.fetch = vi.fn(
+        (_url: RequestInfo | URL, init?: RequestInit) =>
+          new Promise((_res, rej) =>
+            init?.signal?.addEventListener('abort', () =>
+              rej(Object.assign(new Error('timeout'), { name: 'AbortError' }))
+            )
+          )
+      );
+
+      const ticks: Array<{ ok: boolean; err?: string }> = [];
+      const { createPollStore } = await import('./poll-store.svelte');
+      const store = createPollStore<StatusResponse>({
+        name: 'test-deadline',
+        url: '/test',
+        intervalMs: 60_000, // real deadline would be 5000ms floor; stub wins
+        onTick: (data, ok) => ticks.push({ ok, err: ok ? undefined : 'fail' }),
+      });
+
+      store.refresh();
+      await vi.waitFor(() => expect(global.fetch).toHaveBeenCalled());
+      ctrl.abort(); // the deadline signal fires
+      await vi.waitFor(() => expect(store.status).toBe('error'));
+      expect(store.error?.message).toBe('status API did not respond in time');
+      expect(ticks.length).toBe(1);
+      expect(ticks[0].ok).toBe(false);
+    } finally {
+      AbortSignal.timeout = realTimeout;
+    }
+  });
+});

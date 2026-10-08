@@ -38,7 +38,7 @@
       class="tab"
       role="tab"
       aria-selected={navigation.current === name ? 'true' : 'false'}
-      aria-controls="panel-{name}"
+      aria-controls={navigation.current === name ? `panel-${name}` : undefined}
       tabindex={navigation.current === name ? 0 : -1}
       onclick={() => activate(name)}
     >

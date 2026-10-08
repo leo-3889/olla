@@ -13,7 +13,11 @@
 //     scheduler is globally started AND the job is activated via start(name).
 
 const JITTER = 0.12;
-const BACKGROUND_BACKOFF = 4; // multiplied against the configured interval
+export const BACKGROUND_BACKOFF = 4; // multiplied against the configured interval
+// (exported: the store stale clock must scale its threshold by the same factor,
+// or the first background tick escalates error -> stale on its own schedule).
+// (exported: the store's stale clock must scale its threshold by the same factor,
+// or the first background tick escalates error -> stale on its own schedule).
 export const STALE_MULTIPLIER = 3; // last success older than 3*interval => stale
 
 type TickFn = (signal: AbortSignal) => void | Promise<void>;

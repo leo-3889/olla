@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
+import { readFileSync } from 'node:fs';
+
 // Token sets ported verbatim from src/app.css. If either changes, update the
 // other to match. These are the actual colours shipped to operators.
 const LIGHT: Record<string, string> = {
@@ -9,7 +11,8 @@ const LIGHT: Record<string, string> = {
   bgHeader: '#e9e6d8',
   text: '#23261f',
   textDim: '#5c5a49',
-  textFaint: '#6d6a58',
+  textFaint: '#5f5c4b',
+  neutral: '#686554',
   accent: '#0d6b60',
   link: '#0d6b60',
   green: '#187338',
@@ -27,6 +30,7 @@ const DARK: Record<string, string> = {
   text: '#d9e4e1',
   textDim: '#8ba39d',
   textFaint: '#738581',
+  neutral: '#6f8983',
   accent: '#5fd9c6',
   link: '#7ee6d3',
   green: '#4fbd7a',
@@ -59,6 +63,23 @@ function ratio(a: string, b: string): number {
 
 const AA_NORMAL = 4.5; // body text here is 13px or smaller, so we hold everything to 4.5
 
+// Drift guard: the token maps above are hand-ported from src/app.css, so a
+// token change that only touches app.css silently turns this whole suite into
+// theatre (it would keep grading the old colours). Assert every mapped hex is
+// actually present in the stylesheet.
+describe('token maps mirror app.css', () => {
+  // cwd is the dashboard project root under vitest; jsdom makes
+  // import.meta.url an http URL which node:fs cannot open.
+  const css = readFileSync('src/app.css', 'utf8');
+  for (const [theme, map] of [['light', LIGHT], ['dark', DARK]] as const) {
+    for (const [name, hex] of Object.entries(map)) {
+      it(`${theme}.${name} (${hex}) exists in app.css`, () => {
+        expect(css.toLowerCase()).toContain(hex.toLowerCase());
+      });
+    }
+  }
+});
+
 describe('WCAG AA contrast', () => {
   describe('light theme', () => {
     const cases: Array<[string, string, string]> = [
@@ -71,6 +92,17 @@ describe('WCAG AA contrast', () => {
       ['green status on bg', LIGHT.green, LIGHT.bg],
       ['amber status on bg', LIGHT.amber, LIGHT.bg],
       ['red status on bg', LIGHT.red, LIGHT.bg],
+      // --neutral and --text-faint render normal-size text AND the status
+      // glyphs on every surface a panel can show them on: page bg, elevated
+      // cards, and inset (table header background and row hover). The
+      // original light --neutral (#8c8871) failed ALL THREE (2.80-3.42:1);
+      // the original faint failed inset (4.27). These axes are what keeps
+      // that from regressing.
+      ['neutral on bg', LIGHT.neutral, LIGHT.bg],
+      ['neutral on elevated', LIGHT.neutral, LIGHT.bgElevated],
+      ['neutral on inset/hover', LIGHT.neutral, LIGHT.bgInset],
+      ['faint on elevated', LIGHT.textFaint, LIGHT.bgElevated],
+      ['faint on inset/hover', LIGHT.textFaint, LIGHT.bgInset],
     ];
     for (const [name, fg, bg] of cases) {
       it(`${name} meets AA (${ratio(fg, bg).toFixed(2)}:1)`, () => {
@@ -114,6 +146,11 @@ describe('WCAG AA contrast', () => {
       ['green status on bg', DARK.green, DARK.bg],
       ['amber status on bg', DARK.amber, DARK.bg],
       ['red status on bg', DARK.red, DARK.bg],
+      ['neutral on bg', DARK.neutral, DARK.bg],
+      ['neutral on elevated', DARK.neutral, DARK.bgElevated],
+      ['neutral on inset/hover', DARK.neutral, DARK.bgInset],
+      ['faint on elevated', DARK.textFaint, DARK.bgElevated],
+      ['faint on inset/hover', DARK.textFaint, DARK.bgInset],
     ];
     for (const [name, fg, bg] of cases) {
       it(`${name} meets AA (${ratio(fg, bg).toFixed(2)}:1)`, () => {
