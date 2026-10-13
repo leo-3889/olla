@@ -103,16 +103,16 @@ vllm:kv_cache_usage_ratio 0.42
 	got := s.Snapshot(ep)
 	require.NotNil(t, got)
 	assert.Equal(t, start, got.AvailableSince)
-	require.NotNil(t, got.GenerationTPS)
-	assert.InDelta(t, 70, *got.GenerationTPS.Current, .001)
-	assert.InDelta(t, 70, *got.GenerationTPS.Avg, .001)
-	assert.InDelta(t, 70, *got.GenerationTPS.Max, .001)
-	require.NotNil(t, got.PrefillTPS)
-	assert.InDelta(t, 964/1.92, *got.PrefillTPS.Current, .001)
-	require.NotNil(t, got.CacheHitPercent)
-	assert.InDelta(t, 98.1, *got.CacheHitPercent.Current, .001)
-	require.NotNil(t, got.KVCacheUsagePercent)
-	assert.InDelta(t, 42, *got.KVCacheUsagePercent, .001)
+	require.NotNil(t, envMetric(t, got, runtimeMetricKeyGenerationTPS))
+	assert.InDelta(t, 70, *envNum(t, got, runtimeMetricKeyGenerationTPS, runtimeMetricPartCurrent), .001)
+	assert.InDelta(t, 70, *envNum(t, got, runtimeMetricKeyGenerationTPS, runtimeMetricPartAvg), .001)
+	assert.InDelta(t, 70, *envNum(t, got, runtimeMetricKeyGenerationTPS, runtimeMetricPartMax), .001)
+	require.NotNil(t, envMetric(t, got, runtimeMetricKeyPrefillTPS))
+	assert.InDelta(t, 964/1.92, *envNum(t, got, runtimeMetricKeyPrefillTPS, runtimeMetricPartCurrent), .001)
+	require.NotNil(t, envMetric(t, got, runtimeMetricKeyCacheHitPercent))
+	assert.InDelta(t, 98.1, *envNum(t, got, runtimeMetricKeyCacheHitPercent, runtimeMetricPartCurrent), .001)
+	require.NotNil(t, envNum(t, got, runtimeMetricKeyKvCacheUsagePercent, runtimeMetricPartCurrent))
+	assert.InDelta(t, 42, *envNum(t, got, runtimeMetricKeyKvCacheUsagePercent, runtimeMetricPartCurrent), .001)
 }
 
 func TestRuntimeMetricsHalogenCacheUsesTokenWeightedDemand(t *testing.T) {
@@ -135,15 +135,15 @@ llamacpp:prompt_seconds_total 5
 halogen:prompt_tokens_cached_total 981
 `))
 	got := s.Snapshot(ep)
-	require.NotNil(t, got.CacheHitPercent)
+	require.NotNil(t, envMetric(t, got, runtimeMetricKeyCacheHitPercent))
 	// Hit rate is cached / (cached + computed): 981 / (981 + 20) = 98.0%.
-	assert.InDelta(t, 98.0, *got.CacheHitPercent.Current, .01)
-	assert.InDelta(t, 33, *got.GenerationTPS.Current, .001)
-	assert.InDelta(t, 4, *got.PrefillTPS.Current, .001)
+	assert.InDelta(t, 98.0, *envNum(t, got, runtimeMetricKeyCacheHitPercent, runtimeMetricPartCurrent), .01)
+	assert.InDelta(t, 33, *envNum(t, got, runtimeMetricKeyGenerationTPS, runtimeMetricPartCurrent), .001)
+	assert.InDelta(t, 4, *envNum(t, got, runtimeMetricKeyPrefillTPS, runtimeMetricPartCurrent), .001)
 	// Radiance-only saturation/spec fields stay nil for other kinds.
-	assert.Nil(t, got.QueueDepth)
-	assert.Nil(t, got.RequestsRunning)
-	assert.Nil(t, got.SpecAcceptPercent)
+	assert.Nil(t, envNum(t, got, runtimeMetricKeyQueueDepth, runtimeMetricPartCurrent))
+	assert.Nil(t, envNum(t, got, runtimeMetricKeyRequestsRunning, runtimeMetricPartCurrent))
+	assert.Nil(t, envMetric(t, got, runtimeMetricKeySpecAcceptPercent))
 }
 
 // TestRuntimeMetricsHonoursPerEndpointTimeout verifies that a per-endpoint
@@ -186,7 +186,7 @@ func TestRuntimeMetricsCounterResetStartsNewAvailabilityEpoch(t *testing.T) {
 	got := s.Snapshot(ep)
 	require.NotNil(t, got)
 	assert.Equal(t, at.Add(time.Second), got.AvailableSince)
-	assert.Nil(t, got.GenerationTPS)
+	assert.Nil(t, envMetric(t, got, runtimeMetricKeyGenerationTPS))
 }
 
 // TestRuntimeMetricsETagIgnoresSampleTimestampsButTracksValues pins the O2
@@ -194,43 +194,72 @@ func TestRuntimeMetricsCounterResetStartsNewAvailabilityEpoch(t *testing.T) {
 // either status ETag (SampledAt/AvailableSince are excluded), while any
 // rendered value - or the stale flag - must change both.
 func TestRuntimeMetricsETagIgnoresSampleTimestampsButTracksValues(t *testing.T) {
-	current, changed := 70.0, 71.0
-	queue := 6.0
 	t0 := time.Date(2026, 9, 24, 13, 0, 0, 0, time.UTC)
 	t1 := time.Date(2026, 9, 24, 14, 0, 0, 0, time.UTC)
-	base := EndpointRuntimeMetrics{SampledAt: t1, AvailableSince: t0, GenerationTPS: &RuntimeThroughput{Current: &current}}
-	resampled := base
-	resampled.SampledAt = t1.Add(10 * time.Second)
-	resampled.AvailableSince = t0.Add(time.Minute)
-	updated := base
-	updated.GenerationTPS = &RuntimeThroughput{Current: &changed}
-	staled := base
-	staled.Stale = true
-	withQueue := base
-	withQueue.QueueDepth = &queue
-
+	gen := func(current *float64) RuntimeMetric {
+		return RuntimeMetric{Key: runtimeMetricKeyGenerationTPS, Unit: runtimeMetricUnitTokS, Current: current}
+	}
+	seven, eight := 70.0, 71.0
+	zero := 0.0
+	base := EndpointRuntimeMetrics{SampledAt: t1, AvailableSince: t0, Source: runtimeMetricsSourceSampler, Metrics: []RuntimeMetric{gen(&seven)}}
 	hashes := func(m *EndpointRuntimeMetrics) (string, string) {
 		endpoints := EndpointStatusResponse{Endpoints: []EndpointSummary{{ID: "ep", RuntimeMetrics: m}}}
 		status := StatusResponse{Endpoints: []EndpointResponse{{ID: "ep", RuntimeMetrics: m}}}
 		return hashEndpointStatusResponse(&endpoints), hashStatusResponse(&status)
 	}
+	resampled := base
+	resampled.SampledAt = t1.Add(10 * time.Second)
+	resampled.AvailableSince = t0.Add(time.Minute)
+	updated := base
+	updated.Metrics = []RuntimeMetric{gen(&eight)}
+	staled := base
+	staled.Stale = true
+	six := 6.0
+	withQueue := base
+	withQueue.Metrics = append(append([]RuntimeMetric{}, base.Metrics...), RuntimeMetric{Key: runtimeMetricKeyQueueDepth, Unit: runtimeMetricUnitCount, Current: &six})
+	sourceFlip := base
+	sourceFlip.Source = runtimeMetricsSourceInflux
+	zeroed := base
+	zeroed.Metrics = []RuntimeMetric{gen(&zero)}
+	nilCleared := base
+	nilCleared.Metrics = []RuntimeMetric{gen(nil)}
+	noteFlip := base
+	noteFlip.Metrics = []RuntimeMetric{gen(&seven)}
+	noteFlip.Metrics[0].Note = runtimeMetricNoteSamplerWindow
+	scopeFlip := base
+	scopeFlip.Metrics = []RuntimeMetric{gen(&seven)}
+	scopeFlip.Metrics[0].Scope = runtimeMetricScopeEngine
+
 	baseE, baseS := hashes(&base)
 	resampledE, resampledS := hashes(&resampled)
 	assert.Equal(t, baseE, resampledE, "timestamp-only change must not churn the /internal/status/endpoints ETag")
 	assert.Equal(t, baseS, resampledS, "timestamp-only change must not churn the /internal/status ETag")
-	updatedE, updatedS := hashes(&updated)
-	assert.NotEqual(t, baseE, updatedE)
-	assert.NotEqual(t, baseS, updatedS)
-	staledE, staledS := hashes(&staled)
-	assert.NotEqual(t, baseE, staledE)
-	assert.NotEqual(t, baseS, staledS)
-	queueE, queueS := hashes(&withQueue)
-	assert.NotEqual(t, baseE, queueE)
-	assert.NotEqual(t, baseS, queueS)
+	for name, mutate := range map[string]func(m *EndpointRuntimeMetrics){
+		"updated":   func(m *EndpointRuntimeMetrics) { *m = updated },
+		"staled":    func(m *EndpointRuntimeMetrics) { *m = staled },
+		"withQueue": func(m *EndpointRuntimeMetrics) { *m = withQueue },
+		"source":    func(m *EndpointRuntimeMetrics) { *m = sourceFlip },
+		"zeroed":    func(m *EndpointRuntimeMetrics) { *m = zeroed },
+		"nilValue":  func(m *EndpointRuntimeMetrics) { *m = nilCleared },
+		"note":      func(m *EndpointRuntimeMetrics) { *m = noteFlip },
+		"scope":     func(m *EndpointRuntimeMetrics) { *m = scopeFlip },
+	} {
+		flipped := base
+		mutate(&flipped)
+		e, st := hashes(&flipped)
+		assert.NotEqual(t, baseE, e, name+" must churn the endpoints ETag")
+		assert.NotEqual(t, baseS, st, name+" must churn the status ETag")
+	}
+	identical := base
+	identical.SampledAt = t1
+	identicalE, identicalS := hashes(&identical)
+	assert.Equal(t, baseE, identicalE, "equal snapshots must hash equal")
+	assert.Equal(t, baseS, identicalS)
 	noneE, noneS := hashes(nil)
 	assert.NotEqual(t, baseE, noneE)
 	assert.NotEqual(t, baseS, noneS)
 }
+
 
 func TestRuntimeMetricsPrometheusOutputOmitsUnsupportedValues(t *testing.T) {
 	t.Parallel()
@@ -270,8 +299,8 @@ func TestRuntimeMetricsRefreshScrapesHalogenWithConfiguredHeadersAndMarksFailure
 	s.Refresh(t.Context())
 	got := s.Snapshot(ep)
 	require.NotNil(t, got)
-	require.NotNil(t, got.GenerationTPS)
-	assert.InDelta(t, 70, *got.GenerationTPS.Current, .001)
+	require.NotNil(t, envMetric(t, got, runtimeMetricKeyGenerationTPS))
+	assert.InDelta(t, 70, *envNum(t, got, runtimeMetricKeyGenerationTPS, runtimeMetricPartCurrent), .001)
 	s.Refresh(t.Context())
 	got = s.Snapshot(ep)
 	require.NotNil(t, got)
@@ -309,8 +338,8 @@ func TestRuntimeMetricsVLLMKVUsagePerCNormalised(t *testing.T) {
 	ep := &domain.Endpoint{URLString: "x", Type: "vllm", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true}
 	got := s.Snapshot(ep)
 	require.NotNil(t, got)
-	require.NotNil(t, got.KVCacheUsagePercent)
-	assert.InDelta(t, 26.068376068376065, *got.KVCacheUsagePercent, .001)
+	require.NotNil(t, envNum(t, got, runtimeMetricKeyKvCacheUsagePercent, runtimeMetricPartCurrent))
+	assert.InDelta(t, 26.068376068376065, *envNum(t, got, runtimeMetricKeyKvCacheUsagePercent, runtimeMetricPartCurrent), .001)
 }
 
 // TestRuntimeMetricsVLLMGPUCacheUsagePerCIsNormalised verifies O9: the
@@ -342,10 +371,10 @@ func TestRuntimeMetricsWindowAveragesAndMaxEvictsOldSamples(t *testing.T) {
 	s.record("x", at.Add(11*time.Minute), parseRuntimeCounters("vllm", "vllm:generation_tokens_total 110\nvllm:request_decode_time_seconds_sum 2"))
 	got := s.Snapshot(ep)
 	require.NotNil(t, got)
-	require.NotNil(t, got.GenerationTPS)
-	assert.InDelta(t, 100, *got.GenerationTPS.Current, .001)
-	assert.InDelta(t, 100, *got.GenerationTPS.Avg, .001)
-	assert.InDelta(t, 100, *got.GenerationTPS.Max, .001)
+	require.NotNil(t, envMetric(t, got, runtimeMetricKeyGenerationTPS))
+	assert.InDelta(t, 100, *envNum(t, got, runtimeMetricKeyGenerationTPS, runtimeMetricPartCurrent), .001)
+	assert.InDelta(t, 100, *envNum(t, got, runtimeMetricKeyGenerationTPS, runtimeMetricPartAvg), .001)
+	assert.InDelta(t, 100, *envNum(t, got, runtimeMetricKeyGenerationTPS, runtimeMetricPartMax), .001)
 }
 
 func TestParsePrometheusExpositionAggregatesByDeclaredType(t *testing.T) {
@@ -417,8 +446,8 @@ func TestRuntimeMetricsVLLMPrefillFallsBackToPromptTokens(t *testing.T) {
 	s.record("x", time.Unix(10, 0), parseRuntimeCounters("vllm", "vllm:prompt_tokens_total 1000\nvllm:request_prefill_time_seconds_sum 2"))
 	ep := &domain.Endpoint{URLString: "x", Type: "vllm", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true}
 	got := s.Snapshot(ep)
-	require.NotNil(t, got.PrefillTPS)
-	assert.InDelta(t, 500, *got.PrefillTPS.Current, .001)
+	require.NotNil(t, envMetric(t, got, runtimeMetricKeyPrefillTPS))
+	assert.InDelta(t, 500, *envNum(t, got, runtimeMetricKeyPrefillTPS, runtimeMetricPartCurrent), .001)
 }
 
 func TestRuntimeMetricsRadianceCounterDeltasAndSaturationFields(t *testing.T) {
@@ -431,32 +460,32 @@ func TestRuntimeMetricsRadianceCounterDeltasAndSaturationFields(t *testing.T) {
 	s.record(ep.URLString, at, parseRuntimeCounters(kind, radianceT0))
 	first := s.Snapshot(ep)
 	require.NotNil(t, first)
-	assert.Nil(t, first.GenerationTPS, "a single scrape cannot yield a delta rate")
+	assert.Nil(t, envMetric(t, first, runtimeMetricKeyGenerationTPS), "a single scrape cannot yield a delta rate")
 	s.record(ep.URLString, at.Add(10*time.Second), parseRuntimeCounters(kind, radianceT1))
 	got := s.Snapshot(ep)
 	require.NotNil(t, got)
 	// Counter deltas win over the native rate gauges (301.5/1901.7) in the
 	// same payload, and the gauge never pollutes the window.
-	require.NotNil(t, got.GenerationTPS)
-	assert.InDelta(t, 70, *got.GenerationTPS.Current, .001)
-	assert.InDelta(t, 70, *got.GenerationTPS.Max, .001)
-	require.NotNil(t, got.PrefillTPS)
-	assert.InDelta(t, 964/1.92, *got.PrefillTPS.Current, .001)
-	require.NotNil(t, got.CacheHitPercent)
+	require.NotNil(t, envMetric(t, got, runtimeMetricKeyGenerationTPS))
+	assert.InDelta(t, 70, *envNum(t, got, runtimeMetricKeyGenerationTPS, runtimeMetricPartCurrent), .001)
+	assert.InDelta(t, 70, *envNum(t, got, runtimeMetricKeyGenerationTPS, runtimeMetricPartMax), .001)
+	require.NotNil(t, envMetric(t, got, runtimeMetricKeyPrefillTPS))
+	assert.InDelta(t, 964/1.92, *envNum(t, got, runtimeMetricKeyPrefillTPS, runtimeMetricPartCurrent), .001)
+	require.NotNil(t, envMetric(t, got, runtimeMetricKeyCacheHitPercent))
 	// 78% from the linear hit-rate gauge: the two radiance cache counters in
 	// the payload (981 tokens / 1000 checkpoints) are NOT a hit/queries pair
 	// and must never form a ratio (live incident: reported 5,996,000%).
-	assert.InDelta(t, 78, *got.CacheHitPercent.Current, .001)
+	assert.InDelta(t, 78, *envNum(t, got, runtimeMetricKeyCacheHitPercent, runtimeMetricPartCurrent), .001)
 	// The two-series KV gauge takes the worst engine (0.42), never the sum.
-	require.NotNil(t, got.KVCacheUsagePercent)
-	assert.InDelta(t, 42, *got.KVCacheUsagePercent, .001)
-	require.NotNil(t, got.QueueDepth)
-	assert.Equal(t, 7.0, *got.QueueDepth)
-	require.NotNil(t, got.RequestsRunning)
-	assert.Equal(t, 3.0, *got.RequestsRunning)
-	require.NotNil(t, got.SpecAcceptPercent)
-	assert.InDelta(t, 55, *got.SpecAcceptPercent.Current, .001)
-	assert.InDelta(t, 52.5, *got.SpecAcceptPercent.Avg, .001)
+	require.NotNil(t, envNum(t, got, runtimeMetricKeyKvCacheUsagePercent, runtimeMetricPartCurrent))
+	assert.InDelta(t, 42, *envNum(t, got, runtimeMetricKeyKvCacheUsagePercent, runtimeMetricPartCurrent), .001)
+	require.NotNil(t, envNum(t, got, runtimeMetricKeyQueueDepth, runtimeMetricPartCurrent))
+	assert.Equal(t, 7.0, *envNum(t, got, runtimeMetricKeyQueueDepth, runtimeMetricPartCurrent))
+	require.NotNil(t, envNum(t, got, runtimeMetricKeyRequestsRunning, runtimeMetricPartCurrent))
+	assert.Equal(t, 3.0, *envNum(t, got, runtimeMetricKeyRequestsRunning, runtimeMetricPartCurrent))
+	require.NotNil(t, envMetric(t, got, runtimeMetricKeySpecAcceptPercent))
+	assert.InDelta(t, 55, *envNum(t, got, runtimeMetricKeySpecAcceptPercent, runtimeMetricPartCurrent), .001)
+	assert.InDelta(t, 52.5, *envNum(t, got, runtimeMetricKeySpecAcceptPercent, runtimeMetricPartAvg), .001)
 }
 
 const radianceGaugeOnlyT0 = `
@@ -503,16 +532,16 @@ func TestRuntimeMetricsRadianceGaugeFallbackWhenCountersAbsent(t *testing.T) {
 	s.record("x", at, parseRuntimeCounters("radiance", radianceGaugeOnlyT0))
 	first := s.Snapshot(&domain.Endpoint{URLString: "x", Type: "vllm", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true})
 	require.NotNil(t, first)
-	require.NotNil(t, first.GenerationTPS, "gauge-only backends render from the first scrape")
-	assert.InDelta(t, 288.5, *first.GenerationTPS.Current, .001)
-	require.NotNil(t, first.CacheHitPercent)
-	assert.InDelta(t, 76, *first.CacheHitPercent.Current, .001, "hit-rate gauge x100")
+	require.NotNil(t, envMetric(t, first, runtimeMetricKeyGenerationTPS), "gauge-only backends render from the first scrape")
+	assert.InDelta(t, 288.5, *envNum(t, first, runtimeMetricKeyGenerationTPS, runtimeMetricPartCurrent), .001)
+	require.NotNil(t, envMetric(t, first, runtimeMetricKeyCacheHitPercent))
+	assert.InDelta(t, 76, *envNum(t, first, runtimeMetricKeyCacheHitPercent, runtimeMetricPartCurrent), .001, "hit-rate gauge x100")
 	s.record("x", at.Add(10*time.Second), parseRuntimeCounters("radiance", radianceGaugeOnlyT1))
 	got := s.Snapshot(&domain.Endpoint{URLString: "x", Type: "vllm", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true})
-	require.NotNil(t, got.GenerationTPS)
-	assert.InDelta(t, 300.5, *got.GenerationTPS.Current, .001)
-	assert.InDelta(t, 294.5, *got.GenerationTPS.Avg, .001)
-	assert.InDelta(t, 300.5, *got.GenerationTPS.Max, .001)
+	require.NotNil(t, envMetric(t, got, runtimeMetricKeyGenerationTPS))
+	assert.InDelta(t, 300.5, *envNum(t, got, runtimeMetricKeyGenerationTPS, runtimeMetricPartCurrent), .001)
+	assert.InDelta(t, 294.5, *envNum(t, got, runtimeMetricKeyGenerationTPS, runtimeMetricPartAvg), .001)
+	assert.InDelta(t, 300.5, *envNum(t, got, runtimeMetricKeyGenerationTPS, runtimeMetricPartMax), .001)
 	assert.InDelta(t, 1901.7, *s.states["x"].prefill.current, .001, "latest gauge sample wins as current")
 }
 
@@ -549,11 +578,11 @@ radiance:linear_prefix_cache_hit_rate{engine="0"} 0.78
 	s.record("x", at, parseRuntimeCounters("radiance", partial0))
 	s.record("x", at.Add(time.Second), parseRuntimeCounters("radiance", partial1))
 	got := s.Snapshot(&domain.Endpoint{URLString: "x", Type: "vllm", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true})
-	require.NotNil(t, got.GenerationTPS)
-	assert.InDelta(t, 50, *got.GenerationTPS.Current, .001)
-	require.NotNil(t, got.CacheHitPercent)
+	require.NotNil(t, envMetric(t, got, runtimeMetricKeyGenerationTPS))
+	assert.InDelta(t, 50, *envNum(t, got, runtimeMetricKeyGenerationTPS, runtimeMetricPartCurrent), .001)
+	require.NotNil(t, envMetric(t, got, runtimeMetricKeyCacheHitPercent))
 	// 78% comes from the gauge; the (bogus) 1500/1000 counter pair is ignored.
-	assert.InDelta(t, 78, *got.CacheHitPercent.Current, .001)
+	assert.InDelta(t, 78, *envNum(t, got, runtimeMetricKeyCacheHitPercent, runtimeMetricPartCurrent), .001)
 }
 
 // TestRuntimeMetricsRadianceCounterResetStartsNewEpoch verifies the reset
@@ -574,7 +603,7 @@ radiance:engine_step_seconds_decode_total{engine="0"} 0.1
 	got := s.Snapshot(&domain.Endpoint{URLString: "x", Type: "vllm", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true})
 	require.NotNil(t, got)
 	assert.Equal(t, at.Add(20*time.Second), got.AvailableSince)
-	assert.Nil(t, got.GenerationTPS)
+	assert.Nil(t, envMetric(t, got, runtimeMetricKeyGenerationTPS))
 }
 
 // TestRuntimeMetricsRadianceSaturationReExports checks the P2 Prometheus
@@ -737,26 +766,26 @@ func TestRuntimeMetricsIdleScrapesNeverFreezeCurrent(t *testing.T) {
 	s.record(ep.URLString, start.Add(10*time.Second), parseRuntimeCounters("radiance", radianceT1))
 	got := s.Snapshot(ep)
 	require.NotNil(t, got)
-	require.NotNil(t, got.GenerationTPS)
-	require.NotNil(t, got.GenerationTPS.Current)
-	assert.InDelta(t, 70, *got.GenerationTPS.Current, 0.001) // 700 tokens / 10s
+	require.NotNil(t, envMetric(t, got, runtimeMetricKeyGenerationTPS))
+	require.NotNil(t, envNum(t, got, runtimeMetricKeyGenerationTPS, runtimeMetricPartCurrent))
+	assert.InDelta(t, 70, *envNum(t, got, runtimeMetricKeyGenerationTPS, runtimeMetricPartCurrent), 0.001) // 700 tokens / 10s
 
 	// Idle: counters frozen (delta seconds == 0) while the engine still
 	// publishes a non-zero rate gauge (in the T1 capture).
 	s.record(ep.URLString, start.Add(20*time.Second), parseRuntimeCounters("radiance", radianceT1))
 	got = s.Snapshot(ep)
-	require.NotNil(t, got.GenerationTPS)
-	assert.Nil(t, got.GenerationTPS.Current, "idle scrape must drop current, not freeze 70 or mix in the gauge")
+	require.NotNil(t, envMetric(t, got, runtimeMetricKeyGenerationTPS))
+	assert.Nil(t, envNum(t, got, runtimeMetricKeyGenerationTPS, runtimeMetricPartCurrent), "idle scrape must drop current, not freeze 70 or mix in the gauge")
 	// The window keeps the one real counter-delta sample; the gauge value
 	// never entered it (avg would move toward ~301 if it had).
-	require.NotNil(t, got.GenerationTPS.Avg)
-	assert.InDelta(t, 70, *got.GenerationTPS.Avg, 0.001)
+	require.NotNil(t, envNum(t, got, runtimeMetricKeyGenerationTPS, runtimeMetricPartAvg))
+	assert.InDelta(t, 70, *envNum(t, got, runtimeMetricKeyGenerationTPS, runtimeMetricPartAvg), 0.001)
 
 	// Prolonged idle past the 10-minute window: every sample has decayed,
 	// so the whole signal drops out of the payload (omitted, not zeroed).
 	s.record(ep.URLString, start.Add(11*time.Minute), parseRuntimeCounters("radiance", radianceT1))
 	got = s.Snapshot(ep)
-	assert.Nil(t, got.GenerationTPS)
+	assert.Nil(t, envMetric(t, got, runtimeMetricKeyGenerationTPS))
 }
 
 func TestRuntimeMetricsVLLMIdleDropsStaleCurrent(t *testing.T) {
@@ -770,12 +799,12 @@ func TestRuntimeMetricsVLLMIdleDropsStaleCurrent(t *testing.T) {
 	}
 	s.record("x", start, counters(0, 0))
 	s.record("x", start.Add(10*time.Second), counters(700, 10))
-	require.NotNil(t, s.Snapshot(ep).GenerationTPS.Current)
+	require.NotNil(t, envNum(t, s.Snapshot(ep), runtimeMetricKeyGenerationTPS, runtimeMetricPartCurrent))
 	s.record("x", start.Add(20*time.Second), counters(700, 10)) // idle, no rate gauges in vLLM
 	got := s.Snapshot(ep)
-	assert.Nil(t, got.GenerationTPS.Current, "idle vLLM must not present the last burst rate as current")
-	require.NotNil(t, got.GenerationTPS.Avg)
-	assert.InDelta(t, 70, *got.GenerationTPS.Avg, 0.001)
+	assert.Nil(t, envNum(t, got, runtimeMetricKeyGenerationTPS, runtimeMetricPartCurrent), "idle vLLM must not present the last burst rate as current")
+	require.NotNil(t, envNum(t, got, runtimeMetricKeyGenerationTPS, runtimeMetricPartAvg))
+	assert.InDelta(t, 70, *envNum(t, got, runtimeMetricKeyGenerationTPS, runtimeMetricPartAvg), 0.001)
 }
 
 // TestRuntimeMetricsOptOutInvalidatesSnapshot pins that disabling the
@@ -816,8 +845,8 @@ func TestRuntimeMetricsRoutableBusyKeepsMetrics(t *testing.T) {
 	ep.Status = domain.StatusBusy
 	got := s.Snapshot(ep)
 	require.NotNil(t, got, "Busy endpoints still serve traffic and must keep their metrics")
-	require.NotNil(t, got.GenerationTPS)
-	assert.InDelta(t, 70, *got.GenerationTPS.Avg, 0.001)
+	require.NotNil(t, envMetric(t, got, runtimeMetricKeyGenerationTPS))
+	assert.InDelta(t, 70, *envNum(t, got, runtimeMetricKeyGenerationTPS, runtimeMetricPartAvg), 0.001)
 
 	ep.Status = domain.StatusWarming
 	require.NotNil(t, s.Snapshot(ep))
@@ -877,4 +906,29 @@ func TestRuntimeMetricsOversizedExpositionFailsLoud(t *testing.T) {
 	got := s.Snapshot(ep)
 	require.NotNil(t, got)
 	assert.True(t, got.Stale, "over-limit scrape must mark the epoch stale, not wipe or silently trim it")
+}
+
+// envMetric/envNum read envelope metrics in assertions; nil means the
+// metric is absent from the payload.
+func envMetric(t *testing.T, m *EndpointRuntimeMetrics, key string) *RuntimeMetric {
+	t.Helper()
+	if m == nil {
+		return nil
+	}
+	for _, metric := range m.Metrics {
+		if metric.Key == key {
+			found := metric
+			return &found
+		}
+	}
+	return nil
+}
+
+func envNum(t *testing.T, m *EndpointRuntimeMetrics, key, part string) *float64 {
+	t.Helper()
+	metric := envMetric(t, m, key)
+	if metric == nil {
+		return nil
+	}
+	return metric.value(part)
 }

@@ -43,7 +43,7 @@ func (a *Application) metricsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func writePrometheusMetrics(w http.ResponseWriter, response StatusResponse, snapshot *statusSnapshot, proxyConfig config.ProxyConfig, uptime time.Duration,
-	summary ModelStatsSummary, modelStats map[string]ports.ModelStats, modelEndpointStats map[string]map[string]ports.EndpointModelStats, runtimeMetrics *endpointRuntimeMetricsSampler) {
+	summary ModelStatsSummary, modelStats map[string]ports.ModelStats, modelEndpointStats map[string]map[string]ports.EndpointModelStats, runtimeMetrics runtimeMetricsProvider) {
 	var b strings.Builder
 
 	writePrometheusHelpType(&b, "olla_info", "gauge", "Olla build and proxy configuration")

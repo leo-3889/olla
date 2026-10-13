@@ -10,6 +10,7 @@
   // Overview is always-on (StatusStrip renders on every panel), so App owns
   // its lifecycle. Endpoints/models stores are started/stopped by their panels.
   import { overview } from './lib/stores/overview.svelte';
+  import { bootstrap } from './lib/stores/bootstrap.svelte';
   // Module side-effect: registers endpoints/models jobs with the scheduler.
   import './lib/stores/endpoints.svelte';
   import './lib/stores/models.svelte';
@@ -28,6 +29,13 @@
   // and models are activated by their panels' own mount/unmount effects.
   $effect(() => {
     startClock();
+    // One-shot manifest fetch BEFORE anything renders against defaults:
+    // sections/columns/observe exist only if the backend says they can be
+    // honest. load() never rejects; failures keep the sampler defaults.
+    const ready = bootstrap.load().then(() => {
+      if (bootstrap.observe) bootstrap.observe.start();
+    });
+    void ready;
     overview.start();
     pollScheduler.start();
     return () => {

@@ -233,6 +233,10 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("health config invalid: %w", err)
 	}
 
+	if err := c.MetricsSource.Validate(); err != nil {
+		return fmt.Errorf("metrics_source config invalid: %w", err)
+	}
+
 	if err := c.Server.Cors.Validate(); err != nil {
 		return fmt.Errorf("server.cors config invalid: %w", err)
 	}

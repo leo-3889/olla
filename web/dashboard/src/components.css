@@ -215,7 +215,7 @@ main {
   margin-bottom: var(--space-2);
   flex-wrap: wrap;
 }
-.section-head h3 {
+.section-head h2 {
   font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;

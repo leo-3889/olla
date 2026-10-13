@@ -256,3 +256,25 @@ dashboard:
 #     success_rate:
 #       critical_below: 90
 #       degraded_below: 95
+
+# Dashboard metric source. Default (absent or mode: sampler): the embedded
+# dashboard's runtime tiles come from olla's own /metrics scraper (see the
+# per-endpoint runtime_metrics blocks). Set mode: influx to read the
+# canonical series written by the ollametrics stack instead - then the
+# Power/Cost/GPU dashboard sections exist too. The Influx token is never
+# written here; token_env names an environment variable of this container.
+# Example (docker-internal URL only; host-published Influx ports are not
+# supported for queries):
+#   metrics_source:
+#     mode: influx
+#     influx:
+#       url: http://influxdb:8086
+#       org: grafana_org_name
+#       token_env: INFLUX_TOKEN
+#       bucket: llm/metrics
+#       costs_bucket: llm/costs
+#       stale_after: 60s
+#       power_attribution:
+#         halogen-395: shelly-ai-395
+#         radiance-qfn: shelly-ai-box
+#       gpu_endpoint: radiance-gpus

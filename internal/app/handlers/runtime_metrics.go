@@ -51,28 +51,16 @@ const runtimeMetricsBodyLimit = 4 << 20
 // EndpointRuntimeMetrics is the compact, capability-aware runtime view shown
 // beside an endpoint. Nil fields mean the engine did not publish that signal.
 type EndpointRuntimeMetrics struct {
-	SampledAt           time.Time          `json:"sampled_at"`
-	AvailableSince      time.Time          `json:"available_since"`
-	Stale               bool               `json:"stale"`
-	Kind                string             `json:"kind,omitempty"`
-	GenerationTPS       *RuntimeThroughput `json:"generation_tps,omitempty"`
-	PrefillTPS          *RuntimeThroughput `json:"prefill_tps,omitempty"`
-	CacheHitPercent     *RuntimeAverage    `json:"cache_hit_percent,omitempty"`
-	KVCacheUsagePercent *float64           `json:"kv_cache_usage_percent,omitempty"`
-	QueueDepth          *float64           `json:"queue_depth,omitempty"`
-	RequestsRunning     *float64           `json:"requests_running,omitempty"`
-	SpecAcceptPercent   *RuntimeAverage    `json:"spec_accept_percent,omitempty"`
-}
-
-type RuntimeThroughput struct {
-	Current *float64 `json:"current,omitempty"`
-	Avg     *float64 `json:"avg,omitempty"`
-	Max     *float64 `json:"max,omitempty"`
-}
-
-type RuntimeAverage struct {
-	Current *float64 `json:"current,omitempty"`
-	Avg     *float64 `json:"avg,omitempty"`
+	SampledAt      time.Time       `json:"sampled_at"`
+	AvailableSince time.Time       `json:"available_since"`
+	Stale          bool            `json:"stale"`
+	Kind           string          `json:"kind,omitempty"`
+	// Source names who produced the numbers: "sampler" (this process
+	// scraping the engine) or "ollametrics" (canonical InfluxDB series).
+	Source string `json:"source"`
+	// SourceAgeS is seconds since the newest underlying sample.
+	SourceAgeS *float64 `json:"source_age_s,omitempty"`
+	Metrics    []RuntimeMetric `json:"metrics,omitempty"`
 }
 
 type endpointRuntimeMetricsSampler struct {
@@ -525,9 +513,9 @@ func (s *endpointRuntimeMetricsSampler) Snapshot(endpoint *domain.Endpoint) *End
 	if state.stale && s.now().Sub(state.sampledAt) > runtimeMetricsMaxStaleAge {
 		return nil
 	}
+	age := s.now().Sub(state.sampledAt).Seconds()
 	return &EndpointRuntimeMetrics{SampledAt: state.sampledAt, AvailableSince: state.availableSince, Stale: state.stale, Kind: runtimeMetricsKind(endpoint),
-		GenerationTPS: copyThroughput(state.generation), PrefillTPS: copyThroughput(state.prefill), CacheHitPercent: copyRatio(state.cache), KVCacheUsagePercent: copyFloat(state.kvUsage),
-		QueueDepth: copyFloat(state.queueDepth), RequestsRunning: copyFloat(state.requestsRunning), SpecAcceptPercent: copyRatio(state.specAccept)}
+		Source: runtimeMetricsSourceSampler, SourceAgeS: floatPtr(age), Metrics: buildEnvelopeMetrics(state, runtimeMetricsKind(endpoint))}
 }
 
 // recordThroughput reports whether a delta sample was recorded.
@@ -630,18 +618,6 @@ func countersReset(old, next runtimeCounters) bool {
 		}
 	}
 	return false
-}
-func copyThroughput(a throughputAggregate) *RuntimeThroughput {
-	if a.current == nil && a.avg == nil && a.max == nil {
-		return nil
-	}
-	return &RuntimeThroughput{copyFloat(a.current), copyFloat(a.avg), copyFloat(a.max)}
-}
-func copyRatio(a ratioAggregate) *RuntimeAverage {
-	if a.current == nil && a.avg == nil {
-		return nil
-	}
-	return &RuntimeAverage{copyFloat(a.current), copyFloat(a.avg)}
 }
 func copyFloat(v *float64) *float64 {
 	if v == nil {
@@ -751,9 +727,13 @@ func selectRuntimeCounters(kind string, values map[string]float64) runtimeCounte
 		// No counter pair forms a hit rate here: attn_cached_tokens_total is
 		// tokens while linear_checkpoints_written_total counts checkpoints
 		// (their ratio is tokens-per-checkpoint, not a percentage), and the
-		// paged-attention cache exposes no queries counter. The backend's own
-		// checkpoint hit-rate gauge is the only correct source.
-		c.cacheRatePercent = scaledRatioPercent(get("radiance:linear_prefix_cache_hit_rate"))
+		// paged-attention cache exposes no queries counter. The GPU-prefix
+		// cache hit-rate gauge comes first because that is the series
+		// ollametrics (and therefore Grafana) canonicalises - reading the
+		// linear-cache gauge instead made the dashboard and Grafana report
+		// different hit rates for the same engine. The linear-cache gauge
+		// stays as fallback for builds without the GPU-prefix series.
+		c.cacheRatePercent = scaledRatioPercent(get("vllm:gpu_prefix_cache_hit_rate", "radiance:linear_prefix_cache_hit_rate"))
 		return c
 	case "llamacpp":
 		return runtimeCounters{
@@ -858,32 +838,17 @@ func hashEndpointRuntimeMetrics(h hash.Hash, m *EndpointRuntimeMetrics) {
 	}
 	hashEtagString(h, strconv.FormatBool(m.Stale))
 	hashEtagString(h, m.Kind)
-	hashRuntimeThroughput(h, m.GenerationTPS)
-	hashRuntimeThroughput(h, m.PrefillTPS)
-	hashRuntimeAverage(h, m.CacheHitPercent)
-	hashRuntimeFloat(h, m.KVCacheUsagePercent)
-	hashRuntimeFloat(h, m.QueueDepth)
-	hashRuntimeFloat(h, m.RequestsRunning)
-	hashRuntimeAverage(h, m.SpecAcceptPercent)
-}
-
-func hashRuntimeThroughput(h hash.Hash, t *RuntimeThroughput) {
-	if t == nil {
-		_, _ = h.Write(etagSep)
-		return
+	hashEtagString(h, m.Source)
+	for _, metric := range m.Metrics {
+		hashEtagString(h, metric.Key)
+		hashEtagString(h, metric.Unit)
+		hashRuntimeFloat(h, metric.Current)
+		hashRuntimeFloat(h, metric.Avg)
+		hashRuntimeFloat(h, metric.Max)
+		hashEtagString(h, metric.Scope)
+		hashEtagString(h, metric.AttachTo)
+		hashEtagString(h, metric.Note)
 	}
-	hashRuntimeFloat(h, t.Current)
-	hashRuntimeFloat(h, t.Avg)
-	hashRuntimeFloat(h, t.Max)
-}
-
-func hashRuntimeAverage(h hash.Hash, a *RuntimeAverage) {
-	if a == nil {
-		_, _ = h.Write(etagSep)
-		return
-	}
-	hashRuntimeFloat(h, a.Current)
-	hashRuntimeFloat(h, a.Avg)
 }
 
 // hashRuntimeFloat encodes presence (nil is a bare separator, mirroring
@@ -897,86 +862,34 @@ func hashRuntimeFloat(h hash.Hash, v *float64) {
 	hashEtagString(h, strconv.FormatFloat(*v, 'g', -1, 64))
 }
 
-func writeEndpointRuntimePrometheusMetrics(b *strings.Builder, endpoints []*domain.Endpoint, sampler *endpointRuntimeMetricsSampler) {
+func writeEndpointRuntimePrometheusMetrics(b *strings.Builder, endpoints []*domain.Endpoint, provider runtimeMetricsProvider) {
 	// Kept separate from proxy metrics so all samples in each added family stay contiguous.
 	for _, spec := range []struct {
-		name, help string
-		get        func(*EndpointRuntimeMetrics) *float64
+		name, help, key, part string
 	}{
-		{"olla_endpoint_generation_tokens_per_second", "Current backend generation throughput", func(m *EndpointRuntimeMetrics) *float64 {
-			if m.GenerationTPS == nil {
-				return nil
-			}
-			return m.GenerationTPS.Current
-		}},
-		{"olla_endpoint_generation_tokens_per_second_avg", "Average generation throughput over the last 10 minutes", func(m *EndpointRuntimeMetrics) *float64 {
-			if m.GenerationTPS == nil {
-				return nil
-			}
-			return m.GenerationTPS.Avg
-		}},
-		{"olla_endpoint_generation_tokens_per_second_max", "Maximum sampled generation throughput over the last 10 minutes", func(m *EndpointRuntimeMetrics) *float64 {
-			if m.GenerationTPS == nil {
-				return nil
-			}
-			return m.GenerationTPS.Max
-		}},
-		{"olla_endpoint_prefill_tokens_per_second", "Current backend incremental prefill throughput", func(m *EndpointRuntimeMetrics) *float64 {
-			if m.PrefillTPS == nil {
-				return nil
-			}
-			return m.PrefillTPS.Current
-		}},
-		{"olla_endpoint_prefill_tokens_per_second_avg", "Average incremental prefill throughput over the last 10 minutes", func(m *EndpointRuntimeMetrics) *float64 {
-			if m.PrefillTPS == nil {
-				return nil
-			}
-			return m.PrefillTPS.Avg
-		}},
-		{"olla_endpoint_prefill_tokens_per_second_max", "Maximum sampled incremental prefill throughput over the last 10 minutes", func(m *EndpointRuntimeMetrics) *float64 {
-			if m.PrefillTPS == nil {
-				return nil
-			}
-			return m.PrefillTPS.Max
-		}},
-		{"olla_endpoint_cache_hit_percent", "Current backend prompt cache hit percentage", func(m *EndpointRuntimeMetrics) *float64 {
-			if m.CacheHitPercent == nil {
-				return nil
-			}
-			return m.CacheHitPercent.Current
-		}},
-		{"olla_endpoint_cache_hit_percent_avg", "Average prompt cache hit percentage over the last 10 minutes", func(m *EndpointRuntimeMetrics) *float64 {
-			if m.CacheHitPercent == nil {
-				return nil
-			}
-			return m.CacheHitPercent.Avg
-		}},
-		{"olla_endpoint_kv_cache_usage_percent", "Current backend KV cache utilisation percentage", func(m *EndpointRuntimeMetrics) *float64 { return m.KVCacheUsagePercent }},
-		{"olla_endpoint_queue_depth", "Current backend request queue depth", func(m *EndpointRuntimeMetrics) *float64 { return m.QueueDepth }},
-		{"olla_endpoint_requests_running", "Requests currently running on the backend", func(m *EndpointRuntimeMetrics) *float64 { return m.RequestsRunning }},
-		{"olla_endpoint_spec_accept_percent", "Current speculative-decode draft acceptance percentage", func(m *EndpointRuntimeMetrics) *float64 {
-			if m.SpecAcceptPercent == nil {
-				return nil
-			}
-			return m.SpecAcceptPercent.Current
-		}},
-		{"olla_endpoint_spec_accept_percent_avg", "Average speculative-decode draft acceptance percentage over the last 10 minutes", func(m *EndpointRuntimeMetrics) *float64 {
-			if m.SpecAcceptPercent == nil {
-				return nil
-			}
-			return m.SpecAcceptPercent.Avg
-		}},
+		{"olla_endpoint_generation_tokens_per_second", "Current backend generation throughput", runtimeMetricKeyGenerationTPS, runtimeMetricPartCurrent},
+		{"olla_endpoint_generation_tokens_per_second_avg", "Average generation throughput over the last 10 minutes", runtimeMetricKeyGenerationTPS, runtimeMetricPartAvg},
+		{"olla_endpoint_generation_tokens_per_second_max", "Maximum sampled generation throughput over the last 10 minutes", runtimeMetricKeyGenerationTPS, runtimeMetricPartMax},
+		{"olla_endpoint_prefill_tokens_per_second", "Current backend incremental prefill throughput", runtimeMetricKeyPrefillTPS, runtimeMetricPartCurrent},
+		{"olla_endpoint_prefill_tokens_per_second_avg", "Average incremental prefill throughput over the last 10 minutes", runtimeMetricKeyPrefillTPS, runtimeMetricPartAvg},
+		{"olla_endpoint_prefill_tokens_per_second_max", "Maximum sampled incremental prefill throughput over the last 10 minutes", runtimeMetricKeyPrefillTPS, runtimeMetricPartMax},
+		{"olla_endpoint_cache_hit_percent", "Current backend prompt cache hit percentage", runtimeMetricKeyCacheHitPercent, runtimeMetricPartCurrent},
+		{"olla_endpoint_cache_hit_percent_avg", "Average prompt cache hit percentage over the last 10 minutes", runtimeMetricKeyCacheHitPercent, runtimeMetricPartAvg},
+		{"olla_endpoint_kv_cache_usage_percent", "Current backend KV cache utilisation percentage", runtimeMetricKeyKvCacheUsagePercent, runtimeMetricPartCurrent},
+		{"olla_endpoint_queue_depth", "Current backend request queue depth", runtimeMetricKeyQueueDepth, runtimeMetricPartCurrent},
+		{"olla_endpoint_requests_running", "Requests currently running on the backend", runtimeMetricKeyRequestsRunning, runtimeMetricPartCurrent},
+		{"olla_endpoint_spec_accept_percent", "Current speculative-decode draft acceptance percentage", runtimeMetricKeySpecAcceptPercent, runtimeMetricPartCurrent},
+		{"olla_endpoint_spec_accept_percent_avg", "Average speculative-decode draft acceptance percentage over the last 10 minutes", runtimeMetricKeySpecAcceptPercent, runtimeMetricPartAvg},
 	} {
 		writePrometheusHelpType(b, spec.name, "gauge", spec.help)
 		for _, endpoint := range endpoints {
-			// Snapshot is nil for endpoints the sampler does not cover (not
-			// opted in, unhealthy, or no sample yet); the spec getters
-			// dereference the snapshot, so skip those.
-			snapshot := sampler.Snapshot(endpoint)
+			// Snapshot is nil for endpoints the provider does not cover (not
+			// opted in, unreachable, or no sample yet); skip those.
+			snapshot := provider.Snapshot(endpoint)
 			if snapshot == nil {
 				continue
 			}
-			if value := spec.get(snapshot); value != nil {
+			if value := envelopeMetricValue(snapshot, spec.key, spec.part); value != nil {
 				writePrometheusLabeledGauge(b, spec.name, *value, "endpoint", endpoint.Name)
 			}
 		}

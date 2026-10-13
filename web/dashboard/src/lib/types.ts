@@ -138,41 +138,112 @@ export interface EndpointSummary {
   runtime_metrics?: EndpointRuntimeMetrics;
 }
 
-export interface EndpointRuntimeRate {
+export interface EnvelopeMetric {
+  // Wire keys: generation_tps | prefill_tps | cache_hit_percent |
+  // kv_cache_usage_percent | queue_depth | requests_running | spec_accept_percent.
+  // Unknown future keys MUST render (raw) rather than throw.
+  key: string;
+  // tok_s | percent | count today; unknown units render the number as-is.
+  unit: string;
   current?: number;
   avg?: number;
   max?: number;
-}
-
-export interface EndpointRuntimePercentage {
-  current?: number;
-  avg?: number;
+  // "engine" marks an engine-wide batch aggregate; the note then carries the
+  // full caveat text. The provider states semantics - the UI never infers.
+  scope?: string;
+  // e.g. spec_accept_percent attaches to the generation_tps cell.
+  attach_to?: string;
+  note?: string;
 }
 
 export interface EndpointRuntimeMetrics {
   sampled_at?: string;
   available_since?: string;
   stale?: boolean;
-  // Backend dialect the sampler resolved (vllm | llamacpp | radiance). The
-  // panel keys semantics (batch-aggregate caveat, acceptance column) off
-  // THIS, not the endpoint type: a radiance engine can sit behind any type.
+  // Backend dialect the values were parsed for (vllm | llamacpp | radiance).
   kind?: string;
-  generation_tps?: EndpointRuntimeRate;
-  prefill_tps?: EndpointRuntimeRate;
-  cache_hit_percent?: EndpointRuntimePercentage;
-  kv_cache_usage_percent?: number;
-  // Scheduler backlog: requests waiting for a slot. Saturation signal - on an
-  // engine pinned near its memory ceiling the queue grows before throughput
-  // moves. Plain gauge, so no avg/max window; absent means the backend does
-  // not report a queue at all.
-  queue_depth?: number | null;
-  // Requests executing right now, i.e. the concurrency the batch-aggregate
-  // throughput figures are summed over. Same availability caveat as queue_depth.
-  requests_running?: number | null;
-  // Speculative-decode draft acceptance: how much of the draft model's output
-  // the target model kept. It qualifies generation_tps rather than standing on
-  // its own, so the UI surfaces it on the generation cell, not as a column.
-  spec_accept_percent?: EndpointRuntimePercentage;
+  // Who produced the numbers: "sampler" (olla scraping the engine) or
+  // "ollametrics" (the canonical InfluxDB series). Optional so payloads from
+  // older backends still parse.
+  source?: 'sampler' | 'ollametrics';
+  // Seconds between the newest underlying sample and the response.
+  source_age_s?: number;
+  // Absent metric = the backend does not publish that signal.
+  metrics?: EnvelopeMetric[];
+}
+
+// --- /internal/ui/config.json (dashboard manifest) ---------------------
+
+export interface UIConfigSection {
+  id: string;
+  enabled: boolean;
+  reason?: string;
+}
+
+export interface UIConfigMetricColumn {
+  key: string;
+  label: string;
+  unit: string;
+  window: boolean;
+}
+
+export interface UIConfig {
+  schema: number;
+  metrics_source: 'sampler' | 'influx' | string;
+  poll_ms: { overview: number; endpoints: number; models: number; observe: number };
+  sections: UIConfigSection[];
+  runtime_metric_columns: UIConfigMetricColumn[];
+}
+
+// --- /internal/ui/observe.json (power / cost / gpu) --------------------
+
+export interface ObservePowerRow {
+  target: string;
+  endpoint: string;
+  device_name?: string | null;
+  node?: string | null;
+  watts?: number | null;
+  temp_c?: number | null;
+  meter_valid?: number | null;
+  overpower?: number | null;
+  output_on?: number | null;
+  age_s?: number | null;
+}
+
+export interface ObserveCostEntry {
+  cost?: number | null;
+  energy_kwh?: number | null;
+  tokens?: number | null;
+  period_status?: string | null;
+  period_start?: string | null;
+}
+
+export interface ObserveCost {
+  currency: string;
+  hour: Record<string, ObserveCostEntry>;
+  day: Record<string, ObserveCostEntry>;
+}
+
+export interface ObserveGpuRow {
+  gpu: string;
+  node?: string | null;
+  busy_percent?: number | null;
+  mem_activity_percent?: number | null;
+  socket_power_watts?: number | null;
+  edge_temp_c?: number | null;
+  vram_used_bytes?: number | null;
+  vram_total_bytes?: number | null;
+  present?: number | null;
+  age_s?: number | null;
+}
+
+export interface ObserveResponse {
+  schema: number;
+  generated_at: string;
+  source: string;
+  power: ObservePowerRow[];
+  cost: ObserveCost;
+  gpus: ObserveGpuRow[];
 }
 
 export interface EndpointStatusResponse {

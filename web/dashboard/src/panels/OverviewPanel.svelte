@@ -1,6 +1,10 @@
 <script lang="ts">
   import { overview } from '../lib/stores/overview.svelte';
   import { endpoints } from '../lib/stores/endpoints.svelte';
+  import { bootstrap } from '../lib/stores/bootstrap.svelte';
+  import ObservePower from '../components/ObservePower.svelte';
+  import ObserveCost from '../components/ObserveCost.svelte';
+  import ObserveGpu from '../components/ObserveGpu.svelte';
   import StatTile from '../components/StatTile.svelte';
   import StatusBanner from '../components/StatusBanner.svelte';
   import StatusTag from '../components/StatusTag.svelte';
@@ -21,6 +25,17 @@
   // without a second fetch.
   const sec = $derived(overview.data?.security);
   const loading = $derived(overview.status === 'loading');
+
+  // Observe sections (power/cost/GPU) ride their OWN store: they render even
+  // when the status poll failed, and only appear when the dashboard manifest
+  // enables them (metrics_source.mode=influx). While the first observe
+  // response is pending nothing is rendered - no empty-shell pretending.
+  const observeData = $derived(bootstrap.observe?.data ?? null);
+  const observeDegraded = $derived(bootstrap.observe?.status === 'stale' || bootstrap.observe?.status === 'error');
+  function maxAgeS(values: Array<number | null | undefined>): number | null {
+    const ages = values.filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+    return ages.length > 0 ? Math.max(...ages) : null;
+  }
 
   // endpoints_up arrives as a pre-formatted "x/y" string; split for the tile.
   const upTotal = $derived(sys?.endpoints_up ?? '/');
@@ -191,7 +206,7 @@
       </div>
     </div>
     <div class="section">
-      <div class="section-head"><h3>Herd at a glance</h3></div>
+      <div class="section-head"><h2>Herd at a glance</h2></div>
       {#each Array(4) as _, i}<div class="skeleton row-skel"></div>{/each}
     </div>
   {:else if sys}
@@ -293,7 +308,7 @@
 
     <div class="section">
       <div class="section-head">
-        <h3>Herd at a glance</h3>
+        <h2>Herd at a glance</h2>
         <span class="section-note">click a name to jump to its endpoint detail · sorted unhealthy first by default</span>
       </div>
       <SortableTable
@@ -324,6 +339,16 @@
         {/snippet}
       </SortableTable>
     </div>
+  {/if}
+
+  {#if bootstrap.sectionEnabled('power') && observeData}
+    <ObservePower rows={observeData.power} ageS={maxAgeS(observeData.power.map((r) => r.age_s))} degraded={observeDegraded} />
+  {/if}
+  {#if bootstrap.sectionEnabled('cost') && observeData}
+    <ObserveCost cost={observeData.cost} degraded={observeDegraded} />
+  {/if}
+  {#if bootstrap.sectionEnabled('gpu') && observeData}
+    <ObserveGpu gpus={observeData.gpus} ageS={maxAgeS(observeData.gpus.map((r) => r.age_s))} degraded={observeDegraded} />
   {/if}
   </div>
 </div>

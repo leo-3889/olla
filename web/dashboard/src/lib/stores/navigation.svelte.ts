@@ -15,17 +15,30 @@ export type Section = (typeof SECTIONS)[number];
 
 class NavigationStore {
   #current: Section = $state('overview');
+  // Enabled subset, configured once from the dashboard manifest
+  // (bootstrap.svelte.ts). Defaults to the full frozen list so a UI that
+  // never reaches config.json behaves exactly as before.
+  #enabled: readonly Section[] = $state(SECTIONS);
 
   get current(): Section {
     return this.#current;
   }
 
   get sections(): readonly Section[] {
-    return SECTIONS;
+    return this.#enabled;
+  }
+
+  /** Intersect SECTIONS with the manifest's enabled ids (frozen order is
+   *  preserved). An empty or garbage result keeps the defaults - the nav
+   *  must never render zero tabs because a config endpoint lied. */
+  configure(enabledIds: readonly string[]): void {
+    const picked = SECTIONS.filter((s) => enabledIds.includes(s));
+    this.#enabled = picked.length > 0 ? picked : SECTIONS;
+    if (!this.#enabled.includes(this.#current)) this.#current = 'overview';
   }
 
   set(section: Section): void {
-    if (!SECTIONS.includes(section)) return;
+    if (!this.#enabled.includes(section)) return;
     this.#current = section;
   }
 }

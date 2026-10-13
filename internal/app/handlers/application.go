@@ -113,11 +113,16 @@ type Application struct {
 	// closure so the handler layer does not need to import the balancer package.
 	stickyStatsFn func() *balancer.StickyStats
 	aliasResolver *registry.AliasResolver
-	// runtimeMetrics periodically samples the allow-listed Prometheus endpoint
-	// exposed by supported local inference engines. It deliberately lives at the
-	// handler boundary: dashboard and Prometheus callers share one cached view,
-	// and no browser ever needs network access to a backend directly.
-	runtimeMetrics *endpointRuntimeMetricsSampler
+	// runtimeMetrics serves the engine-runtime tiles of the dashboard and
+	// the Prometheus re-export. It deliberately lives at the handler
+	// boundary: dashboard and Prometheus callers share one cached view, and
+	// no browser ever needs network access to a backend directly. Backed by
+	// the in-process sampler or, with metrics_source.mode=influx, by the
+	// ollametrics InfluxDB reader.
+	runtimeMetrics runtimeMetricsProvider
+	// observe serves power/cost/GPU data for the dashboard; non-nil only
+	// in influx mode (only that backend holds the data).
+	observe *observeCollector
 	// evaluator computes the overall system status for /internal/status. It is
 	// built from the health config (host or model mode) so the handler stays a
 	// thin dispatcher over the verdict.
@@ -233,8 +238,7 @@ func NewApplication(
 		errCh:              make(chan error, 1),
 		StartTime:          time.Now(),
 	}
-	app.runtimeMetrics = newEndpointRuntimeMetricsSampler(repository, logger)
-	app.runtimeMetrics.Start(ctx)
+	app.runtimeMetrics, app.observe = newRuntimeMetricsSource(ctx, cfg, repository, logger)
 	return app, nil
 }
 

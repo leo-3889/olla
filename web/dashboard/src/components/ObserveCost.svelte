@@ -1,0 +1,104 @@
+<script lang="ts">
+  // Cost rollups straight from ollametrics' llm_endpoint_cost_v3 series.
+  // Rollup _time is the PERIOD START, and the current period ships with
+  // period_status "open": that row is the running total of an unfinished
+  // period, so it is labelled partial instead of pretending to be final.
+  import type { ObserveCost } from '../lib/types';
+  import { fmtInt } from '../lib/format';
+
+  interface Props {
+    cost: ObserveCost;
+    degraded: boolean;
+  }
+  let { cost, degraded }: Props = $props();
+
+  interface CostRow {
+    endpoint: string;
+    hourCost: number | null;
+    hourOpen: boolean;
+    dayCost: number | null;
+    dayOpen: boolean;
+    energy_kwh: number | null;
+    tokens: number | null;
+  }
+
+  const rows = $derived.by(() => {
+    const names = Array.from(new Set([...Object.keys(cost?.hour ?? {}), ...Object.keys(cost?.day ?? {})])).sort();
+    return names.map((endpoint): CostRow => {
+      const h = cost?.hour?.[endpoint];
+      const d = cost?.day?.[endpoint];
+      return {
+        endpoint,
+        hourCost: typeof h?.cost === 'number' ? h.cost : null,
+        hourOpen: h?.period_status === 'open',
+        dayCost: typeof d?.cost === 'number' ? d.cost : null,
+        dayOpen: d?.period_status === 'open',
+        // Day rollup carries the verified energy/token totals; fall back to
+        // the hour row while a fresh day rollup has not landed yet.
+        energy_kwh: typeof d?.energy_kwh === 'number' ? d.energy_kwh : (typeof h?.energy_kwh === 'number' ? h.energy_kwh : null),
+        tokens: typeof d?.tokens === 'number' ? d.tokens : (typeof h?.tokens === 'number' ? h.tokens : null),
+      };
+    });
+  });
+
+  function money(value: number | null): string {
+    if (value === null) return '—';
+    return value.toFixed(value >= 1 ? 2 : 3) + ' ' + (cost?.currency || 'EUR');
+  }
+  function kwh(value: number | null): string {
+    if (value === null) return '—';
+    return value.toLocaleString('en-AU', { maximumFractionDigits: 3 }) + ' kWh';
+  }
+</script>
+
+<div class="section observe-cost" data-state={degraded ? 'stale' : null}>
+  <div class="section-head">
+    <h2>Cost</h2>
+    <span class="section-note observe-src" class:stale={degraded}>ollametrics rollups{#if degraded} (stale){/if}</span>
+  </div>
+  {#if rows.length === 0}
+    <p class="observe-empty">no cost rollups in the queried window yet</p>
+  {:else}
+    <table class="observe-table">
+      <thead>
+        <tr>
+          <th scope="col">Endpoint</th>
+          <th scope="col" title="Current hour rollup; _time is the period start">This hour</th>
+          <th scope="col" title="Current day rollup">Today</th>
+          <th scope="col" title="Meter-verified energy for the newest rollup">Energy</th>
+          <th scope="col">Tokens</th>
+        </tr>
+      </thead>
+      <tbody>
+        {#each rows as row (row.endpoint)}
+          <tr>
+            <th scope="row" class="observe-endpoint">{row.endpoint}</th>
+            <td>{money(row.hourCost)}{#if row.hourOpen}<span class="partial" title="Rollup for a period still in progress">partial</span>{/if}</td>
+            <td>{money(row.dayCost)}{#if row.dayOpen}<span class="partial" title="Rollup for a period still in progress">partial</span>{/if}</td>
+            <td>{kwh(row.energy_kwh)}</td>
+            <td>{row.tokens === null ? '—' : fmtInt(row.tokens)}</td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+  {/if}
+</div>
+
+<style>
+  .observe-table { width: 100%; border-collapse: collapse; }
+  .observe-table th, .observe-table td { text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+  .observe-table thead th { color: var(--text-dim); font-weight: 600; font-size: 0.85em; }
+  .observe-table tbody th { text-align: left; font-weight: 600; }
+  .observe-endpoint { font-weight: 600; }
+  .partial {
+    margin-left: 6px;
+    font-size: 0.72em;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    padding: 1px 7px;
+    color: var(--text-dim);
+  }
+  .observe-empty { color: var(--text-dim); }
+  .observe-src.stale { color: var(--red); }
+  [data-state='stale'] { opacity: 0.6; }
+</style>

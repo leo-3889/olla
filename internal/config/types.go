@@ -37,6 +37,9 @@ type Config struct {
 	Proxy         ProxyConfig         `yaml:"proxy"`
 	Server        ServerConfig        `yaml:"server"`
 	Engineering   EngineeringConfig   `yaml:"engineering"`
+	// MetricsSource selects the dashboard runtime-metric backend
+	// (sampler | influx reading the ollametrics InfluxDB).
+	MetricsSource MetricsSourceConfig `yaml:"metrics_source,omitempty"`
 }
 
 // CorsConfig controls browser cross-origin access to the Olla API.

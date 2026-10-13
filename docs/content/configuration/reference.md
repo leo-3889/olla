@@ -866,6 +866,44 @@ When enabled, displays:
 - Goroutine counts
 - Runtime information
 
+## Dashboard Metric Source
+
+The admin dashboard's engine-runtime tiles (throughput, cache hit rate, KV
+utilisation, queue depth, speculative acceptance) can be fed from two
+backends. Routing truth (health, models, traffic) always comes from olla
+itself; only these tiles move.
+
+```yaml
+metrics_source:
+  mode: influx            # "" or "sampler" (default) | "influx"
+  influx:
+    url: http://influxdb:8086      # docker-internal DNS; host-published ports are NOT supported
+    org: grafana_org_name
+    token_env: INFLUX_TOKEN        # NAME of the env var holding the API token
+    bucket: llm/metrics            # runtime + power series (ollametrics)
+    costs_bucket: llm/costs        # cost rollups (default: bucket)
+    stale_after: 60s               # tile staleness threshold on sample age
+    power_attribution:             # olla endpoint -> power_target_id measuring its box
+      halogen-395: shelly-ai-395
+      radiance-qfn: shelly-ai-box
+    gpu_endpoint: radiance-gpus    # Influx endpoint tag carrying GPU device series
+```
+
+| Key | Meaning |
+| --- | --- |
+| `mode` | `sampler`: olla scrapes each endpoint's `/metrics` itself (the `runtime_metrics` blocks per endpoint). `influx`: read the canonical `llm_runtime` series written by the ollametrics stack, so dashboard and Grafana show one truth. |
+| `influx.token_env` | The token is referenced by environment-variable name; it never lives in the YAML. Missing variable at startup logs an error and keeps the sampler - the gateway never fails to boot over metrics plumbing. |
+| `influx.power_attribution` | Maps endpoints to the meter measuring them; enables the dashboard Power section. Power is attributed per meter, never guessed from a device list. |
+| `influx.gpu_endpoint` | Endpoint tag of the GPU device targets in Influx; empty disables the dashboard GPU section. |
+| `influx.stale_after` | Seconds after which tiles render stale when the newest point for an endpoint is older (samples older than 15 minutes disappear entirely). |
+
+In `influx` mode the in-process sampler is not started, the Cost and GPU
+dashboard sections become available (they only exist in that backend), and
+the runtime payload additionally carries `source: "ollametrics"` plus
+`source_age_s` so consumers can see where each number came from and how old
+it is.
+
+
 ## Environment Variables
 
 Only the variables listed below are recognised. They are each hand-mapped in `internal/config/config.go`; arbitrary `OLLA_*` names are **not** auto-derived from YAML paths. Anything you set that isn't in this list will be silently ignored.

@@ -23,6 +23,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/thushan/olla/internal/config"
@@ -108,12 +109,35 @@ func hostAccepted(normalisedHost string, allowedHosts map[string]struct{}) bool 
 // applies uniformly to /internal/ui/ and every sub-path.
 //
 // Returns true if the dashboard was registered, false otherwise.
-func RegisterRoutes(registry *router.RouteRegistry, cfg config.DashboardConfig, log logger.StyledLogger, handler http.Handler) bool {
+func RegisterRoutes(registry *router.RouteRegistry, cfg config.DashboardConfig, log logger.StyledLogger, handler http.Handler, extras map[string]http.Handler) bool {
 	if !cfg.Enabled {
 		return false
 	}
 	guarded := AccessMiddleware(cfg, log, handler)
 	registry.RegisterWithMethod(DashboardRoute, http.HandlerFunc(guarded.ServeHTTP), "Admin dashboard (read-only)", "GET")
+
+	// Data endpoints that share the dashboard's policy but live as exact
+	// paths inside the subtree (http.ServeMux prefers the exact pattern
+	// over the /internal/ui/ catch-all). Gated by the SAME middleware, so
+	// widening the dashboard zone widens them automatically; a collision
+	// skips that one extra instead of shadowing (fail safe, matching
+	// mountDashboard's stance).
+	paths := make([]string, 0, len(extras))
+	for path := range extras {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	existing := registry.GetRoutes()
+	for _, path := range paths {
+		if _, exists := existing[path]; exists {
+			if log != nil {
+				log.Error("dashboard extra route collision; skipping", "route", path)
+			}
+			continue
+		}
+		extraGuarded := AccessMiddleware(cfg, log, extras[path])
+		registry.RegisterWithMethod(path, http.HandlerFunc(extraGuarded.ServeHTTP), "Dashboard data", "GET")
+	}
 
 	// Gated separately from DashboardRoute above: same policy, same security
 	// headers, but its own registration so ServeMux never gets the chance to
