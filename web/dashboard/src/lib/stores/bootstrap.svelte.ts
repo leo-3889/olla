@@ -14,7 +14,9 @@ const CONFIG_URL = '/internal/ui/config.json';
 export const DEFAULT_UI_CONFIG: UIConfig = {
   schema: 1,
   metrics_source: 'sampler',
-  poll_ms: { overview: 2000, endpoints: 5000, models: 10000, observe: 10000 },
+  // Must equal the stores' own fallback defaults (poll stores below): the
+  // manifest is a promise about cadence, not decoration.
+  poll_ms: { overview: 5000, endpoints: 5000, models: 15000, observe: 10000 },
   sections: [
     { id: 'overview', enabled: true },
     { id: 'endpoints', enabled: true },

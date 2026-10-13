@@ -3,7 +3,9 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
+	"github.com/thushan/olla/internal/app/handlers/runtime_dialect"
 	"github.com/thushan/olla/internal/config"
 )
 
@@ -48,6 +50,56 @@ type UIConfig struct {
 	RuntimeMetricColumns []uiMetricColumn `json:"runtime_metric_columns"`
 }
 
+// uiPollIntervalsFrom publishes the configured dashboard poll intervals in
+// milliseconds; unset (zero or negative) entries fall back to the exact
+// defaults the dashboard's poll stores use, so the manifest never lies to a
+// client about what cadence is actually running.
+func uiPollIntervalsFrom(cfg *config.Config) uiPollIntervals {
+	poll := uiPollIntervals{Overview: 5000, Endpoints: 5000, Models: 15000, Observe: 10000}
+	if cfg == nil {
+		return poll
+	}
+	p := cfg.Dashboard.Polling
+	if p.OverviewInterval > 0 {
+		poll.Overview = int(p.OverviewInterval / time.Millisecond)
+	}
+	if p.EndpointsInterval > 0 {
+		poll.Endpoints = int(p.EndpointsInterval / time.Millisecond)
+	}
+	if p.ModelsInterval > 0 {
+		poll.Models = int(p.ModelsInterval / time.Millisecond)
+	}
+	if p.ObserveInterval > 0 {
+		poll.Observe = int(p.ObserveInterval / time.Millisecond)
+	}
+	return poll
+}
+
+// uiRuntimeColumnsFrom derives the endpoints-table columns from the dialects
+// the configured fleet can actually sample: every opted-in endpoint resolves
+// its kind (pinned runtime_metrics.kind, then endpoint type) and the union of
+// those dialects' declared columns is published, de-duplicated in stable
+// order. A fleet of sampleable backends therefore never advertises a column
+// it can only dash, and a new dialect brings its own columns without a
+// dashboard edit. An empty list (no opted-in endpoints) makes the UI fall
+// back to its built-in defaults, byte-identical to the pre-registry manifest.
+func uiRuntimeColumnsFrom(cfg *config.Config) []uiMetricColumn {
+	kinds := make([]string, 0, 4)
+	for _, ep := range cfg.Discovery.Static.Endpoints {
+		if ep.RuntimeMetrics == nil || !ep.RuntimeMetrics.Enabled {
+			continue
+		}
+		if kind := resolveRuntimeKind(ep.RuntimeMetrics.Kind, ep.Type); kind != "" {
+			kinds = append(kinds, kind)
+		}
+	}
+	var out []uiMetricColumn
+	for _, col := range runtime_dialect.UnionColumns(kinds) {
+		out = append(out, uiMetricColumn{Key: col.Key, Label: col.Label, Unit: col.Unit, Window: col.Windowed})
+	}
+	return out
+}
+
 func uiConfigFrom(cfg *config.Config) UIConfig {
 	influx := cfg.MetricsSource.InfluxEnabled()
 	mode := config.MetricsSourceModeSampler
@@ -60,10 +112,7 @@ func uiConfigFrom(cfg *config.Config) UIConfig {
 	return UIConfig{
 		Schema:        1,
 		MetricsSource: mode,
-		// Mirrors of the frontend stores' module constants (decision:
-		// existing stores keep compile-time intervals; observe is served
-		// from config because the store is new).
-		PollMS: uiPollIntervals{Overview: 2000, Endpoints: 5000, Models: 10000, Observe: 10000},
+		PollMS:        uiPollIntervalsFrom(cfg),
 		Sections: []uiSection{
 			{ID: "overview", Enabled: true},
 			{ID: "endpoints", Enabled: true},
@@ -72,15 +121,7 @@ func uiConfigFrom(cfg *config.Config) UIConfig {
 			{ID: "cost", Enabled: influx, Reason: reasonIfDisabled(influx, "requires metrics_source.mode=influx")},
 			{ID: "gpu", Enabled: gpuEnabled, Reason: reasonIfDisabled(gpuEnabled, "requires metrics_source.mode=influx and metrics_source.influx.gpu_endpoint")},
 		},
-		// Labels live here (not in the payload) so presentation changes
-		// never touch the wire contract of runtime metrics.
-		RuntimeMetricColumns: []uiMetricColumn{
-			{Key: runtimeMetricKeyGenerationTPS, Label: "Generation", Unit: runtimeMetricUnitTokS, Window: true},
-			{Key: runtimeMetricKeyPrefillTPS, Label: "Prefill", Unit: runtimeMetricUnitTokS, Window: true},
-			{Key: runtimeMetricKeyCacheHitPercent, Label: "Prompt-cache hit rate", Unit: runtimeMetricUnitPercent, Window: true},
-			{Key: runtimeMetricKeyKvCacheUsagePercent, Label: "KV-cache utilisation", Unit: runtimeMetricUnitPercent, Window: false},
-			{Key: runtimeMetricKeyQueueDepth, Label: "Queue depth", Unit: runtimeMetricUnitCount, Window: false},
-		},
+		RuntimeMetricColumns: uiRuntimeColumnsFrom(cfg),
 	}
 }
 

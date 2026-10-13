@@ -1,21 +1,26 @@
 package handlers
 
+import "github.com/thushan/olla/internal/app/handlers/runtime_dialect"
+
 // Units, keys, sources, scope and note literals of the self-describing
 // runtime_metrics envelope. The embedded dashboard renders these verbatim and
 // ollametrics publishes the same key vocabulary in InfluxDB, so these strings
 // are a wire contract - rename them only together with the dashboard.
+// Units come from the dialect package: the dashboard manifest columns and
+// the envelope must always speak the same vocabulary.
 const (
-	runtimeMetricUnitTokS    = "tok_s"
-	runtimeMetricUnitPercent = "percent"
-	runtimeMetricUnitCount   = "count"
+	runtimeMetricUnitTokS    = runtime_dialect.UnitTokS
+	runtimeMetricUnitPercent = runtime_dialect.UnitPercent
+	runtimeMetricUnitCount   = runtime_dialect.UnitCount
+	runtimeMetricUnitMs      = runtime_dialect.UnitMs
 )
 
 const (
-	runtimeMetricKeyGenerationTPS       = "generation_tps"
-	runtimeMetricKeyPrefillTPS          = "prefill_tps"
-	runtimeMetricKeyCacheHitPercent     = "cache_hit_percent"
-	runtimeMetricKeyKvCacheUsagePercent = "kv_cache_usage_percent"
-	runtimeMetricKeyQueueDepth          = "queue_depth"
+	runtimeMetricKeyGenerationTPS       = runtime_dialect.KeyGenerationTPS
+	runtimeMetricKeyPrefillTPS          = runtime_dialect.KeyPrefillTPS
+	runtimeMetricKeyCacheHitPercent     = runtime_dialect.KeyCacheHitPercent
+	runtimeMetricKeyKvCacheUsagePercent = runtime_dialect.KeyKVCacheUsagePercent
+	runtimeMetricKeyQueueDepth          = runtime_dialect.KeyQueueDepth
 	runtimeMetricKeyRequestsRunning     = "requests_running"
 	runtimeMetricKeySpecAcceptPercent   = "spec_accept_percent"
 )
@@ -104,12 +109,12 @@ func joinNote(parts ...string) string {
 // renders attached to generation. The radiance dialect publishes engine-wide
 // rate gauges (batch-aggregate across concurrent requests), which is a
 // property of the data source, so the provider states it here instead of
-// letting the UI guess it from the backend kind.
+// letting the UI guess it from the backend kind (the dialect states it).
 func buildEnvelopeMetrics(state *runtimeMetricsState, kind string) []RuntimeMetric {
 	if state == nil {
 		return nil
 	}
-	engineScoped := kind == "radiance"
+	engineScoped := runtime_dialect.EngineScoped(kind)
 	out := make([]RuntimeMetric, 0, 7)
 	if aggregateHasValue(state.generation.current, state.generation.avg, state.generation.max) {
 		out = append(out, RuntimeMetric{Key: runtimeMetricKeyGenerationTPS, Unit: runtimeMetricUnitTokS,
@@ -125,14 +130,14 @@ func buildEnvelopeMetrics(state *runtimeMetricsState, kind string) []RuntimeMetr
 		out = append(out, RuntimeMetric{Key: runtimeMetricKeyCacheHitPercent, Unit: runtimeMetricUnitPercent,
 			Current: copyFloat(state.cache.current), Avg: copyFloat(state.cache.avg), Note: runtimeMetricNoteSamplerWindow})
 	}
-	if state.kvUsage != nil {
-		out = append(out, RuntimeMetric{Key: runtimeMetricKeyKvCacheUsagePercent, Unit: runtimeMetricUnitPercent, Current: copyFloat(state.kvUsage)})
+	if state.KVUsage != nil {
+		out = append(out, RuntimeMetric{Key: runtimeMetricKeyKvCacheUsagePercent, Unit: runtimeMetricUnitPercent, Current: copyFloat(state.KVUsage)})
 	}
-	if state.queueDepth != nil {
-		out = append(out, RuntimeMetric{Key: runtimeMetricKeyQueueDepth, Unit: runtimeMetricUnitCount, Current: copyFloat(state.queueDepth)})
+	if state.QueueDepth != nil {
+		out = append(out, RuntimeMetric{Key: runtimeMetricKeyQueueDepth, Unit: runtimeMetricUnitCount, Current: copyFloat(state.QueueDepth)})
 	}
-	if state.requestsRunning != nil {
-		out = append(out, RuntimeMetric{Key: runtimeMetricKeyRequestsRunning, Unit: runtimeMetricUnitCount, Current: copyFloat(state.requestsRunning)})
+	if state.RequestsRunning != nil {
+		out = append(out, RuntimeMetric{Key: runtimeMetricKeyRequestsRunning, Unit: runtimeMetricUnitCount, Current: copyFloat(state.RequestsRunning)})
 	}
 	if state.specAccept.current != nil || state.specAccept.avg != nil {
 		out = append(out, RuntimeMetric{Key: runtimeMetricKeySpecAcceptPercent, Unit: runtimeMetricUnitPercent,

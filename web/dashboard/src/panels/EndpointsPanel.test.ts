@@ -510,4 +510,26 @@ describe("EndpointsPanel runtime metrics", () => {
     expect(cell(0).text).toBe("1234");
     expect(cell(0).title).not.toContain("source ");
   });
+
+  it("renders an ms-unit metric with the latency format", async () => {
+    component = mount(EndpointsPanel, { target: document.body });
+    flushSync();
+
+    await refreshWithEndpoint({
+      ...base,
+      name: "latency-backend",
+      type: "vllm",
+      runtime_metrics: {
+        sampled_at: "2026-10-05T09:00:00Z",
+        metrics: [
+          { key: "generation_tps", unit: "ms", current: 412, avg: 500, max: 1500 },
+        ],
+      },
+    });
+
+    // No panel edit was needed: a dialect that declares a latency column
+    // gets the shared duration formatting (412ms, and 1.5s for the max).
+    expect(cell(0).text).toContain("412ms");
+    expect(cell(0).text).toContain("avg 500ms · max 1.5s");
+  });
 });

@@ -10,12 +10,12 @@ import (
 
 func TestMetricsSourceValidate(t *testing.T) {
 	tests := []struct {
-		name        string
-		input       MetricsSourceConfig
-		wantErr     string
-		wantMode    string
-		wantStale   time.Duration
-		wantCosts   string
+		name      string
+		input     MetricsSourceConfig
+		wantErr   string
+		wantMode  string
+		wantStale time.Duration
+		wantCosts string
 	}{
 		{name: "empty is sampler", input: MetricsSourceConfig{}, wantMode: "sampler"},
 		{name: "explicit sampler", input: MetricsSourceConfig{Mode: "sampler"}, wantMode: "sampler"},
@@ -33,9 +33,9 @@ func TestMetricsSourceValidate(t *testing.T) {
 		{name: "influx missing token_env", input: MetricsSourceConfig{Mode: "influx", Influx: InfluxSourceConfig{URL: "u", Org: "o", Bucket: "b"}}, wantErr: "influx: token_env is required"},
 		{name: "influx missing bucket", input: MetricsSourceConfig{Mode: "influx", Influx: InfluxSourceConfig{URL: "u", Org: "o", TokenEnv: "T"}}, wantErr: "influx: bucket is required"},
 		{
-			name:      "explicit costs bucket and stale kept",
-			input:     MetricsSourceConfig{Mode: "influx", Influx: InfluxSourceConfig{URL: "u", Org: "o", TokenEnv: "T", Bucket: "b", CostsBucket: "costs", StaleAfter: 90 * time.Second}},
-			wantMode:  "influx", wantStale: 90 * time.Second, wantCosts: "costs",
+			name:     "explicit costs bucket and stale kept",
+			input:    MetricsSourceConfig{Mode: "influx", Influx: InfluxSourceConfig{URL: "u", Org: "o", TokenEnv: "T", Bucket: "b", CostsBucket: "costs", StaleAfter: 90 * time.Second}},
+			wantMode: "influx", wantStale: 90 * time.Second, wantCosts: "costs",
 		},
 	}
 	for _, tc := range tests {

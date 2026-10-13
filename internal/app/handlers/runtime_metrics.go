@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/thushan/olla/internal/app/handlers/runtime_dialect"
+	"github.com/thushan/olla/internal/config"
 	"github.com/thushan/olla/internal/core/domain"
 	"github.com/thushan/olla/internal/logger"
 	"github.com/thushan/olla/internal/util"
@@ -51,15 +53,15 @@ const runtimeMetricsBodyLimit = 4 << 20
 // EndpointRuntimeMetrics is the compact, capability-aware runtime view shown
 // beside an endpoint. Nil fields mean the engine did not publish that signal.
 type EndpointRuntimeMetrics struct {
-	SampledAt      time.Time       `json:"sampled_at"`
-	AvailableSince time.Time       `json:"available_since"`
-	Stale          bool            `json:"stale"`
-	Kind           string          `json:"kind,omitempty"`
+	SampledAt      time.Time `json:"sampled_at"`
+	AvailableSince time.Time `json:"available_since"`
+	Stale          bool      `json:"stale"`
+	Kind           string    `json:"kind,omitempty"`
 	// Source names who produced the numbers: "sampler" (this process
 	// scraping the engine) or "ollametrics" (canonical InfluxDB series).
 	Source string `json:"source"`
 	// SourceAgeS is seconds since the newest underlying sample.
-	SourceAgeS *float64 `json:"source_age_s,omitempty"`
+	SourceAgeS *float64        `json:"source_age_s,omitempty"`
 	Metrics    []RuntimeMetric `json:"metrics,omitempty"`
 }
 
@@ -84,9 +86,9 @@ type runtimeMetricsState struct {
 	prefill         throughputAggregate
 	cache           ratioAggregate
 	specAccept      ratioAggregate
-	kvUsage         *float64
-	queueDepth      *float64
-	requestsRunning *float64
+	KVUsage         *float64
+	QueueDepth      *float64
+	RequestsRunning *float64
 	failures        int
 	nextAttempt     time.Time
 }
@@ -141,19 +143,9 @@ func windowStats(samples []runtimeSample) (avg, max *float64) {
 	return floatPtr(sum / float64(len(samples))), floatPtr(m)
 }
 
-type runtimeCounters struct {
-	generationTokens, generationSeconds      *float64
-	prefillTokens, prefillSeconds            *float64
-	cacheHits, cacheQueries                  *float64
-	cachedPromptTokens, computedPromptTokens *float64
-	kvUsage                                  *float64
-	// Backend-computed instantaneous gauges, used for a signal whose
-	// counter pair is absent from the exposition (radiance publishes native
-	// rate gauges alongside - or instead of - its counters).
-	genRate, prefillRate, cacheRatePercent *float64
-	// Saturation and speculative-decode gauges (radiance for now).
-	queueDepth, requestsRunning, specAcceptPercent *float64
-}
+// runtimeCounters is the engine-neutral signal set; its content (and which
+// raw series fill it) is owned by the runtime_dialect registry.
+type runtimeCounters = runtime_dialect.Counters
 
 func newEndpointRuntimeMetricsSampler(repository domain.EndpointRepository, l logger.StyledLogger) *endpointRuntimeMetricsSampler {
 	// The client carries no timeout of its own: each scrape is bounded by its
@@ -448,27 +440,27 @@ func (s *endpointRuntimeMetricsSampler) record(key string, at time.Time, next ru
 	state.sampledAt, state.stale = at, false
 	state.failures, state.nextAttempt = 0, time.Time{}
 	if state.hasLast {
-		recordThroughputSignal(&state.generation, at, state.last.generationTokens, next.generationTokens, state.last.generationSeconds, next.generationSeconds, next.genRate)
-		recordThroughputSignal(&state.prefill, at, state.last.prefillTokens, next.prefillTokens, state.last.prefillSeconds, next.prefillSeconds, next.prefillRate)
+		recordThroughputSignal(&state.generation, at, state.last.GenerationTokens, next.GenerationTokens, state.last.GenerationSeconds, next.GenerationSeconds, next.GenRate)
+		recordThroughputSignal(&state.prefill, at, state.last.PrefillTokens, next.PrefillTokens, state.last.PrefillSeconds, next.PrefillSeconds, next.PrefillRate)
 		recordRatioSignal(&state.cache, at, state.last, next)
 	} else {
 		// First sample: counter deltas have nothing to diff against. Record
 		// the gauge only when the exposition lacks the counter pair at all -
 		// otherwise the first delta lands next scrape, and mixing one gauge
 		// value into an otherwise pure counter window would skew avg/max.
-		if next.generationTokens == nil || next.generationSeconds == nil {
-			recordGaugeThroughput(&state.generation, at, next.genRate)
+		if next.GenerationTokens == nil || next.GenerationSeconds == nil {
+			recordGaugeThroughput(&state.generation, at, next.GenRate)
 		}
-		if next.prefillTokens == nil || next.prefillSeconds == nil {
-			recordGaugeThroughput(&state.prefill, at, next.prefillRate)
+		if next.PrefillTokens == nil || next.PrefillSeconds == nil {
+			recordGaugeThroughput(&state.prefill, at, next.PrefillRate)
 		}
-		if (next.cacheHits == nil || next.cacheQueries == nil) && (next.cachedPromptTokens == nil || next.computedPromptTokens == nil) {
-			recordGaugeRatio(&state.cache, at, next.cacheRatePercent)
+		if (next.CacheHits == nil || next.CacheQueries == nil) && (next.CachedPromptTokens == nil || next.ComputedPromptTokens == nil) {
+			recordGaugeRatio(&state.cache, at, next.CacheRatePercent)
 		}
 	}
-	recordGaugeRatio(&state.specAccept, at, next.specAcceptPercent)
+	recordGaugeRatio(&state.specAccept, at, next.SpecAcceptPercent)
 	state.last, state.hasLast = next, true
-	state.kvUsage, state.queueDepth, state.requestsRunning = next.kvUsage, next.queueDepth, next.requestsRunning
+	state.KVUsage, state.QueueDepth, state.RequestsRunning = next.KVUsage, next.QueueDepth, next.RequestsRunning
 }
 
 // recordGaugeThroughput folds a backend-computed rate gauge into the same
@@ -536,15 +528,15 @@ func recordThroughput(a *throughputAggregate, at time.Time, oldTokens, newTokens
 // recordRatio reports whether a delta ratio was recorded.
 func recordRatio(a *ratioAggregate, at time.Time, old, next runtimeCounters) bool {
 	var oldN, newN, oldD, newD *float64
-	if old.cacheHits != nil && next.cacheHits != nil && old.cacheQueries != nil && next.cacheQueries != nil {
-		oldN, newN, oldD, newD = old.cacheHits, next.cacheHits, old.cacheQueries, next.cacheQueries
-	} else if old.cachedPromptTokens != nil && next.cachedPromptTokens != nil && old.computedPromptTokens != nil && next.computedPromptTokens != nil {
+	if old.CacheHits != nil && next.CacheHits != nil && old.CacheQueries != nil && next.CacheQueries != nil {
+		oldN, newN, oldD, newD = old.CacheHits, next.CacheHits, old.CacheQueries, next.CacheQueries
+	} else if old.CachedPromptTokens != nil && next.CachedPromptTokens != nil && old.ComputedPromptTokens != nil && next.ComputedPromptTokens != nil {
 		// llama.cpp's prompt_tokens_total counts only COMPUTED (non-cached)
 		// prompt tokens, while prompt_tokens_cached_total counts cached ones,
 		// so the hit rate is cached / (cached + computed).
-		oldN, newN = old.cachedPromptTokens, next.cachedPromptTokens
-		oldD = floatPtr(*old.cachedPromptTokens + *old.computedPromptTokens)
-		newD = floatPtr(*next.cachedPromptTokens + *next.computedPromptTokens)
+		oldN, newN = old.CachedPromptTokens, next.CachedPromptTokens
+		oldD = floatPtr(*old.CachedPromptTokens + *old.ComputedPromptTokens)
+		newD = floatPtr(*next.CachedPromptTokens + *next.ComputedPromptTokens)
 	} else {
 		return false
 	}
@@ -562,8 +554,8 @@ func recordRatio(a *ratioAggregate, at time.Time, old, next runtimeCounters) boo
 // (hits/queries, or llama.cpp's cached/computed) is available on both
 // samples, i.e. a delta ratio is computable in principle.
 func ratioCountersPresent(old, next runtimeCounters) bool {
-	return (old.cacheHits != nil && next.cacheHits != nil && old.cacheQueries != nil && next.cacheQueries != nil) ||
-		(old.cachedPromptTokens != nil && next.cachedPromptTokens != nil && old.computedPromptTokens != nil && next.computedPromptTokens != nil)
+	return (old.CacheHits != nil && next.CacheHits != nil && old.CacheQueries != nil && next.CacheQueries != nil) ||
+		(old.CachedPromptTokens != nil && next.CachedPromptTokens != nil && old.ComputedPromptTokens != nil && next.ComputedPromptTokens != nil)
 }
 
 // recordThroughputSignal records one throughput signal from a scrape pair.
@@ -592,7 +584,7 @@ func recordRatioSignal(a *ratioAggregate, at time.Time, old, next runtimeCounter
 		}
 		return
 	}
-	recordGaugeRatio(a, at, next.cacheRatePercent)
+	recordGaugeRatio(a, at, next.CacheRatePercent)
 }
 
 // clearThroughputCurrent drops the current rate after a scrape that produced
@@ -612,7 +604,7 @@ func clearRatioCurrent(a *ratioAggregate, at time.Time) {
 	a.avg, _ = windowStats(a.samples)
 }
 func countersReset(old, next runtimeCounters) bool {
-	for _, p := range [][2]*float64{{old.generationTokens, next.generationTokens}, {old.generationSeconds, next.generationSeconds}, {old.prefillTokens, next.prefillTokens}, {old.prefillSeconds, next.prefillSeconds}, {old.cacheHits, next.cacheHits}, {old.cacheQueries, next.cacheQueries}, {old.cachedPromptTokens, next.cachedPromptTokens}, {old.computedPromptTokens, next.computedPromptTokens}} {
+	for _, p := range [][2]*float64{{old.GenerationTokens, next.GenerationTokens}, {old.GenerationSeconds, next.GenerationSeconds}, {old.PrefillTokens, next.PrefillTokens}, {old.PrefillSeconds, next.PrefillSeconds}, {old.CacheHits, next.CacheHits}, {old.CacheQueries, next.CacheQueries}, {old.CachedPromptTokens, next.CachedPromptTokens}, {old.ComputedPromptTokens, next.ComputedPromptTokens}} {
 		if p[0] != nil && p[1] != nil && *p[1] < *p[0] {
 			return true
 		}
@@ -627,61 +619,46 @@ func copyFloat(v *float64) *float64 {
 }
 func floatPtr(v float64) *float64 { return &v }
 
-// canonicalRuntimeKind folds the accepted spellings of the sampled kinds onto
-// their canonical ids; "" means unrecognised.
-func canonicalRuntimeKind(s string) string {
-	switch strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(s), "-", ""), ".", "")) {
-	case "vllm":
-		return "vllm"
-	case "halogen", "llamacpp", "llamacppserver":
-		return "llamacpp"
-	case "radiance":
-		return "radiance"
-	}
-	return ""
-}
+// canonicalRuntimeKind delegates to the single kind vocabulary in config, so
+// validation and sampling can never disagree about what a pinned kind means.
+func canonicalRuntimeKind(s string) string { return config.CanonicalRuntimeKind(s) }
 
+// isKnownRuntimeKind gates sampling on the dialect registry, so a kind the
+// config vocabulary accepts but no dialect implements is reported, never
+// guessed onto another backend.
 func isKnownRuntimeKind(kind string) bool {
-	return canonicalRuntimeKind(kind) == kind && kind != ""
+	return canonicalRuntimeKind(kind) == kind && runtime_dialect.Known(kind)
 }
 
-// runtimeKindNameFallbacks recognise backends reached through a generic
-// endpoint type (e.g. openai-compatible) by an endpoint name marker.
-var runtimeKindNameFallbacks = []struct {
-	kind, marker string
-}{
-	{"llamacpp", "halogen"},
-	{"radiance", "radiance"},
-}
-
+// runtimeMetricsKind resolves the sampling dialect for an endpoint:
+// explicit runtime_metrics.kind, then the endpoint type, then nothing.
+// There is no name-substring fallback - heuristics like "endpoint called
+// halogen-* must be llamacpp" bake one fleet's host-naming into product code.
+// An endpoint behind a generic type that wants sampling must pin its kind.
 func runtimeMetricsKind(endpoint *domain.Endpoint) string {
 	if endpoint == nil {
 		return ""
 	}
+	return resolveRuntimeKind(endpoint.RuntimeMetricsKind, endpoint.Type)
+}
+
+// resolveRuntimeKind is THE kind resolution for a (pinned kind, endpoint
+// type) pair; the sampler and the dashboard manifest both use it so they
+// can never disagree about which dialect an endpoint samples with.
+func resolveRuntimeKind(pinned, endpointType string) string {
 	// An explicit runtime_metrics.kind wins. An unrecognised value is passed
 	// through (lower-cased) so the sampler logs it once instead of silently
-	// folding it onto a flavour the operator never asked for.
-	if k := strings.ToLower(strings.TrimSpace(endpoint.RuntimeMetricsKind)); k != "" {
+	// folding it onto a flavour the operator never asked for - and so a
+	// dialect registered outside the built-in vocabulary (tests, forks)
+	// resolves for the manifest too.
+	if k := strings.ToLower(strings.TrimSpace(pinned)); k != "" {
 		if c := canonicalRuntimeKind(k); c != "" {
 			return c
 		}
 		return k
 	}
-	if c := canonicalRuntimeKind(endpoint.Type); c != "" {
-		return c
-	}
-	lower := strings.ToLower(endpoint.Name)
-	for _, fb := range runtimeKindNameFallbacks {
-		if strings.Contains(lower, fb.marker) {
-			return fb.kind
-		}
-	}
-	return ""
+	return canonicalRuntimeKind(endpointType)
 }
-
-// vllmKVUsageNames chains the spellings vLLM builds have used for the KV
-// cache usage gauge across releases (radiance emits the same compat names).
-var vllmKVUsageNames = []string{"vllm:kv_cache_usage_ratio", "vllm_kv_cache_usage_ratio", "vllm:kv_cache_usage_perc", "vllm_kv_cache_usage_perc", "vllm:gpu_cache_usage_perc", "vllm_gpu_cache_usage_perc"}
 
 func parseRuntimeCounters(kind, exposition string) runtimeCounters {
 	counters, _ := parseRuntimeCountersFrom(kind, strings.NewReader(exposition))
@@ -693,80 +670,11 @@ func parseRuntimeCountersFrom(kind string, r io.Reader) (runtimeCounters, error)
 	return selectRuntimeCounters(kind, values), err
 }
 
+// selectRuntimeCounters delegates the exposition -> signal projection to
+// the dialect registry; unknown kinds sample nothing rather than silently
+// falling back onto another backend.
 func selectRuntimeCounters(kind string, values map[string]float64) runtimeCounters {
-	get := func(names ...string) *float64 {
-		for _, name := range names {
-			if v, ok := values[name]; ok {
-				return floatPtr(v)
-			}
-		}
-		return nil
-	}
-	switch kind {
-	case "vllm":
-		// Older vLLM builds lack the V1-only kv_computed counter;
-		// prompt_tokens_total paired with request_prefill_time_seconds_sum
-		// measures whole-prompt prefill over engine prefill time (not wall
-		// time), so the rate stays comparable across builds.
-		return runtimeCounters{
-			generationTokens: get("vllm:generation_tokens_total", "vllm_generation_tokens_total"), generationSeconds: get("vllm:request_decode_time_seconds_sum", "vllm_request_decode_time_seconds_sum"),
-			prefillTokens: get("vllm:request_prefill_kv_computed_tokens_sum", "vllm_request_prefill_kv_computed_tokens_sum", "vllm:prompt_tokens_total", "vllm_prompt_tokens_total"), prefillSeconds: get("vllm:request_prefill_time_seconds_sum", "vllm_request_prefill_time_seconds_sum"),
-			cacheHits: get("vllm:prefix_cache_hits_total", "vllm_prefix_cache_hits_total"), cacheQueries: get("vllm:prefix_cache_queries_total", "vllm_prefix_cache_queries_total"),
-			kvUsage: normalisePercent(get(vllmKVUsageNames...)),
-		}
-	case "radiance":
-		c := runtimeCounters{
-			generationTokens: get("radiance:decode_tokens_total"), generationSeconds: get("radiance:engine_step_seconds_decode_total"),
-			prefillTokens: get("radiance:prefill_tokens_total"), prefillSeconds: get("radiance:engine_step_seconds_prefill_total"),
-			genRate: get("radiance:decode_tokens_per_second"), prefillRate: get("radiance:prefill_tokens_per_second"),
-			kvUsage:           normalisePercent(get(vllmKVUsageNames...)),
-			queueDepth:        get("radiance:http_queue_depth"),
-			requestsRunning:   get("vllm:num_requests_running"),
-			specAcceptPercent: scaledRatioPercent(get("radiance:draft_acceptance_ratio")),
-		}
-		// No counter pair forms a hit rate here: attn_cached_tokens_total is
-		// tokens while linear_checkpoints_written_total counts checkpoints
-		// (their ratio is tokens-per-checkpoint, not a percentage), and the
-		// paged-attention cache exposes no queries counter. The GPU-prefix
-		// cache hit-rate gauge comes first because that is the series
-		// ollametrics (and therefore Grafana) canonicalises - reading the
-		// linear-cache gauge instead made the dashboard and Grafana report
-		// different hit rates for the same engine. The linear-cache gauge
-		// stays as fallback for builds without the GPU-prefix series.
-		c.cacheRatePercent = scaledRatioPercent(get("vllm:gpu_prefix_cache_hit_rate", "radiance:linear_prefix_cache_hit_rate"))
-		return c
-	case "llamacpp":
-		return runtimeCounters{
-			generationTokens: get("llamacpp:tokens_predicted_total", "llamacpp_tokens_predicted_total"), generationSeconds: get("llamacpp:tokens_predicted_seconds_total", "llamacpp_tokens_predicted_seconds_total"),
-			prefillTokens: get("llamacpp:prompt_tokens_total", "llamacpp_prompt_tokens_total"), prefillSeconds: get("llamacpp:prompt_seconds_total", "llamacpp_prompt_seconds_total"),
-			cachedPromptTokens: get("halogen:prompt_tokens_cached_total", "halogen_prompt_tokens_cached_total"), computedPromptTokens: get("llamacpp:prompt_tokens_total", "llamacpp_prompt_tokens_total"),
-			kvUsage: normalisePercent(get("llamacpp:kv_cache_usage_ratio", "llamacpp_kv_cache_usage_ratio")),
-		}
-	}
-	// Unknown kind (e.g. a typo in runtime_metrics.kind): parse nothing
-	// rather than silently sampling the endpoint as llama.cpp.
-	return runtimeCounters{}
-}
-
-// scaledRatioPercent converts a 0..1 backend ratio gauge to percent. Unlike
-// normalisePercent it never passes a >1 value through unscaled: these gauges
-// are documented ratios, so anything else is a bug in the backend, not a
-// percent already.
-func scaledRatioPercent(v *float64) *float64 {
-	if v == nil {
-		return nil
-	}
-	return floatPtr(100 * *v)
-}
-func normalisePercent(v *float64) *float64 {
-	if v == nil {
-		return nil
-	}
-	n := *v
-	if n >= 0 && n <= 1 {
-		n *= 100
-	}
-	return floatPtr(n)
+	return runtime_dialect.Select(kind, values)
 }
 
 // parsePrometheusSums is the string-input entry point kept for tests and

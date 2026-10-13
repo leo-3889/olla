@@ -23,7 +23,9 @@ export const STALE_MULTIPLIER = 3; // last success older than 3*interval => stal
 type TickFn = (signal: AbortSignal) => void | Promise<void>;
 
 interface Job {
-  intervalMs: number;
+  // Resolved per re-arm, so a config-driven interval takes effect on the
+  // next tick instead of requiring a page reload.
+  intervalMs: () => number;
   tick: TickFn;
 }
 
@@ -40,8 +42,11 @@ class PollScheduler {
   #started = false;
   #boundOnVisibility = (): void => this.#onVisibility();
 
-  register(name: string, intervalMs: number, tick: TickFn): void {
-    this.#jobs.set(name, { intervalMs, tick });
+  register(name: string, intervalMs: number | (() => number), tick: TickFn): void {
+    this.#jobs.set(name, {
+      intervalMs: typeof intervalMs === 'function' ? intervalMs : () => intervalMs,
+      tick,
+    });
   }
 
   /** With no argument: globally start the scheduler - attach the visibility
@@ -120,7 +125,8 @@ class PollScheduler {
     if (!job) return;
 
     const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
-    const base = hidden ? job.intervalMs * BACKGROUND_BACKOFF : job.intervalMs;
+    const interval = job.intervalMs();
+    const base = hidden ? interval * BACKGROUND_BACKOFF : interval;
     // Jitter is +/- so the long-run average matches the configured interval.
     const jitter = (Math.random() * 2 - 1) * JITTER * base;
     const delay = immediate ? 0 : Math.max(500, base + jitter);

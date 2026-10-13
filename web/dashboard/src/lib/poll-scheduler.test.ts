@@ -16,6 +16,37 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe('pollScheduler dynamic intervals', () => {
+  it('re-arms with the resolver value on the next tick (dashboard.polling takes effect live)', async () => {
+    const { pollScheduler } = await import('./poll-scheduler');
+
+    let interval = 1000;
+    let calls = 0;
+    pollScheduler.register('dyn', () => interval, async () => {
+      calls++;
+    });
+    pollScheduler.start();
+    pollScheduler.start('dyn');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toBe(1);
+
+    // A config change lands; the CURRENT pending timer still uses the old
+    // cadence, but the re-arm after this tick must use the new one.
+    interval = 10_000;
+    await vi.advanceTimersByTimeAsync(1200); // old 1000ms cadence fires
+    expect(calls).toBe(2);
+
+    // Nothing on the old cadence any more...
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(calls).toBe(2);
+    // ...and the new cadence ticks.
+    await vi.advanceTimersByTimeAsync(11_000);
+    expect(calls).toBe(3);
+
+    pollScheduler.stop();
+  });
+});
+
 describe('pollScheduler.refresh', () => {
   it('a burst of manual refreshes leaves exactly one live recurring chain', async () => {
     const { pollScheduler } = await import('./poll-scheduler');

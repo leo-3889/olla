@@ -87,4 +87,3 @@ func (m *MetricsSourceConfig) Validate() error {
 	}
 	return nil
 }
-

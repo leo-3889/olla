@@ -46,7 +46,7 @@ export interface PollStoreOptions<T> {
   /** absolute URL to fetch */
   url: string;
   /** foreground poll interval */
-  intervalMs: number;
+  intervalMs: number | (() => number);
   /** Fires on every completed tick, success or failure. ok=true for 200/304
    *  (data is the parsed body on 200, null on 304); ok=false on failure.
    *  Optional and additive, so stores that don't care (endpoints/models) are
@@ -74,6 +74,7 @@ export interface PollStore<T> {
 
 export function createPollStore<T>(opts: PollStoreOptions<T>): PollStore<T> {
   const { name, url, intervalMs, onTick } = opts;
+  const intervalMsOf = (): number => (typeof intervalMs === 'function' ? intervalMs() : intervalMs);
 
   let data: T | null = $state(null);
   let status: PollStatus = $state('loading');
@@ -86,7 +87,7 @@ export function createPollStore<T>(opts: PollStoreOptions<T>): PollStore<T> {
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (etag) headers['If-None-Match'] = etag;
 
-    const tickSignal = withDeadline(signal, intervalMs);
+    const tickSignal = withDeadline(signal, intervalMsOf());
 
     let resp: Response;
     try {
@@ -162,7 +163,7 @@ export function createPollStore<T>(opts: PollStoreOptions<T>): PollStore<T> {
     // scaling, the first background failure jumps straight to stale and the
     // error state becomes unreachable the moment you switch tabs.
     const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
-    const staleAfterMs = intervalMs * STALE_MULTIPLIER * (hidden ? BACKGROUND_BACKOFF : 1);
+    const staleAfterMs = intervalMsOf() * STALE_MULTIPLIER * (hidden ? BACKGROUND_BACKOFF : 1);
     if (hasPrior && ageMs > staleAfterMs) {
       status = 'stale';
     } else {
@@ -181,7 +182,7 @@ export function createPollStore<T>(opts: PollStoreOptions<T>): PollStore<T> {
       return name;
     },
     get intervalMs() {
-      return intervalMs;
+      return intervalMsOf();
     },
     get data() {
       return data;

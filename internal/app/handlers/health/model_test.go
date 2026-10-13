@@ -41,9 +41,9 @@ func modelInput(reg *mockModelRegistry, healthy []*domain.Endpoint, stats map[st
 	return &Input{
 		Healthy:       healthy,
 		ModelStats:    stats,
-		ModelRegistry:  reg,
-		AliasResolver:  alias,
-		Thresholds:     testThresholds(),
+		ModelRegistry: reg,
+		AliasResolver: alias,
+		Thresholds:    testThresholds(),
 	}
 }
 

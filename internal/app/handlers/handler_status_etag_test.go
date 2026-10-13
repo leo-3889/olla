@@ -277,17 +277,17 @@ func TestEndpointStatusResponse_ETagChangesAcrossMinuteBuckets(t *testing.T) {
 
 	minute := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 	r1 := EndpointStatusResponse{
-		TotalCount:   1,
-		HealthyCount: 1,
+		TotalCount:    1,
+		HealthyCount:  1,
 		RoutableCount: 1,
 		Endpoints: []EndpointSummary{{
-			ID:             "abc",
-			Name:           "ep1",
-			Type:           "ollama",
-			Status:         healthyStatus,
-			URL:            "http://localhost:11434",
-			HealthCheckAt:  ptr(minute.Add(10 * time.Second)),
-			NextCheckAt:    ptr(minute.Add(40 * time.Second)),
+			ID:              "abc",
+			Name:            "ep1",
+			Type:            "ollama",
+			Status:          healthyStatus,
+			URL:             "http://localhost:11434",
+			HealthCheckAt:   ptr(minute.Add(10 * time.Second)),
+			NextCheckAt:     ptr(minute.Add(40 * time.Second)),
 			LastModelSyncAt: ptr(minute.Add(-time.Hour)),
 		}},
 	}

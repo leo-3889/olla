@@ -63,9 +63,9 @@ type observeCostEntry struct {
 }
 
 type observeCost struct {
-	Currency string                           `json:"currency"`
-	Hour     map[string]*observeCostEntry     `json:"hour"`
-	Day      map[string]*observeCostEntry     `json:"day"`
+	Currency string                       `json:"currency"`
+	Hour     map[string]*observeCostEntry `json:"hour"`
+	Day      map[string]*observeCostEntry `json:"day"`
 }
 
 // ObservePayload is the contract of GET /internal/ui/observe.json. In

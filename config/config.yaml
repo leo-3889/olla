@@ -276,5 +276,5 @@ dashboard:
 #       stale_after: 60s
 #       power_attribution:
 #         halogen-395: shelly-ai-395
-#         radiance-qfn: shelly-ai-box
+#         radiance-9700-64: shelly-ai-box
 #       gpu_endpoint: radiance-gpus

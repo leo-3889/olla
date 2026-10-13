@@ -444,7 +444,7 @@ discovery:
 | `runtime_metrics.enabled` | bool | Turn the sampler on for this endpoint. When the whole `runtime_metrics` block is absent the sampler is disabled for the endpoint. |
 | `runtime_metrics.interval` | duration | How often to scrape the endpoint's `/metrics` (default: `10s`). |
 | `runtime_metrics.timeout` | duration | Per-scrape HTTP timeout (default: `3s`). |
-| `runtime_metrics.kind` | string | Metric dialect: `vllm`, `llamacpp` (also accepted: `halogen`), or `radiance`. Pin it when the endpoint `type` alone does not identify the engine - e.g. a radiance backend registered as `openai-compatible`. Omit to auto-detect from the endpoint type, then the endpoint name (a name containing `radiance` or `halogen`). An unrecognised value is kept as-is and sampled as nothing, with one warning logged. |
+| `runtime_metrics.kind` | string | Metric dialect: `vllm`, `llamacpp` (also accepted: `halogen`), or `radiance`. Pin it when the endpoint `type` alone does not identify the engine - e.g. a radiance backend registered as `openai-compatible`. Resolution is pinned kind, then endpoint type; there is **no name heuristic**. An endpoint that opts in but resolves to no known kind is tracked but not sampled, and every such endpoint (and every unrecognised kind value) is listed in a startup `WARNING`. |
 | `runtime_metrics.path` | string | Scrape target appended to the endpoint URL (default `/metrics`). An absolute URL is honoured too, for engines serving metrics on a separate port. |
 
 Scrapes inherit the endpoint's custom `headers` and resolved `auth` headers, so authenticated backends work without extra configuration.
@@ -459,7 +459,7 @@ Scrapes inherit the endpoint's custom `headers` and resolved `auth` headers, so 
 |--------|------|---------------------|----------|
 | Generation throughput | `vllm:generation_tokens_total` / `vllm:request_decode_time_seconds_sum` | `llamacpp:tokens_predicted_total` / `llamacpp:tokens_predicted_seconds_total` | `radiance:decode_tokens_total` / `radiance:engine_step_seconds_decode_total` |
 | Prefill throughput | `vllm:request_prefill_kv_computed_tokens_sum` / `vllm:request_prefill_time_seconds_sum` | `llamacpp:prompt_tokens_total` / `llamacpp:prompt_seconds_total` | `radiance:prefill_tokens_total` / `radiance:engine_step_seconds_prefill_total` |
-| Cache hit | `vllm:prefix_cache_hits_total` / `vllm:prefix_cache_queries_total` | `halogen:prompt_tokens_cached_total` / (`halogen:prompt_tokens_cached_total` + `llamacpp:prompt_tokens_total`) | `radiance:linear_prefix_cache_hit_rate` (gauge) |
+| Cache hit | `vllm:prefix_cache_hits_total` / `vllm:prefix_cache_queries_total` | `halogen:prompt_tokens_cached_total` / (`halogen:prompt_tokens_cached_total` + `llamacpp:prompt_tokens_total`) | `vllm:gpu_prefix_cache_hit_rate` gauge (preferred - the series ollametrics canonicalises; `radiance:linear_prefix_cache_hit_rate` fallback) |
 | KV-cache usage | `vllm:kv_cache_usage_ratio` (or `vllm:kv_cache_usage_perc` / `vllm:gpu_cache_usage_perc`) | `llamacpp:kv_cache_usage_ratio` | `vllm:kv_cache_usage_*` (compat names) |
 | Queue depth | — | — | `radiance:http_queue_depth` |
 | Requests running | — | — | `vllm:num_requests_running` |
@@ -468,6 +468,16 @@ Scrapes inherit the endpoint's custom `headers` and resolved `auth` headers, so 
 Radiance throughput counters are engine-wide batch aggregates summed across all concurrent streams, not per-stream speed; its rate gauges (`radiance:decode_tokens_per_second`, `radiance:prefill_tokens_per_second`) are used only when the counter pair is absent from the exposition.
 
 Throughput and cache-hit rates require counter movement between two samples, so the first sample after enabling (or after an availability-epoch reset) provides only the current KV-cache usage.
+
+**Adding an engine dialect.** All backend-specific knowledge lives in
+`internal/app/handlers/runtime_dialect`: one file registering a `Dialect`
+(series-name projection, the columns that backend can fill, and whether its
+throughput is an engine-wide aggregate). The sampler, the runtime-metrics
+payload and the dashboard's column manifest read the registry, so a new
+dialect needs no sampler, handler or dashboard edits - a test-registered
+fake dialect is proven end to end by `runtime_metrics_fake_dialect_test.go`.
+Dialects may use the shared unit vocabulary (`tok_s`, `percent`, `count`,
+`ms`).
 
 #### Path Preservation
 
@@ -902,6 +912,25 @@ dashboard sections become available (they only exist in that backend), and
 the runtime payload additionally carries `source: "ollametrics"` plus
 `source_age_s` so consumers can see where each number came from and how old
 it is.
+
+### Dashboard Polling
+
+The embedded dashboard polls four stores on fixed default cadences. Each can
+be overridden; the values are published on `/internal/ui/config.json` and
+applied live (the next tick already uses the new cadence):
+
+```yaml
+dashboard:
+  polling:
+    overview_interval: 5s     # status/health poll (default 5s)
+    endpoints_interval: 5s    # endpoints + runtime metrics poll (default 5s)
+    models_interval: 15s      # models poll (default 15s)
+    observe_interval: 10s     # power/cost/GPU rollups (default 10s)
+```
+
+Omit any key to keep its default. These are advisory client poll intervals,
+not server-side load limits: the `observe` polls are Influx rollup queries,
+so a much slower cadence is reasonable on busy deployments.
 
 
 ## Environment Variables

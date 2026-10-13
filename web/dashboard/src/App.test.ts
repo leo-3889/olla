@@ -46,7 +46,7 @@ const STATUS_BODY = {
 let CONFIG_BODY: Record<string, unknown> = {
   schema: 1,
   metrics_source: 'sampler',
-  poll_ms: { overview: 2000, endpoints: 5000, models: 10000, observe: 10000 },
+  poll_ms: { overview: 5000, endpoints: 5000, models: 15000, observe: 10000 },
   sections: [
     { id: 'overview', enabled: true },
     { id: 'endpoints', enabled: true },

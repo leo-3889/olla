@@ -13,13 +13,13 @@ import (
 )
 
 type stubFluxQuerier struct {
-	calls          int
-	lastRows       []map[string]any
-	gaugeMeanRows  []map[string]any
-	gaugeMaxRows   []map[string]any
+	calls           int
+	lastRows        []map[string]any
+	gaugeMeanRows   []map[string]any
+	gaugeMaxRows    []map[string]any
 	counterMeanRows []map[string]any
-	counterMaxRows []map[string]any
-	err            error
+	counterMaxRows  []map[string]any
+	err             error
 }
 
 func (s *stubFluxQuerier) query(_ context.Context, flux string) ([]map[string]any, error) {

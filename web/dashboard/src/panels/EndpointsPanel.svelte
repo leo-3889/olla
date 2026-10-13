@@ -6,7 +6,7 @@
   import StatusTag from '../components/StatusTag.svelte';
   import RangeBar from '../components/RangeBar.svelte';
   import PctBar from '../components/PctBar.svelte';
-  import { fmtAgo, fmtPct, fmtUntil } from '../lib/format';
+  import { fmtAgo, fmtMs, fmtPct, fmtUntil } from '../lib/format';
   import { bootstrap, DEFAULT_UI_CONFIG } from '../lib/stores/bootstrap.svelte';
   import { stableId } from '../lib/dom-id';
   import { getNow as liveNow } from '../lib/clock.svelte';
@@ -168,12 +168,15 @@
     if (unit === "percent") return fmtPct(value);
     if (unit === "tok_s") return fmtNum(value) + " tok/s";
     if (unit === "count") return fmtNum(value);
+    if (unit === "ms") return fmtMs(value);
     // Unknown unit (newer backend, older UI): show the number, never throw.
     return String(value);
   }
 
   function summaryByUnit(value: number, unit: string): string {
-    return unit === "percent" ? fmtPct(value) : fmtNum(value);
+    if (unit === "percent") return fmtPct(value);
+    if (unit === "ms") return fmtMs(value);
+    return fmtNum(value);
   }
 
   // One-line avg/max sub-row. Empty when the metric carries neither - an

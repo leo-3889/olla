@@ -260,7 +260,6 @@ func TestRuntimeMetricsETagIgnoresSampleTimestampsButTracksValues(t *testing.T) 
 	assert.NotEqual(t, baseS, noneS)
 }
 
-
 func TestRuntimeMetricsPrometheusOutputOmitsUnsupportedValues(t *testing.T) {
 	t.Parallel()
 	s := newEndpointRuntimeMetricsSampler(nil, nil)
@@ -293,7 +292,7 @@ func TestRuntimeMetricsRefreshScrapesHalogenWithConfiguredHeadersAndMarksFailure
 	}))
 	defer server.Close()
 
-	ep := &domain.Endpoint{Name: "halogen-395", Type: "openai-compatible", URLString: server.URL, Status: domain.StatusHealthy, RuntimeMetricsEnabled: true, RuntimeMetricsInterval: time.Nanosecond, Headers: map[string]string{"X-Olla-Test": "metrics"}, AuthHeaderName: "Authorization", AuthHeaderValue: "Bearer test-token"}
+	ep := &domain.Endpoint{Name: "halogen-395", Type: "openai-compatible", RuntimeMetricsKind: "llamacpp", URLString: server.URL, Status: domain.StatusHealthy, RuntimeMetricsEnabled: true, RuntimeMetricsInterval: time.Nanosecond, Headers: map[string]string{"X-Olla-Test": "metrics"}, AuthHeaderName: "Authorization", AuthHeaderValue: "Bearer test-token"}
 	s := newEndpointRuntimeMetricsSampler(&mockStatusEndpointRepository{endpoints: []*domain.Endpoint{ep}}, nil)
 	s.Refresh(t.Context())
 	s.Refresh(t.Context())
@@ -350,8 +349,8 @@ func TestRuntimeMetricsVLLMGPUCacheUsagePerCIsNormalised(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ in, want float64 }{{0.55, 55}, {96.5, 96.5}} {
 		c := parseRuntimeCounters("vllm", "# TYPE vllm:gpu_cache_usage_perc gauge\nvllm:gpu_cache_usage_perc "+strconv.FormatFloat(tc.in, 'g', -1, 64))
-		require.NotNil(t, c.kvUsage)
-		assert.InDelta(t, tc.want, *c.kvUsage, .001)
+		require.NotNil(t, c.KVUsage)
+		assert.InDelta(t, tc.want, *c.KVUsage, .001)
 	}
 }
 
@@ -412,8 +411,8 @@ func TestRuntimeMetricsKindDetection(t *testing.T) {
 		{"radiance type", "ep", "radiance", "", "radiance"},
 		{"halogen type folds to llamacpp", "ep", "halogen", "", "llamacpp"},
 		{"llama.cpp spelling folds too", "ep", "llama.cpp", "", "llamacpp"},
-		{"radiance by name fallback", "radiance-qfn", "openai-compatible", "", "radiance"},
-		{"halogen by name fallback", "halogen-395", "openai-compatible", "", "llamacpp"},
+		{"name no longer decides kind", "radiance-qfn", "openai-compatible", "", ""},
+		{"halogen name no longer decides kind", "halogen-395", "openai-compatible", "", ""},
 		{"generic name has no kind", "ollama-prod", "ollama", "", ""},
 		{"config kind wins over type", "ep", "openai-compatible", "radiance", "radiance"},
 		{"config kind is canonicalised", "ep", "ollama", "llama-cpp", "llamacpp"},
