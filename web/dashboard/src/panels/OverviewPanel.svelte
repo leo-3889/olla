@@ -11,7 +11,7 @@
   import PctBar from '../components/PctBar.svelte';
   import SortableTable from '../components/SortableTable.svelte';
   import type { Column, SortState } from '../components/SortableTable.svelte';
-  import { fmtBytes, fmtInt, fmtUptime, fmtMs } from '../lib/format';
+  import { fmtBytes, fmtInt, fmtUptime, fmtMs, parseTrafficBytes } from '../lib/format';
   import { stableId } from '../lib/dom-id';
   import { jumpToEndpoint } from '../lib/jump-to-endpoint';
   import { getNow as liveNow } from '../lib/clock.svelte';
@@ -32,6 +32,9 @@
   // response is pending nothing is rendered - no empty-shell pretending.
   const observeData = $derived(bootstrap.observe?.data ?? null);
   const observeDegraded = $derived(bootstrap.observe?.status === 'stale' || bootstrap.observe?.status === 'error');
+  // "error" is not "stale": the sections keep their last good numbers, and
+  // the operator must be able to tell a slow source from a dead one.
+  const observeStatusLabel = $derived(bootstrap.observe?.status === 'error' ? 'source error' : 'stale');
   function maxAgeS(values: Array<number | null | undefined>): number | null {
     const ages = values.filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
     return ages.length > 0 ? Math.max(...ages) : null;
@@ -154,21 +157,14 @@
   );
 
   // uptime is now derived client-side from start_time so the ETag stays
-  // stable; the live clock re-renders this each second.
-  const now = $derived(liveNow());
+  // stable; the live clock re-renders this each second. While the poll is
+  // stale/errored the clock freezes at the last good response: the gateway
+  // cannot confirm uptime it never answered for, and a counter that keeps
+  // ticking through an outage is a lie by the minute.
+  const now = $derived(overview.status === 'ok' ? liveNow() : (overview.lastUpdated?.getTime() ?? liveNow()));
   const uptimeText = $derived(sys?.start_time ? fmtUptime(sys.start_time, now) : '—');
 
 
-
-  // total_traffic arrives formatted as e.g. "172.02 GB". Re-parse to bytes so
-  // fmtBytes (our single formatting authority) renders it consistently.
-  function parseTrafficBytes(s: string | undefined): number | null {
-    if (!s) return null;
-    const m = String(s).match(/^([\d.]+)\s*(B|KB|MB|GB|TB|PB)$/);
-    if (!m) return null;
-    const units: Record<string, number> = { B: 1, KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3, TB: 1024 ** 4, PB: 1024 ** 5 };
-    return parseFloat(m[1]) * units[m[2]];
-  }
 
   // Identity resolution lives here (the panel knows the row's id/url/name
   // fallback chain); everything else - panel swap, hash push, the bounded
@@ -243,11 +239,11 @@
             {/if}
           {/snippet}
         </StatTile>
-        <StatTile
-          label="Avg latency"
-          value={sys.avg_latency}
-          sub="across all backends"
-        />
+        <StatTile label="Avg latency" sub="across all backends">
+          {#snippet children()}
+            {#if hasTraffic}{sys.avg_latency}{:else}<span class="dash">—</span>{/if}
+          {/snippet}
+        </StatTile>
         <StatTile
           label="Total traffic"
           value={trafficBytes !== null ? fmtBytes(trafficBytes) : sys.total_traffic}
@@ -341,14 +337,17 @@
     </div>
   {/if}
 
-  {#if bootstrap.sectionEnabled('power') && observeData}
-    <ObservePower rows={observeData.power} ageS={maxAgeS(observeData.power.map((r) => r.age_s))} degraded={observeDegraded} />
-  {/if}
-  {#if bootstrap.sectionEnabled('cost') && observeData}
-    <ObserveCost cost={observeData.cost} degraded={observeDegraded} />
-  {/if}
-  {#if bootstrap.sectionEnabled('gpu') && observeData}
-    <ObserveGpu gpus={observeData.gpus} ageS={maxAgeS(observeData.gpus.map((r) => r.age_s))} degraded={observeDegraded} />
+  {#if observeData && (bootstrap.sectionEnabled('power') || bootstrap.sectionEnabled('cost') || bootstrap.sectionEnabled('gpu'))}
+    {#if observeDegraded}<StatusBanner store={bootstrap.observe!} />{/if}
+    {#if bootstrap.sectionEnabled('power')}
+      <ObservePower rows={observeData.power} ageS={maxAgeS(observeData.power.map((r) => r.age_s))} degraded={observeDegraded} statusLabel={observeStatusLabel} />
+    {/if}
+    {#if bootstrap.sectionEnabled('cost')}
+      <ObserveCost cost={observeData.cost} degraded={observeDegraded} statusLabel={observeStatusLabel} />
+    {/if}
+    {#if bootstrap.sectionEnabled('gpu')}
+      <ObserveGpu gpus={observeData.gpus} ageS={maxAgeS(observeData.gpus.map((r) => r.age_s))} degraded={observeDegraded} statusLabel={observeStatusLabel} />
+    {/if}
   {/if}
   </div>
 </div>

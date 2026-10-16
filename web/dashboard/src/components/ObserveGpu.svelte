@@ -1,15 +1,18 @@
 <script lang="ts">
-  // GPU device cards from ollametrics' device-target series (endpoint tag
-  // metrics_source.influx.gpu_endpoint). A GPU the exporter reports as
-  // absent is shown as absent - never as a zero-utilisation device.
+  // GPU device cards from ollametrics' device-target series (endpoint tags
+  // in metrics_source.influx.gpu_endpoints, one per node). A GPU the
+  // exporter reports as absent is shown as absent - never as a
+  // zero-utilisation device.
   import type { ObserveGpuRow } from '../lib/types';
 
   interface Props {
     gpus: ObserveGpuRow[];
     ageS: number | null;
     degraded: boolean;
+    /** 'stale' | 'source error' - why degraded, worded for the note */
+    statusLabel?: string;
   }
-  let { gpus, ageS, degraded }: Props = $props();
+  let { gpus, ageS, degraded, statusLabel = 'stale' }: Props = $props();
 
   function fmt(value: number | null | undefined, digits = 0): string {
     if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
@@ -29,14 +32,14 @@
 <div class="section observe-gpu">
   <div class="section-head">
     <h2>GPUs</h2>
-    <span class="section-note observe-src" class:stale={degraded}>ollametrics · {ageText}{#if degraded} (stale){/if}</span>
+    <span class="section-note observe-src" class:stale={degraded}>ollametrics · {ageText}{#if degraded} ({statusLabel}){/if}</span>
   </div>
   <div class="tile-grid" data-state={degraded ? 'stale' : null}>
-    {#each gpus as row (row.gpu)}
+    {#each gpus as row (row.endpoint + ':' + row.gpu)}
       {@const usage = pct(row.vram_used_bytes, row.vram_total_bytes)}
       <div class="gpu" class:absent={row.present === 0}>
         <div class="gpu-head">
-          <span class="gpu-name">GPU {row.gpu}{#if row.node}&nbsp;· {row.node}{/if}</span>
+          <span class="gpu-name" title={row.endpoint}>GPU {row.gpu}{#if row.node}&nbsp;· {row.node}{/if}</span>
           {#if row.present === 0}<span class="chip">absent</span>{/if}
         </div>
         {#if row.present === 0}

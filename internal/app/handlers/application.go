@@ -120,6 +120,10 @@ type Application struct {
 	// the in-process sampler or, with metrics_source.mode=influx, by the
 	// ollametrics InfluxDB reader.
 	runtimeMetrics runtimeMetricsProvider
+	// metricsSourceMode is the EFFECTIVE metrics backend (influx intent can
+	// fall back to sampler at boot); surfaced through config.json so the UI
+	// never advertises influx sections the process is not serving.
+	metricsSourceMode string
 	// observe serves power/cost/GPU data for the dashboard; non-nil only
 	// in influx mode (only that backend holds the data).
 	observe *observeCollector
@@ -238,7 +242,7 @@ func NewApplication(
 		errCh:              make(chan error, 1),
 		StartTime:          time.Now(),
 	}
-	app.runtimeMetrics, app.observe = newRuntimeMetricsSource(ctx, cfg, repository, logger)
+	app.runtimeMetrics, app.observe, app.metricsSourceMode = newRuntimeMetricsSource(ctx, cfg, repository, logger)
 	return app, nil
 }
 

@@ -8,6 +8,7 @@
 // one buffer, matching how overview/theme are wired elsewhere.
 
 import type { StatusResponse } from '../types';
+import { parseTrafficBytes as parseTrafficBytesRaw } from '../format';
 
 export interface Sample {
   // epoch ms
@@ -55,22 +56,12 @@ export function detectRestart(prevStart: string | null, nextStart: string | null
 }
 
 // Re-parses total_traffic ("172.02 GB") back to raw bytes so it can be
-// delta'd. Mirrors the local helper in OverviewPanel; kept here so the store
-// is self-contained and the parsing is unit-testable in isolation.
+// delta'd. The parsing authority lives in lib/format; this wrapper keeps the
+// store's 0-means-unknown contract.
 export function parseTrafficBytes(s: string | undefined): number {
-  if (!s) return 0;
-  const m = String(s).match(/^([\d.]+)\s*(B|KB|MB|GB|TB|PB)$/);
-  if (!m) return 0;
-  const units: Record<string, number> = {
-    B: 1,
-    KB: 1024,
-    MB: 1024 ** 2,
-    GB: 1024 ** 3,
-    TB: 1024 ** 4,
-    PB: 1024 ** 5,
-  };
-  return parseFloat(m[1]) * units[m[2]];
+  return parseTrafficBytesRaw(s) ?? 0;
 }
+
 
 // --- singleton state ---
 

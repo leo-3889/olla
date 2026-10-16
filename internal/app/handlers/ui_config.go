@@ -100,15 +100,20 @@ func uiRuntimeColumnsFrom(cfg *config.Config) []uiMetricColumn {
 	return out
 }
 
-func uiConfigFrom(cfg *config.Config) UIConfig {
-	influx := cfg.MetricsSource.InfluxEnabled()
-	mode := config.MetricsSourceModeSampler
-	if influx {
-		mode = config.MetricsSourceModeInflux
+func uiConfigFrom(cfg *config.Config, effectiveMode string) UIConfig {
+	// Effective mode wins: an influx intent that fell back at boot (missing
+	// token env) must not advertise influx sections the process cannot serve.
+	mode := effectiveMode
+	if mode == "" {
+		mode = cfg.MetricsSource.Mode
 	}
+	if mode == "" {
+		mode = config.MetricsSourceModeSampler
+	}
+	influx := mode == config.MetricsSourceModeInflux
 	modelsEnabled := cfg.Discovery.ModelDiscovery.Enabled || len(cfg.ModelAliases) > 0
 	powerEnabled := influx && len(cfg.MetricsSource.Influx.PowerAttribution) > 0
-	gpuEnabled := influx && cfg.MetricsSource.Influx.GPUEndpoint != ""
+	gpuEnabled := influx && len(cfg.MetricsSource.Influx.GPUEndpoints) > 0
 	return UIConfig{
 		Schema:        1,
 		MetricsSource: mode,
@@ -136,7 +141,7 @@ func reasonIfDisabled(enabled bool, reason string) string {
 // change without a restart), so no ETag is warranted; no-cache keeps
 // browsers honest about picking up a new mode after a redeploy.
 func (a *Application) uiConfigHandler(w http.ResponseWriter, r *http.Request) {
-	body, err := json.Marshal(uiConfigFrom(a.Config))
+	body, err := json.Marshal(uiConfigFrom(a.Config, a.metricsSourceMode))
 	if err != nil {
 		http.Error(w, "config encode failed", http.StatusInternalServerError)
 		return

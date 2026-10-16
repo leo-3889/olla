@@ -9,8 +9,10 @@
   interface Props {
     cost: ObserveCost;
     degraded: boolean;
+    /** 'stale' | 'source error' - why degraded, worded for the note */
+    statusLabel?: string;
   }
-  let { cost, degraded }: Props = $props();
+  let { cost, degraded, statusLabel = 'stale' }: Props = $props();
 
   interface CostRow {
     endpoint: string;
@@ -20,6 +22,8 @@
     dayOpen: boolean;
     energy_kwh: number | null;
     tokens: number | null;
+    hour_start: string | null;
+    day_start: string | null;
   }
 
   const rows = $derived.by(() => {
@@ -37,9 +41,31 @@
         // the hour row while a fresh day rollup has not landed yet.
         energy_kwh: typeof d?.energy_kwh === 'number' ? d.energy_kwh : (typeof h?.energy_kwh === 'number' ? h.energy_kwh : null),
         tokens: typeof d?.tokens === 'number' ? d.tokens : (typeof h?.tokens === 'number' ? h.tokens : null),
+        // Which period each cell reports (rollup _time = period start). The
+        // backend drops rows older than the newest period, so this is the
+        // open period's start - the label the "partial" chip needs.
+        hour_start: h?.period_start ?? null,
+        day_start: d?.period_start ?? null,
       };
     });
   });
+
+  // Freshness of the COST SERVICE (its heartbeat), not of a rollup row:
+  // rollup _time is the period start and can never answer "how fresh are
+  // these numbers" (power/GPU stamp per-row age; cost stamps the service).
+  const ageS = $derived.by(() => {
+    const entries = [...Object.values(cost?.hour ?? {}), ...Object.values(cost?.day ?? {})];
+    const ages = entries.map((e) => e?.age_s).filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+    return ages.length > 0 ? Math.max(...ages) : null;
+  });
+  const ageText = $derived(ageS === null ? 'rollups' : Math.max(0, Math.round(ageS)) + 's old');
+
+  function periodLabel(iso: string | null): string {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleString('en-AU', { hour12: false });
+  }
 
   function money(value: number | null): string {
     if (value === null) return '—';
@@ -54,7 +80,7 @@
 <div class="section observe-cost" data-state={degraded ? 'stale' : null}>
   <div class="section-head">
     <h2>Cost</h2>
-    <span class="section-note observe-src" class:stale={degraded}>ollametrics rollups{#if degraded} (stale){/if}</span>
+    <span class="section-note observe-src" class:stale={degraded}>ollametrics · {ageText}{#if degraded} ({statusLabel}){/if}</span>
   </div>
   {#if rows.length === 0}
     <p class="observe-empty">no cost rollups in the queried window yet</p>
@@ -64,7 +90,7 @@
         <tr>
           <th scope="col">Endpoint</th>
           <th scope="col" title="Current hour rollup; _time is the period start">This hour</th>
-          <th scope="col" title="Current day rollup">Today</th>
+          <th scope="col" title="Current day rollup; _time is the period start">Today</th>
           <th scope="col" title="Meter-verified energy for the newest rollup">Energy</th>
           <th scope="col">Tokens</th>
         </tr>
@@ -73,8 +99,8 @@
         {#each rows as row (row.endpoint)}
           <tr>
             <th scope="row" class="observe-endpoint">{row.endpoint}</th>
-            <td>{money(row.hourCost)}{#if row.hourOpen}<span class="partial" title="Rollup for a period still in progress">partial</span>{/if}</td>
-            <td>{money(row.dayCost)}{#if row.dayOpen}<span class="partial" title="Rollup for a period still in progress">partial</span>{/if}</td>
+            <td title={row.hour_start ? 'period starting ' + periodLabel(row.hour_start) : ''}>{money(row.hourCost)}{#if row.hourOpen}<span class="partial" title="Rollup for the period starting {periodLabel(row.hour_start) || '?'} - still in progress">partial</span>{/if}</td>
+            <td title={row.day_start ? 'period starting ' + periodLabel(row.day_start) : ''}>{money(row.dayCost)}{#if row.dayOpen}<span class="partial" title="Rollup for the period starting {periodLabel(row.day_start) || '?'} - still in progress">partial</span>{/if}</td>
             <td>{kwh(row.energy_kwh)}</td>
             <td>{row.tokens === null ? '—' : fmtInt(row.tokens)}</td>
           </tr>

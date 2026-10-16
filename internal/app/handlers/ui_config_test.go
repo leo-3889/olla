@@ -21,7 +21,7 @@ func sectionEnabled(cfg UIConfig, id string) (bool, string) {
 }
 
 func TestUIConfigFromSamplerDefaults(t *testing.T) {
-	cfg := uiConfigFrom(&config.Config{})
+	cfg := uiConfigFrom(&config.Config{}, "")
 	assert.Equal(t, "sampler", cfg.MetricsSource)
 	for _, id := range []string{"overview", "endpoints"} {
 		enabled, _ := sectionEnabled(cfg, id)
@@ -40,7 +40,7 @@ func TestUIConfigFromSamplerDefaults(t *testing.T) {
 		assert.Equal(t, reason, got, "disabled sections must explain why")
 	}
 
-	cfgAliases := uiConfigFrom(&config.Config{ModelAliases: map[string][]string{"m": {"x"}}})
+	cfgAliases := uiConfigFrom(&config.Config{ModelAliases: map[string][]string{"m": {"x"}}}, "")
 	enabled, _ = sectionEnabled(cfgAliases, "models")
 	assert.True(t, enabled, "aliases alone enable the models section")
 
@@ -56,8 +56,8 @@ func TestUIConfigFromSamplerDefaults(t *testing.T) {
 func TestUIConfigFromInflux(t *testing.T) {
 	cfg := uiConfigFrom(&config.Config{MetricsSource: config.MetricsSourceConfig{
 		Mode:   "influx",
-		Influx: config.InfluxSourceConfig{PowerAttribution: map[string]string{"a": "plug-a"}, GPUEndpoint: "gpu-target"},
-	}})
+		Influx: config.InfluxSourceConfig{PowerAttribution: map[string]string{"a": "plug-a"}, GPUEndpoints: []string{"gpu-target"}},
+	}}, "")
 	assert.Equal(t, "influx", cfg.MetricsSource)
 	for _, id := range []string{"power", "cost", "gpu"} {
 		enabled, reason := sectionEnabled(cfg, id)
@@ -65,7 +65,7 @@ func TestUIConfigFromInflux(t *testing.T) {
 		assert.Empty(t, reason)
 	}
 
-	noGpu := uiConfigFrom(&config.Config{MetricsSource: config.MetricsSourceConfig{Mode: "influx"}})
+	noGpu := uiConfigFrom(&config.Config{MetricsSource: config.MetricsSourceConfig{Mode: "influx"}}, "")
 	enabled, reason := sectionEnabled(noGpu, "power")
 	assert.False(t, enabled)
 	assert.Contains(t, reason, "influx")
@@ -94,7 +94,7 @@ func TestUIConfigPollIntervalsFromConfig(t *testing.T) {
 	cfg.Dashboard.Polling.OverviewInterval = 3 * time.Second
 	cfg.Dashboard.Polling.ModelsInterval = 45 * time.Second
 	cfg.Dashboard.Polling.ObserveInterval = -time.Second // unset, not an error
-	body := uiConfigFrom(cfg)
+	body := uiConfigFrom(cfg, "")
 	assert.Equal(t, 3000, body.PollMS.Overview)
 	assert.Equal(t, 5000, body.PollMS.Endpoints) // untouched keeps default
 	assert.Equal(t, 45000, body.PollMS.Models)
@@ -146,4 +146,20 @@ func TestUIConfigRuntimeColumnsFromFleetDialects(t *testing.T) {
 		cfg.Discovery.Static.Endpoints[2],
 	}
 	assert.Equal(t, columnKeys(cols), columnKeys(uiRuntimeColumnsFrom(reordered)))
+}
+
+func TestUIConfigFromEffectiveModeOverride(t *testing.T) {
+	// Intent is influx and every knob is set, but the process fell back to
+	// the sampler at boot (missing token env): config.json must report the
+	// EFFECTIVE mode and disable every influx-only section, or the UI would
+	// advertise power/cost/GPU tiles that can never fill.
+	cfg := uiConfigFrom(&config.Config{MetricsSource: config.MetricsSourceConfig{
+		Mode:   "influx",
+		Influx: config.InfluxSourceConfig{TokenEnv: "X", PowerAttribution: map[string]string{"a": "plug-a"}, GPUEndpoints: []string{"g"}},
+	}}, "sampler")
+	assert.Equal(t, "sampler", cfg.MetricsSource)
+	for _, id := range []string{"power", "cost", "gpu"} {
+		enabled, _ := sectionEnabled(cfg, id)
+		assert.False(t, enabled, id)
+	}
 }

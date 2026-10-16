@@ -141,21 +141,30 @@ func (p *influxMetricsProvider) refresh(ctx context.Context) {
 	if len(names) == 0 {
 		return
 	}
-	cycleCtx, cancel := context.WithTimeout(ctx, 2*fluxClientTimeout)
+	// One budget for the whole cycle (5 sequential queries) plus a hard
+	// per-query cap: a slow influx can no longer starve the later queries
+	// (they used to share a 2x budget, so Q4/Q5 died every cycle under a
+	// slow query and the avg/max columns stayed permanently empty).
+	cycleCtx, cancel := context.WithTimeout(ctx, 6*fluxClientTimeout)
 	defer cancel()
+	query := func(flux string) ([]map[string]any, error) {
+		qctx, qcancel := context.WithTimeout(cycleCtx, fluxClientTimeout)
+		defer qcancel()
+		return p.client.query(qctx, flux)
+	}
 	set := fluxStringSet(names)
 
-	lastRows, err := p.client.query(cycleCtx, influxBase(p.bucket, influxLastRange, set)+"|> last()")
-	gaugeMean, errMean := p.client.query(cycleCtx, influxBase(p.bucket, influxWindowRange, set)+influxFieldFilter("decode_tokens_per_second", "prefill_tokens_per_second", "prefix_cache_hit_ratio", "kv_cache_usage_ratio", "draft_acceptance_ratio")+"|> aggregateWindow(every:1m, fn:mean, createEmpty:false)")
-	counterMean, errCounter := p.client.query(cycleCtx, influxBase(p.bucket, influxWindowRange, set)+influxFieldFilter("generation_tokens_total", "prompt_tokens_total")+"|> derivative(unit:1s, nonNegative:true) |> aggregateWindow(every:1m, fn:mean, createEmpty:false)")
-	counterMax, errCounterMax := p.client.query(cycleCtx, influxBase(p.bucket, influxWindowRange, set)+influxFieldFilter("generation_tokens_total", "prompt_tokens_total")+"|> derivative(unit:1s, nonNegative:true) |> aggregateWindow(every:1m, fn:max, createEmpty:false)")
+	lastRows, err := query(influxBase(p.bucket, influxLastRange, set) + "|> last()")
+	gaugeMean, errMean := query(influxBase(p.bucket, influxWindowRange, set) + influxFieldFilter("decode_tokens_per_second", "prefill_tokens_per_second", "prefix_cache_hit_ratio", "kv_cache_usage_ratio", "draft_acceptance_ratio") + "|> aggregateWindow(every:1m, fn:mean, createEmpty:false)")
+	counterMean, errCounter := query(influxBase(p.bucket, influxWindowRange, set) + influxFieldFilter("generation_tokens_total", "prompt_tokens_total") + "|> derivative(unit:1s, nonNegative:true) |> aggregateWindow(every:1m, fn:mean, createEmpty:false)")
+	counterMax, errCounterMax := query(influxBase(p.bucket, influxWindowRange, set) + influxFieldFilter("generation_tokens_total", "prompt_tokens_total") + "|> derivative(unit:1s, nonNegative:true) |> aggregateWindow(every:1m, fn:max, createEmpty:false)")
 	if err != nil && errMean != nil && errCounter != nil && errCounterMax != nil {
 		if p.logger != nil {
 			p.logger.Warn("metrics_source influx: all runtime queries failed; keeping previous samples", "error", err.Error())
 		}
 		return
 	}
-	gaugeMax, _ := p.client.query(cycleCtx, influxBase(p.bucket, influxWindowRange, set)+influxFieldFilter("decode_tokens_per_second", "prefill_tokens_per_second", "prefix_cache_hit_ratio", "kv_cache_usage_ratio", "draft_acceptance_ratio")+"|> aggregateWindow(every:1m, fn:max, createEmpty:false)")
+	gaugeMax, _ := query(influxBase(p.bucket, influxWindowRange, set) + influxFieldFilter("decode_tokens_per_second", "prefill_tokens_per_second", "prefix_cache_hit_ratio", "kv_cache_usage_ratio", "draft_acceptance_ratio") + "|> aggregateWindow(every:1m, fn:max, createEmpty:false)")
 
 	series := map[string]*influxSeries{}
 	absorbAll := func(rows []map[string]any, bucket string) {

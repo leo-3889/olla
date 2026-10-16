@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,8 +23,11 @@ const uiObserveRoute = "/internal/ui/observe.json"
 // observeTTL bounds how often the observe payload hits Influx regardless of
 // client polling: power and cost change on much slower cadences than the
 // 10s runtime refresh, and several dashboard tabs must not multiply the
-// query load.
-const observeTTL = 6 * time.Second
+// query load. It sits ABOVE the dashboard's 10s observe poll so a steady
+// poll hits the memo and pays one cheap 304 (the ETag only changes when a
+// collect changes the body); a TTL below the poll interval would re-collect
+// (and re-stamp generated_at) on every single poll, defeating the ETag.
+const observeTTL = 12 * time.Second
 
 // observePowerRow is one meter measurement attributed to an olla endpoint.
 // Pointer fields mean "the device did not report this field" - the UI draws
@@ -42,6 +46,7 @@ type observePowerRow struct {
 }
 
 type observeGpuRow struct {
+	Endpoint           string   `json:"endpoint"`
 	GPU                string   `json:"gpu"`
 	Node               *string  `json:"node"`
 	BusyPercent        *float64 `json:"busy_percent"`
@@ -60,6 +65,11 @@ type observeCostEntry struct {
 	Tokens       *float64 `json:"tokens"`
 	PeriodStatus string   `json:"period_status,omitempty"`
 	PeriodStart  string   `json:"period_start,omitempty"`
+	Currency     string   `json:"currency,omitempty"`
+	// AgeS is how old the cost SERVICE's newest heartbeat is (not the
+	// rollup: rollup _time is the period start, so it can never express
+	// freshness). Seconds; nil when the heartbeat is unknown.
+	AgeS *float64 `json:"age_s"`
 }
 
 type observeCost struct {
@@ -143,16 +153,20 @@ func (o *observeCollector) collect(ctx context.Context) (*ObservePayload, error)
 
 	if len(o.cfg.PowerAttribution) > 0 {
 		queries++
-		endpointForTarget := map[string]string{}
+		// A meter can be attributed to several endpoints (one plug, two
+		// boxes). Label the row with ALL of them, in sorted order:
+		// first-wins would tie the row to one endpoint and silently swap
+		// the label the moment that endpoint retires.
+		endpointsForTarget := map[string][]string{}
 		for _, endpoint := range sortedKeys(o.cfg.PowerAttribution) {
 			target := o.cfg.PowerAttribution[endpoint]
-			if _, taken := endpointForTarget[target]; !taken {
-				endpointForTarget[target] = endpoint
-			}
+			endpointsForTarget[target] = append(endpointsForTarget[target], endpoint)
 		}
-		targets := make([]string, 0, len(endpointForTarget))
-		for target := range endpointForTarget {
+		labelForTarget := make(map[string]string, len(endpointsForTarget))
+		targets := make([]string, 0, len(endpointsForTarget))
+		for target, endpoints := range endpointsForTarget {
 			targets = append(targets, target)
+			labelForTarget[target] = strings.Join(endpoints, ", ")
 		}
 		sort.Strings(targets)
 		rows, err := o.client.query(cycleCtx, fmt.Sprintf(`from(bucket:%q) |> range(start:-5m) |> filter(fn:(r)=>r._measurement=="llm_host_power") |> filter(fn:(r)=>contains(set:[%s], value:r.power_target_id)) |> last()`, o.cfg.Bucket, fluxStringSet(targets)))
@@ -197,7 +211,7 @@ func (o *observeCollector) collect(ctx context.Context) (*ObservePayload, error)
 				if group == nil {
 					continue
 				}
-				row := observePowerRow{Target: target, Endpoint: endpointForTarget[target], DeviceName: group.device, Node: group.node}
+				row := observePowerRow{Target: target, Endpoint: labelForTarget[target], DeviceName: group.device, Node: group.node}
 				pickFloat(group.fields, "active_power_w", &row.Watts)
 				pickFloat(group.fields, "meter_temperature_c", &row.TempC)
 				pickFloat(group.fields, "meter_valid", &row.MeterValid)
@@ -212,20 +226,27 @@ func (o *observeCollector) collect(ctx context.Context) (*ObservePayload, error)
 		}
 	}
 
-	if o.cfg.GPUEndpoint != "" {
+	if len(o.cfg.GPUEndpoints) > 0 {
 		queries++
-		rows, err := o.client.query(cycleCtx, fmt.Sprintf(`from(bucket:%q) |> range(start:-5m) |> filter(fn:(r)=>r._measurement=="llm_runtime") |> filter(fn:(r)=>r.endpoint==%q) |> last()`, o.cfg.Bucket, o.cfg.GPUEndpoint))
+		set := make([]string, 0, len(o.cfg.GPUEndpoints))
+		for _, ep := range o.cfg.GPUEndpoints {
+			set = append(set, fmt.Sprintf("%q", ep))
+		}
+		rows, err := o.client.query(cycleCtx, fmt.Sprintf(`from(bucket:%q) |> range(start:-5m) |> filter(fn:(r)=>r._measurement=="llm_runtime") |> filter(fn:(r)=>contains(set:[%s], value:r.endpoint)) |> last()`, o.cfg.Bucket, strings.Join(set, ",")))
 		if err != nil {
 			fail("gpu", err)
 		} else {
 			type gpuGroup struct {
-				fields map[string]float64
-				node   *string
-				newest time.Time
+				endpoint string
+				gpu      string
+				fields   map[string]float64
+				node     *string
+				newest   time.Time
 			}
 			groups := map[string]*gpuGroup{}
 			for _, row := range rows {
 				gpu, _ := row["gpu"].(string)
+				endpoint, _ := row["endpoint"].(string)
 				field, _ := row["_field"].(string)
 				if gpu == "" || field == "" {
 					continue
@@ -234,10 +255,11 @@ func (o *observeCollector) collect(ctx context.Context) (*ObservePayload, error)
 				if !ok {
 					continue
 				}
-				group := groups[gpu]
+				key := endpoint + "\x00" + gpu
+				group := groups[key]
 				if group == nil {
-					group = &gpuGroup{fields: map[string]float64{}}
-					groups[gpu] = group
+					group = &gpuGroup{endpoint: endpoint, gpu: gpu, fields: map[string]float64{}}
+					groups[key] = group
 				}
 				if node, ok := row["node"].(string); ok && node != "" && group.node == nil {
 					group.node = &node
@@ -247,9 +269,9 @@ func (o *observeCollector) collect(ctx context.Context) (*ObservePayload, error)
 					group.newest = at
 				}
 			}
-			for _, gpu := range sortedKeysAny(groups) {
-				group := groups[gpu]
-				out := observeGpuRow{GPU: gpu, Node: group.node}
+			for _, key := range sortedKeysAny(groups) {
+				group := groups[key]
+				out := observeGpuRow{Endpoint: group.endpoint, GPU: group.gpu, Node: group.node}
 				pickFloat(group.fields, "busy_percent", &out.BusyPercent)
 				pickFloat(group.fields, "mem_activity_percent", &out.MemActivityPercent)
 				pickFloat(group.fields, "socket_power_watts", &out.SocketPowerWatts)
@@ -266,6 +288,8 @@ func (o *observeCollector) collect(ctx context.Context) (*ObservePayload, error)
 		}
 	}
 
+	currencies := map[string]bool{}
+	costRowsRendered := false
 	costPeriods := []struct {
 		period string
 		into   map[string]*observeCostEntry
@@ -328,8 +352,25 @@ func (o *observeCollector) collect(ctx context.Context) (*ObservePayload, error)
 			}
 			group.fields[field] = value
 		}
+		// Liveness guard: _time of a rollup is its PERIOD START, and the
+		// cost service stops writing for an endpoint that leaves the fleet,
+		// freezing its newest rollup mid-period. The current period is the
+		// newest period start observed across endpoints (all live endpoints
+		// share it), so anything older is a ghost of a retired/absent
+		// endpoint (or an endpoint that missed the whole period, whose
+		// numbers would be a previous hour labelled "this hour"). Render
+		// only the newest-period rows.
+		var newest time.Time
+		for _, group := range groups {
+			if group.haveTime && group.newest.After(newest) {
+				newest = group.newest
+			}
+		}
 		for endpoint, group := range groups {
-			entry := &observeCostEntry{PeriodStatus: group.status}
+			if !group.haveTime || !group.newest.Equal(newest) {
+				continue
+			}
+			entry := &observeCostEntry{PeriodStatus: group.status, Currency: group.currency}
 			pickFloat(group.fields, "total_cost", &entry.Cost)
 			pickFloat(group.fields, "energy_kwh", &entry.EnergyKWh)
 			pickFloat(group.fields, "total_tokens", &entry.Tokens)
@@ -337,9 +378,45 @@ func (o *observeCollector) collect(ctx context.Context) (*ObservePayload, error)
 				entry.PeriodStart = group.newest.UTC().Format(time.RFC3339)
 			}
 			if group.currency != "" {
-				payload.Cost.Currency = group.currency
+				currencies[group.currency] = true
 			}
 			cp.into[endpoint] = entry
+			costRowsRendered = true
+		}
+	}
+	// The section header shows one currency; claiming it for the whole
+	// payload is only honest when every rendered row agrees (Go map
+	// iteration order would otherwise pick a random one and churn the
+	// ETag). On disagreement the per-entry currency is authoritative.
+	if len(currencies) == 1 {
+		for cur := range currencies {
+			payload.Cost.Currency = cur
+		}
+	}
+	if costRowsRendered {
+		// Cost rollups carry no usable age (_time = period start), so
+		// stamp the cost service's own heartbeat: "numbers are this
+		// fresh" is the operator's question.
+		queries++
+		hbRows, hbErr := o.client.query(cycleCtx, fmt.Sprintf(`from(bucket:%q) |> range(start:-1h) |> filter(fn:(r)=>r._measurement=="llm_service_status") |> filter(fn:(r)=>r.service=="cost-service") |> last()`, o.cfg.CostsBucket))
+		if hbErr != nil {
+			fail("cost age", hbErr)
+		} else {
+			var hbNewest time.Time
+			for _, row := range hbRows {
+				if at := influxTime(row["_time"]); at.After(hbNewest) {
+					hbNewest = at
+				}
+			}
+			if !hbNewest.IsZero() {
+				age := payload.GeneratedAt.Sub(hbNewest).Seconds()
+				for _, entry := range payload.Cost.Hour {
+					entry.AgeS = floatPtr(age)
+				}
+				for _, entry := range payload.Cost.Day {
+					entry.AgeS = floatPtr(age)
+				}
+			}
 		}
 	}
 
@@ -372,7 +449,7 @@ func (a *Application) observeHandler(w http.ResponseWriter, r *http.Request) {
 	etag := `"` + hex.EncodeToString(sum[:]) + `"`
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Cache-Control", "no-cache")
-	if match := r.Header.Get("If-None-Match"); match != "" && (match == etag || match == "W/"+etag) {
+	if match := r.Header.Get("If-None-Match"); match != "" && etagMatches(match, etag) {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}

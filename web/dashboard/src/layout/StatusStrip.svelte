@@ -1,6 +1,7 @@
 <script lang="ts">
   import { overview } from '../lib/stores/overview.svelte';
   import { fmtUptime } from '../lib/format';
+  import { statusMeta } from '../lib/status';
   import { getNow as liveNow } from '../lib/clock.svelte';
   import type { EndpointResponse } from '../lib/types';
 
@@ -49,18 +50,17 @@
   }
 
   // uptime is derived from start_time each tick so the figure stays live
-  // without the backend baking a relative string into the payload.
-  const now = $derived(liveNow());
+  // without the backend baking a relative string into the payload. While the
+  // poll is stale/errored the clock freezes at the last good response - the
+  // gateway cannot confirm uptime it never answered for.
+  const now = $derived(overview.status === 'ok' ? liveNow() : (overview.lastUpdated?.getTime() ?? liveNow()));
   const uptime = $derived(sys?.start_time ? fmtUptime(sys.start_time, now) : null);
 
-  // Tiny lookups inlined to avoid pulling StatusTag (pill-styled, too noisy
-  // for the compact strip).
-  function glyph(s: string | undefined): string {
-    return s === 'healthy' ? '●' : s === 'degraded' || s === 'unhealthy' ? '◐' : '○';
-  }
-  function cls(s: string | undefined): string {
-    return s === 'healthy' ? 'green' : s === 'degraded' || s === 'unhealthy' ? 'amber' : 'red';
-  }
+  // statusMeta is THE status vocabulary (lib/status.ts): every recognised
+  // value maps to a colour that matches the panels, and a future/unknown
+  // status renders neutral - the strip's old private table painted every
+  // unrecognised value (busy, warming, rate_limited, ...) as a red outage.
+  const meta = $derived(statusMeta(sys?.status));
 </script>
 
 <dl class="status-strip" aria-label="System status summary" data-state={stateStatus}>
@@ -68,7 +68,7 @@
     <dt>Status</dt>
     <dd>
       {#if sys}
-        <span class="glyph g-{cls(sys.status)}" aria-hidden="true">{glyph(sys.status)}</span>{sys.status}
+        <span class="glyph g-{meta.cls}" aria-hidden="true">{meta.glyph}</span>{sys.status}
       {:else}<span class="dash">—</span>{/if}
     </dd>
     {#if staleWord}
@@ -87,7 +87,7 @@
   </div>
   <div class="status-cell">
     <dt>Avg latency</dt>
-    <dd>{sys ? sys.avg_latency : '—'}</dd>
+    <dd>{#if sys && hasTraffic}{sys.avg_latency}{:else}<span class="dash">—</span>{/if}</dd>
   </div>
   <div class="status-cell">
     <dt>Uptime</dt>

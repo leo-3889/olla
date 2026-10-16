@@ -216,6 +216,10 @@ export interface ObserveCostEntry {
   tokens?: number | null;
   period_status?: string | null;
   period_start?: string | null;
+  currency?: string;
+  // Age of the cost SERVICE heartbeat (rollup _time is the period start
+  // and can never express freshness). Null when the heartbeat is unknown.
+  age_s?: number | null;
 }
 
 export interface ObserveCost {
@@ -225,6 +229,7 @@ export interface ObserveCost {
 }
 
 export interface ObserveGpuRow {
+  endpoint: string;
   gpu: string;
   node?: string | null;
   busy_percent?: number | null;

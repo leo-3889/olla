@@ -135,7 +135,13 @@ func RegisterRoutes(registry *router.RouteRegistry, cfg config.DashboardConfig, 
 			}
 			continue
 		}
-		extraGuarded := AccessMiddleware(cfg, log, extras[path])
+		// The extras answer as JSON on the same listener as the UI shell;
+		// give them the shell's security headers too (the shell handler
+		// sets its own - these bypass it).
+		extraGuarded := AccessMiddleware(cfg, log, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			setSecurityHeaders(w)
+			extras[path].ServeHTTP(w, r)
+		}))
 		registry.RegisterWithMethod(path, http.HandlerFunc(extraGuarded.ServeHTTP), "Dashboard data", "GET")
 	}
 

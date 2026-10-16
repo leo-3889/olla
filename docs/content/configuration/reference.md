@@ -896,7 +896,7 @@ metrics_source:
     power_attribution:             # olla endpoint -> power_target_id measuring its box
       halogen-395: shelly-ai-395
       radiance-qfn: shelly-ai-box
-    gpu_endpoint: radiance-gpus    # Influx endpoint tag carrying GPU device series
+    gpu_endpoints: [radiance-gpus, radiance-gpus-128]  # Influx endpoint tags carrying GPU device series
 ```
 
 | Key | Meaning |
@@ -904,7 +904,7 @@ metrics_source:
 | `mode` | `sampler`: olla scrapes each endpoint's `/metrics` itself (the `runtime_metrics` blocks per endpoint). `influx`: read the canonical `llm_runtime` series written by the ollametrics stack, so dashboard and Grafana show one truth. |
 | `influx.token_env` | The token is referenced by environment-variable name; it never lives in the YAML. Missing variable at startup logs an error and keeps the sampler - the gateway never fails to boot over metrics plumbing. |
 | `influx.power_attribution` | Maps endpoints to the meter measuring them; enables the dashboard Power section. Power is attributed per meter, never guessed from a device list. |
-| `influx.gpu_endpoint` | Endpoint tag of the GPU device targets in Influx; empty disables the dashboard GPU section. |
+| `influx.gpu_endpoints` | List of endpoint tags of the GPU device targets in Influx (one per GPU exporter node); empty disables the dashboard GPU section. Rows group by endpoint+device because device tags collide across boxes. |
 | `influx.stale_after` | Seconds after which tiles render stale when the newest point for an endpoint is older (samples older than 15 minutes disappear entirely). |
 
 In `influx` mode the in-process sampler is not started, the Cost and GPU
