@@ -48,3 +48,19 @@ describe('ObserveCost dropped disclosure', () => {
     expect(document.querySelector('.section-note')?.textContent).toContain('no current rollup: ghost-b');
   });
 });
+
+describe('ObserveCost freshness and emptiness', () => {
+  it('stamps the cost-service heartbeat age', () => {
+    mountCost({
+      currency: 'EUR',
+      hour: { 'a': { cost: 0.1, period_status: 'open', age_s: 42 } },
+      day: {},
+    });
+    expect(document.querySelector('.section-note')?.textContent).toContain('42s old');
+  });
+
+  it('says so plainly when the window has no rollups', () => {
+    mountCost({ currency: 'EUR', hour: {}, day: {} });
+    expect(document.querySelector('.observe-empty')?.textContent).toContain('no cost rollups');
+  });
+});

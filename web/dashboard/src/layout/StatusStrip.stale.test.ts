@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { endpoints } from '../lib/stores/endpoints.svelte';
 import { overview } from '../lib/stores/overview.svelte';
 import StatusStrip from './StatusStrip.svelte';
+import { startClock } from '../lib/clock.svelte';
+import { pollScheduler } from '../lib/poll-scheduler';
 import type { EndpointResponse, SystemSummary } from '../lib/types';
 
 // C6 regression: StatusStrip read overview.data without consulting
@@ -237,5 +239,33 @@ describe('StatusStrip response-rate cell', () => {
     const dd = cell!.querySelector('dd')!;
     expect(dd.textContent?.trim()).toBe('97.5%');
     expect(dd.querySelector('.dash')).toBeNull();
+  });
+});
+
+describe('uptime freeze during outages', () => {
+  it('freezes at the last good poll while stale and advances on recovery', async () => {
+    pollScheduler.start(); // global timer base, as App.svelte does
+    startClock(); // the shared ticking instant - without it no re-render
+    const t0 = Date.now();
+    const start = new Date(t0 - 3660_000).toISOString(); // uptime 1h01m (floor-stable)
+    await pollSystem(system('freeze-1', { start_time: start }));
+    mountStrip();
+    const strip = () => document.querySelector('.status-strip')!.textContent!;
+    expect(strip()).toContain('1h');
+
+    await failPoll();
+    // Two hours of wall-clock pass (shared clock ticks to +2h) while the
+    // poll is down: a live clock would read 3h, but the gateway never
+    // confirmed that - the figure must stay pinned to the last answered
+    // poll.
+    vi.spyOn(Date, 'now').mockReturnValue(t0 + 2 * 3600_000);
+    await new Promise((r) => setTimeout(r, 1100)); // shared-clock ticks
+    flushSync();
+    expect(strip()).toContain('1h');
+
+    // Recovery: re-anchor on the new response: start -1h01m, now +2h -> 3h.
+    await pollSystem(system('freeze-2', { start_time: start }));
+    expect(strip()).toContain('3h');
+    vi.restoreAllMocks();
   });
 });
