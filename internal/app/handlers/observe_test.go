@@ -17,6 +17,7 @@ import (
 
 type stubObserveQuerier struct {
 	calls     int
+	queries   []string
 	powerRows []map[string]any
 	gpuRows   []map[string]any
 	hourRows  []map[string]any
@@ -27,6 +28,7 @@ type stubObserveQuerier struct {
 
 func (s *stubObserveQuerier) query(_ context.Context, flux string) ([]map[string]any, error) {
 	s.calls++
+	s.queries = append(s.queries, flux)
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -159,7 +161,8 @@ func TestObserveHandlerShapesAndRevalidation(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	etag := rec.Header().Get("ETag")
 	require.NotEmpty(t, etag)
-	assert.Equal(t, "no-cache", rec.Header().Get("Cache-Control"))
+	assert.True(t, strings.HasPrefix(etag, `W/"`), "observe must use the weak ETag convention of every JSON route")
+	assert.Equal(t, "private, no-cache", rec.Header().Get("Cache-Control"))
 
 	rec = httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, uiObserveRoute, nil)
@@ -294,4 +297,124 @@ func TestObserveSharedMeterLabelsAllEndpoints(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, payload.Power, 1)
 	assert.Equal(t, "alpha, bravo", payload.Power[0].Endpoint)
+}
+
+func TestObserveCostWindowPerPeriod(t *testing.T) {
+	stub := &stubObserveQuerier{}
+	c := &observeCollector{cfg: observeConfig(), client: stub, now: time.Now, ttl: observeTTL}
+	_, err := c.payload(context.Background())
+	require.NoError(t, err)
+	var hour, day string
+	for _, q := range stub.queries {
+		switch {
+		case strings.Contains(q, `period=="hour"`):
+			hour = q
+		case strings.Contains(q, `period=="day"`):
+			day = q
+		}
+	}
+	require.NotEmpty(t, hour)
+	require.NotEmpty(t, day)
+	assert.Contains(t, hour, "range(start:-26h)", "hourly rollups must not scan 8d")
+	assert.Contains(t, day, "range(start:-8d)", "day needs the multi-day window for the newest-period rule")
+}
+
+func TestObserveCostWallClockAnchor(t *testing.T) {
+	now := time.Date(2026, 10, 16, 9, 0, 0, 0, time.UTC)
+	row := func(period string, start time.Time, cost float64) map[string]any {
+		return map[string]any{"endpoint": "ghost-395", "currency": "EUR", "period": period, "_field": "total_cost", "_value": cost, "_time": start.UTC().Format(time.RFC3339Nano)}
+	}
+	// All endpoints retired: the newest rollups are frozen and old - the
+	// newest-per-period rule alone would label them "this hour"/"today".
+	stub := &stubObserveQuerier{
+		hourRows: []map[string]any{row("hour", now.Add(-3*time.Hour), 1.2)},
+		dayRows:  []map[string]any{row("day", now.Add(-35*time.Hour), 9.9)},
+	}
+	c := &observeCollector{cfg: observeConfig(), client: stub, now: func() time.Time { return now }, ttl: observeTTL}
+	p, err := c.payload(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, p.Cost.Hour, "frozen hour period is not 'this hour'")
+	assert.Empty(t, p.Cost.Day, "frozen day period is not 'today'")
+
+	// Open day period starting at AEST midnight (22:00Z yesterday = 11h
+	// old at 09:00Z) must survive - a UTC floor(now) rule would drop it.
+	stub2 := &stubObserveQuerier{
+		hourRows: []map[string]any{row("hour", now.Truncate(time.Hour), 0.1)},
+		dayRows:  []map[string]any{row("day", time.Date(2026, 10, 15, 22, 0, 0, 0, time.UTC), 0.4)},
+	}
+	c2 := &observeCollector{cfg: observeConfig(), client: stub2, now: func() time.Time { return now }, ttl: observeTTL}
+	p2, err := c2.payload(context.Background())
+	require.NoError(t, err)
+	assert.Contains(t, p2.Cost.Day, "ghost-395", "AEST-midnight day period is inside the 26h anchor")
+	assert.Contains(t, p2.Cost.Hour, "ghost-395")
+}
+
+func TestObserveGpusAbsent(t *testing.T) {
+	now := time.Date(2026, 10, 16, 9, 0, 0, 0, time.UTC)
+	gpuRow := func(endpoint, gpu, field string, value any) map[string]any {
+		return map[string]any{"endpoint": endpoint, "gpu": gpu, "node": "leo9700", "_field": field, "_value": value, "_time": now.Format(time.RFC3339Nano)}
+	}
+	cfg := observeConfig()
+	cfg.GPUEndpoints = []string{"radiance-gpus", "radiance-gpus-128"}
+	stub := &stubObserveQuerier{gpuRows: []map[string]any{gpuRow("radiance-gpus-128", "0", "busy_percent", 97.0)}}
+	c := &observeCollector{cfg: cfg, client: stub, now: func() time.Time { return now }, ttl: observeTTL}
+	p, err := c.payload(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"radiance-gpus"}, p.GPUsAbsent, "dead exporter must be named, not hidden")
+
+	stub2 := &stubObserveQuerier{gpuRows: []map[string]any{
+		gpuRow("radiance-gpus-128", "0", "busy_percent", 97.0),
+		gpuRow("radiance-gpus", "0", "busy_percent", 12.0),
+	}}
+	c2 := &observeCollector{cfg: cfg, client: stub2, now: func() time.Time { return now }, ttl: observeTTL}
+	p2, err := c2.payload(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, p2.GPUsAbsent)
+	assert.Len(t, p2.GPUs, 2)
+}
+
+func TestObserveCostDroppedDisclosure(t *testing.T) {
+	now := time.Date(2026, 10, 16, 9, 30, 0, 0, time.UTC)
+	row := func(endpoint, period string, start time.Time) map[string]any {
+		return map[string]any{"endpoint": endpoint, "currency": "EUR", "period": period, "_field": "total_cost", "_value": 1.0, "_time": start.UTC().Format(time.RFC3339Nano)}
+	}
+	// live-a reports the current hour; ghost-b's newest rollup is last
+	// hour's period start -> dropped, and must be NAMED, not hidden.
+	stub := &stubObserveQuerier{
+		hourRows: []map[string]any{
+			row("live-a", "hour", now.Truncate(time.Hour)),
+			row("ghost-b", "hour", now.Truncate(time.Hour).Add(-time.Hour)),
+		},
+	}
+	c := &observeCollector{cfg: observeConfig(), client: stub, now: func() time.Time { return now }, ttl: observeTTL}
+	p, err := c.payload(context.Background())
+	require.NoError(t, err)
+	assert.Contains(t, p.Cost.Hour, "live-a")
+	assert.NotContains(t, p.Cost.Hour, "ghost-b")
+	assert.Equal(t, []string{"ghost-b"}, p.Cost.Dropped)
+}
+
+func TestObserveNegativeCache(t *testing.T) {
+	clock := time.Date(2026, 10, 16, 9, 0, 0, 0, time.UTC)
+	stub := &stubObserveQuerier{err: errors.New("influx down")}
+	c := &observeCollector{cfg: observeConfig(), client: stub, now: func() time.Time { return clock }, ttl: observeTTL}
+	_, err1 := c.payload(context.Background())
+	require.Error(t, err1)
+	callsAfterFirst := stub.calls
+	_, err2 := c.payload(context.Background())
+	require.Error(t, err2)
+	assert.Equal(t, callsAfterFirst, stub.calls, "a failing collect must not re-fan Influx within the negative-cache window")
+
+	// After TTL/2 the next caller retries, and success clears the memo.
+	clock = clock.Add(observeTTL)
+	stub.err = nil
+	_, err := c.payload(context.Background())
+	require.NoError(t, err)
+	assert.Greater(t, stub.calls, callsAfterFirst)
+}
+
+func TestFluxStringSetEscaping(t *testing.T) {
+	assert.Equal(t, `"radiance-gpus","a.b"`, fluxStringSet([]string{"radiance-gpus", "a.b"}))
+	// Go's %q emits \x01; Flux only parses \uXXXX.
+	assert.Equal(t, `"a\u0001b"`, fluxStringSet([]string{"a\x01b"}))
 }

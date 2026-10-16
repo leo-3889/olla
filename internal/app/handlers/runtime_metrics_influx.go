@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -465,10 +466,18 @@ func influxFieldFilter(fields ...string) string {
 	return " |> filter(fn:(r)=>" + strings.Join(parts, " or ") + ")"
 }
 
+var fluxControlEscape = regexp.MustCompile(`\\x([0-9a-fA-F]{2})`)
+
+// fluxStringSet renders config-supplied strings as Flux literals. Go's %q
+// escapes control chars as \xNN, which Flux does not understand (syntax
+// error); Flux knows \uXXXX, so translate. Ordinary names (letters, dots,
+// dashes) pass through %q untouched.
 func fluxStringSet(names []string) string {
 	quoted := make([]string, 0, len(names))
 	for _, name := range names {
-		quoted = append(quoted, fmt.Sprintf("%q", name))
+		q := fmt.Sprintf("%q", name)
+		q = fluxControlEscape.ReplaceAllStringFunc(q, func(m string) string { return `\u00` + m[2:] })
+		quoted = append(quoted, q)
 	}
 	return strings.Join(quoted, ",")
 }

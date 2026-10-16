@@ -23,10 +23,13 @@ const uiObserveRoute = "/internal/ui/observe.json"
 // observeTTL bounds how often the observe payload hits Influx regardless of
 // client polling: power and cost change on much slower cadences than the
 // 10s runtime refresh, and several dashboard tabs must not multiply the
-// query load. It sits ABOVE the dashboard's 10s observe poll so a steady
-// poll hits the memo and pays one cheap 304 (the ETag only changes when a
-// collect changes the body); a TTL below the poll interval would re-collect
-// (and re-stamp generated_at) on every single poll, defeating the ETag.
+// query load. It sits ABOVE the dashboard's 10s observe poll. The memo age
+// runs from the last COLLECT, so the honest steady state at 10s poll / 12s
+// TTL is 304/200 ALTERNATING: the poll whose memo age crosses 12s pays a
+// re-collect (new generated_at -> new ETag -> 200), the next one replays
+// against the fresh memo -> 304. Net effect: one Influx fan-out per ~20s
+// per client set, halving poll traffic; a TTL below the poll interval would
+// re-collect (and re-stamp generated_at) on every poll, defeating the ETag.
 const observeTTL = 12 * time.Second
 
 // observePowerRow is one meter measurement attributed to an olla endpoint.
@@ -76,6 +79,12 @@ type observeCost struct {
 	Currency string                       `json:"currency"`
 	Hour     map[string]*observeCostEntry `json:"hour"`
 	Day      map[string]*observeCostEntry `json:"day"`
+	// Dropped names endpoints whose newest rollup existed but was rejected
+	// by the liveness rules (older than the newest period, or past the
+	// wall-clock anchor) - typically an endpoint that left the fleet
+	// mid-period. Without this the row vanishes silently and an empty
+	// table reads as "no fleet" instead of "these endpoints went dark".
+	Dropped []string `json:"dropped"`
 }
 
 // ObservePayload is the contract of GET /internal/ui/observe.json. In
@@ -88,6 +97,12 @@ type ObservePayload struct {
 	Power       []observePowerRow `json:"power"`
 	Cost        observeCost       `json:"cost"`
 	GPUs        []observeGpuRow   `json:"gpus"`
+	// GPUsAbsent lists configured metrics_source.influx.gpu_endpoints that
+	// returned ZERO rows in the window: a dead exporter erases its cards
+	// (rows expire with the 5m window), and a section that silently shows
+	// 2 of 5 GPUs reads as a healthy small fleet. The UI must render an
+	// explicit "no data" card per entry.
+	GPUsAbsent []string `json:"gpus_absent"`
 }
 
 func newEmptyObservePayload(source string, now time.Time) *ObservePayload {
@@ -96,8 +111,9 @@ func newEmptyObservePayload(source string, now time.Time) *ObservePayload {
 		GeneratedAt: now.UTC(),
 		Source:      source,
 		Power:       []observePowerRow{},
-		Cost:        observeCost{Currency: "EUR", Hour: map[string]*observeCostEntry{}, Day: map[string]*observeCostEntry{}},
+		Cost:        observeCost{Currency: "EUR", Hour: map[string]*observeCostEntry{}, Day: map[string]*observeCostEntry{}, Dropped: []string{}},
 		GPUs:        []observeGpuRow{},
+		GPUsAbsent:  []string{},
 	}
 }
 
@@ -111,6 +127,11 @@ type observeCollector struct {
 	mu     sync.Mutex
 	memo   *ObservePayload
 	memoAt time.Time
+	// Negative cache: a wedged Influx must not be re-fanned (5 queries) on
+	// every client poll; failures are memoized for TTL/2 and served from
+	// the memo (the 503 has no ETag, so clients revalidate cheaply).
+	memoErr   error
+	memoErrAt time.Time
 }
 
 func newObserveCollector(influx config.InfluxSourceConfig, token string, log logger.StyledLogger) *observeCollector {
@@ -131,11 +152,16 @@ func (o *observeCollector) payload(ctx context.Context) (*ObservePayload, error)
 	if o.memo != nil && o.now().Sub(o.memoAt) < o.ttl {
 		return o.memo, nil
 	}
+	if o.memoErr != nil && o.now().Sub(o.memoErrAt) < o.ttl/2 {
+		return nil, o.memoErr
+	}
 	payload, err := o.collect(ctx)
 	if err != nil {
+		o.memoErr, o.memoErrAt = err, o.now()
 		return nil, err
 	}
 	o.memo, o.memoAt = payload, o.now()
+	o.memoErr = nil
 	return payload, nil
 }
 
@@ -228,11 +254,7 @@ func (o *observeCollector) collect(ctx context.Context) (*ObservePayload, error)
 
 	if len(o.cfg.GPUEndpoints) > 0 {
 		queries++
-		set := make([]string, 0, len(o.cfg.GPUEndpoints))
-		for _, ep := range o.cfg.GPUEndpoints {
-			set = append(set, fmt.Sprintf("%q", ep))
-		}
-		rows, err := o.client.query(cycleCtx, fmt.Sprintf(`from(bucket:%q) |> range(start:-5m) |> filter(fn:(r)=>r._measurement=="llm_runtime") |> filter(fn:(r)=>contains(set:[%s], value:r.endpoint)) |> last()`, o.cfg.Bucket, strings.Join(set, ",")))
+		rows, err := o.client.query(cycleCtx, fmt.Sprintf(`from(bucket:%q) |> range(start:-5m) |> filter(fn:(r)=>r._measurement=="llm_runtime") |> filter(fn:(r)=>contains(set:[%s], value:r.endpoint)) |> last()`, o.cfg.Bucket, fluxStringSet(o.cfg.GPUEndpoints)))
 		if err != nil {
 			fail("gpu", err)
 		} else {
@@ -285,20 +307,56 @@ func (o *observeCollector) collect(ctx context.Context) (*ObservePayload, error)
 				}
 				payload.GPUs = append(payload.GPUs, out)
 			}
+			seen := map[string]bool{}
+			for _, group := range groups {
+				seen[group.endpoint] = true
+			}
+			for _, ep := range o.cfg.GPUEndpoints {
+				if !seen[ep] {
+					payload.GPUsAbsent = append(payload.GPUsAbsent, ep)
+				}
+			}
+			sort.Strings(payload.GPUsAbsent)
 		}
 	}
 
 	currencies := map[string]bool{}
 	costRowsRendered := false
+	dedupDrop := func() {
+		seen := map[string]bool{}
+		kept := payload.Cost.Dropped[:0]
+		for _, ep := range payload.Cost.Dropped {
+			if !seen[ep] {
+				seen[ep] = true
+				kept = append(kept, ep)
+			}
+		}
+		payload.Cost.Dropped = kept
+	}
 	costPeriods := []struct {
 		period string
 		into   map[string]*observeCostEntry
-	}{{"hour", payload.Cost.Hour}, {"day", payload.Cost.Day}}
+		// window bounds the scan: hourly rollups accumulate 24 rows/day per
+		// endpoint, so scanning 8d of them (2.7s influx wall measured live)
+		// to find the newest period is pure waste - one hour period is
+		// open at a time and the liveness anchor below rejects anything
+		// older than 2h. Day periods live on the -8d window (7 days of
+		// rows are legitimate comparators for the newest-period rule).
+		window string
+		// maxAge anchors the newest-period rule to wall-clock: when EVERY
+		// endpoint is retired, "newest" is a frozen period start and the
+		// relative rule alone would label it "this hour". A period may
+		// only render if it started within maxAge of now. The margins are
+		// deliberately generous and tz-safe: day periods start at AEST
+		// midnight (= 22:00Z), so a UTC floor(now) would drop valid day
+		// rows; 2h/26h tolerate any offset a period can start with.
+		maxAge time.Duration
+	}{{"hour", payload.Cost.Hour, "-26h", 2 * time.Hour}, {"day", payload.Cost.Day, "-8d", 26 * time.Hour}}
 	for _, cp := range costPeriods {
 		queries++
 		// _time of a cost rollup is the PERIOD START, so the window must
 		// span longer than one period to find the newest rollup at all.
-		rows, err := o.client.query(cycleCtx, fmt.Sprintf(`from(bucket:%q) |> range(start:-8d) |> filter(fn:(r)=>r._measurement=="llm_endpoint_cost_v3") |> filter(fn:(r)=>r.period==%q)`, o.cfg.CostsBucket, cp.period))
+		rows, err := o.client.query(cycleCtx, fmt.Sprintf(`from(bucket:%q) |> range(start:%s) |> filter(fn:(r)=>r._measurement=="llm_endpoint_cost_v3") |> filter(fn:(r)=>r.period==%q)`, o.cfg.CostsBucket, cp.window, cp.period))
 		if err != nil {
 			fail("cost "+cp.period, err)
 			continue
@@ -366,8 +424,12 @@ func (o *observeCollector) collect(ctx context.Context) (*ObservePayload, error)
 				newest = group.newest
 			}
 		}
+		anchor := o.now().UTC().Add(-cp.maxAge)
 		for endpoint, group := range groups {
-			if !group.haveTime || !group.newest.Equal(newest) {
+			if !group.haveTime || !group.newest.Equal(newest) || group.newest.UTC().Before(anchor) {
+				if endpoint != "" && group.haveTime {
+					payload.Cost.Dropped = append(payload.Cost.Dropped, endpoint)
+				}
 				continue
 			}
 			entry := &observeCostEntry{PeriodStatus: group.status, Currency: group.currency}
@@ -383,6 +445,7 @@ func (o *observeCollector) collect(ctx context.Context) (*ObservePayload, error)
 			cp.into[endpoint] = entry
 			costRowsRendered = true
 		}
+		dedupDrop()
 	}
 	// The section header shows one currency; claiming it for the whole
 	// payload is only honest when every rendered row agrees (Go map
@@ -446,15 +509,10 @@ func (a *Application) observeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sum := sha256.Sum256(body)
-	etag := `"` + hex.EncodeToString(sum[:]) + `"`
-	w.Header().Set("ETag", etag)
-	w.Header().Set("Cache-Control", "no-cache")
-	if match := r.Header.Get("If-None-Match"); match != "" && etagMatches(match, etag) {
-		w.WriteHeader(http.StatusNotModified)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write(body)
+	// Same convention as every other JSON route: weak validator + private
+	// revalidation (one ETag dialect on the surface, nothing shared with
+	// intermediaries).
+	writeJSONWithETag(w, r, body, `W/"`+hex.EncodeToString(sum[:])+`"`)
 }
 
 func pickFloat(fields map[string]float64, field string, into **float64) {

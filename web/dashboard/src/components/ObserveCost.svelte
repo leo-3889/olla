@@ -24,6 +24,8 @@
     tokens: number | null;
     hour_start: string | null;
     day_start: string | null;
+    hourCurrency: string;
+    dayCurrency: string;
   }
 
   const rows = $derived.by(() => {
@@ -46,6 +48,12 @@
         // open period's start - the label the "partial" chip needs.
         hour_start: h?.period_start ?? null,
         day_start: d?.period_start ?? null,
+        // Per-entry currency wins: the server only sets the global
+        // cost.currency when EVERY entry agrees, so a mixed fleet labels
+        // each cell with its own money (a USD endpoint under a global EUR
+        // header would render wrong numbers with the wrong sign).
+        hourCurrency: h?.currency || d?.currency || cost?.currency || 'EUR',
+        dayCurrency: d?.currency || h?.currency || cost?.currency || 'EUR',
       };
     });
   });
@@ -67,9 +75,9 @@
     return d.toLocaleString('en-AU', { hour12: false });
   }
 
-  function money(value: number | null): string {
+  function money(value: number | null, currency: string): string {
     if (value === null) return '—';
-    return value.toFixed(value >= 1 ? 2 : 3) + ' ' + (cost?.currency || 'EUR');
+    return value.toFixed(value >= 1 ? 2 : 3) + ' ' + currency;
   }
   function kwh(value: number | null): string {
     if (value === null) return '—';
@@ -77,14 +85,15 @@
   }
 </script>
 
-<div class="section observe-cost" data-state={degraded ? 'stale' : null}>
+<div class="section observe-cost">
   <div class="section-head">
     <h2>Cost</h2>
-    <span class="section-note observe-src" class:stale={degraded}>ollametrics · {ageText}{#if degraded} ({statusLabel}){/if}</span>
+    <span class="section-note observe-src" class:stale={degraded}>ollametrics · {ageText}{#if degraded} ({statusLabel}){/if}{#if cost?.dropped?.length} · no current rollup: {cost.dropped.join(', ')}{/if}</span>
   </div>
   {#if rows.length === 0}
     <p class="observe-empty">no cost rollups in the queried window yet</p>
   {:else}
+    <div data-state={degraded ? 'stale' : null}>
     <table class="observe-table">
       <thead>
         <tr>
@@ -99,14 +108,15 @@
         {#each rows as row (row.endpoint)}
           <tr>
             <th scope="row" class="observe-endpoint">{row.endpoint}</th>
-            <td title={row.hour_start ? 'period starting ' + periodLabel(row.hour_start) : ''}>{money(row.hourCost)}{#if row.hourOpen}<span class="partial" title="Rollup for the period starting {periodLabel(row.hour_start) || '?'} - still in progress">partial</span>{/if}</td>
-            <td title={row.day_start ? 'period starting ' + periodLabel(row.day_start) : ''}>{money(row.dayCost)}{#if row.dayOpen}<span class="partial" title="Rollup for the period starting {periodLabel(row.day_start) || '?'} - still in progress">partial</span>{/if}</td>
+            <td title={row.hour_start ? 'period starting ' + periodLabel(row.hour_start) : ''}>{money(row.hourCost, row.hourCurrency)}{#if row.hourOpen}<span class="partial" title="Rollup for the period starting {periodLabel(row.hour_start) || '?'} - still in progress">partial</span>{/if}</td>
+            <td title={row.day_start ? 'period starting ' + periodLabel(row.day_start) : ''}>{money(row.dayCost, row.dayCurrency)}{#if row.dayOpen}<span class="partial" title="Rollup for the period starting {periodLabel(row.day_start) || '?'} - still in progress">partial</span>{/if}</td>
             <td>{kwh(row.energy_kwh)}</td>
             <td>{row.tokens === null ? '—' : fmtInt(row.tokens)}</td>
           </tr>
         {/each}
       </tbody>
     </table>
+    </div>
   {/if}
 </div>
 

@@ -223,6 +223,8 @@ export interface ObserveCostEntry {
 }
 
 export interface ObserveCost {
+  /** endpoints whose rollup was rejected by the liveness rules (went dark) */
+  dropped?: string[];
   currency: string;
   hour: Record<string, ObserveCostEntry>;
   day: Record<string, ObserveCostEntry>;
@@ -249,6 +251,9 @@ export interface ObserveResponse {
   power: ObservePowerRow[];
   cost: ObserveCost;
   gpus: ObserveGpuRow[];
+  /** configured gpu_endpoints with zero rows in the window (dead exporter);
+   *  optional for payloads predating the field. */
+  gpus_absent?: string[];
 }
 
 export interface EndpointStatusResponse {

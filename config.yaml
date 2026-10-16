@@ -277,4 +277,4 @@ dashboard:
 #       power_attribution:
 #         halogen-395: shelly-ai-395
 #         radiance-9700-64: shelly-ai-box
-#       gpu_endpoint: radiance-gpus
+#       gpu_endpoints: [radiance-gpus]

@@ -33,7 +33,7 @@ func TestUIConfigFromSamplerDefaults(t *testing.T) {
 	for id, reason := range map[string]string{
 		"power": "requires metrics_source.mode=influx",
 		"cost":  "requires metrics_source.mode=influx",
-		"gpu":   "requires metrics_source.mode=influx and metrics_source.influx.gpu_endpoint",
+		"gpu":   "requires metrics_source.mode=influx and metrics_source.influx.gpu_endpoints",
 	} {
 		enabled, got := sectionEnabled(cfg, id)
 		assert.False(t, enabled, id)

@@ -3,6 +3,9 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { overview } from '../lib/stores/overview.svelte';
 import { endpoints } from '../lib/stores/endpoints.svelte';
 import OverviewPanel from './OverviewPanel.svelte';
+import { bootstrap, DEFAULT_UI_CONFIG } from '../lib/stores/bootstrap.svelte';
+import { createPollStore } from '../lib/stores/poll-store.svelte';
+import type { ObserveResponse } from '../lib/types';
 import type {
   EndpointResponse,
   EndpointSummary,
@@ -583,5 +586,53 @@ describe('OverviewPanel no-traffic tile states', () => {
     const failTile = tileByLabel('Total failures');
     // 100 - 95.0 = 5.0% of traffic.
     expect(failTile!.querySelector('.sub')?.textContent?.trim()).toBe('5.0% of traffic');
+  });
+});
+
+describe('observe banner isolation from panel dim', () => {
+  // Same structural invariant as the overview banner: during a correlated
+  // outage (overview AND observe degraded) the observe banner - carrying the
+  // retry affordance - must not sit inside the [data-state] wrapper whose
+  // opacity dims the whole subtree.
+  it('renders the observe StatusBanner outside the .panel-data wrapper', async () => {
+    bootstrap.config = {
+      ...DEFAULT_UI_CONFIG,
+      metrics_source: 'influx',
+      sections: DEFAULT_UI_CONFIG.sections.map((s) => (s.id === 'power' || s.id === 'cost' || s.id === 'gpu' ? { ...s, enabled: true, reason: undefined } : s)),
+    };
+    const observe = createPollStore<ObserveResponse>({ name: 'observe-test', url: '/internal/ui/observe.json', intervalMs: 60000 });
+    bootstrap.observe = observe;
+    global.fetch = vi.fn(async () =>
+      jsonResponse({
+        schema: 1,
+        generated_at: new Date().toISOString(),
+        source: 'ollametrics',
+        power: [],
+        cost: { currency: 'EUR', hour: {}, day: {} },
+        gpus: [],
+        gpus_absent: [],
+      }),
+    );
+    observe.refresh();
+    await vi.waitFor(() => expect(observe.hasData).toBe(true));
+    global.fetch = vi.fn(async () => ({ status: 500, ok: false, headers: { get: () => null } }));
+    observe.refresh();
+    await vi.waitFor(() => expect(['stale', 'error']).toContain(observe.status));
+
+    component = mount(OverviewPanel, { target: document.body });
+    flushSync();
+
+    const panel = document.getElementById('panel-overview')!;
+    const banners = [...panel.querySelectorAll('.banner')];
+    expect(banners.length).toBeGreaterThan(0);
+    const observeBanner = banners[banners.length - 1]!;
+    const wrapper = panel.querySelector('.panel-data')!;
+    expect(wrapper).toBeTruthy();
+    expect(wrapper.contains(observeBanner)).toBe(false);
+    expect(observeBanner.parentElement).toBe(panel);
+
+    observe.stop();
+    bootstrap.observe = null;
+    bootstrap.config = DEFAULT_UI_CONFIG;
   });
 });

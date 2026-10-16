@@ -338,7 +338,6 @@
   {/if}
 
   {#if observeData && (bootstrap.sectionEnabled('power') || bootstrap.sectionEnabled('cost') || bootstrap.sectionEnabled('gpu'))}
-    {#if observeDegraded}<StatusBanner store={bootstrap.observe!} />{/if}
     {#if bootstrap.sectionEnabled('power')}
       <ObservePower rows={observeData.power} ageS={maxAgeS(observeData.power.map((r) => r.age_s))} degraded={observeDegraded} statusLabel={observeStatusLabel} />
     {/if}
@@ -346,8 +345,15 @@
       <ObserveCost cost={observeData.cost} degraded={observeDegraded} statusLabel={observeStatusLabel} />
     {/if}
     {#if bootstrap.sectionEnabled('gpu')}
-      <ObserveGpu gpus={observeData.gpus} ageS={maxAgeS(observeData.gpus.map((r) => r.age_s))} degraded={observeDegraded} statusLabel={observeStatusLabel} />
+      <ObserveGpu gpus={observeData.gpus} absent={observeData.gpus_absent ?? []} ageS={maxAgeS(observeData.gpus.map((r) => r.age_s))} degraded={observeDegraded} statusLabel={observeStatusLabel} />
     {/if}
   {/if}
   </div>
+
+  <!-- Outside the .panel-data wrapper on purpose (same invariant as the
+       overview banner above): a correlated outage (overview stale AND
+       observe degraded) must not dim this banner's retry affordance. -->
+  {#if observeData && observeDegraded && (bootstrap.sectionEnabled('power') || bootstrap.sectionEnabled('cost') || bootstrap.sectionEnabled('gpu'))}
+    <StatusBanner store={bootstrap.observe!} />
+  {/if}
 </div>
