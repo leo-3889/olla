@@ -59,15 +59,26 @@ The `key_sources` list is evaluated in order; the first source that produces a n
 | Source | How the key is derived | When to prefer it | Caveats |
 |---|---|---|---|
 | `session_header` | 64-bit FNV-1a hash of the `X-Olla-Session-ID` request header | Explicit client opt-in; most reliable | Client must send the header consistently |
-| `prefix_hash` | 64-bit FNV-1a hash of the first `prefix_hash_bytes` bytes of the `messages` JSON field | No client changes needed; best cache locality | Two conversations with identical opening messages share a session |
+| `first_user_message` | 64-bit FNV-1a hash of the first **non-system** turn of `messages` (the raw `prompt` for completions bodies), key `turn:<model>:<hash>` | No client changes needed and one key per conversation: the first user turn is unique per conversation and is resent verbatim on every later turn | Needs `key_scan_bytes` large enough to reach past the system prompt; conversations that open with identical text collapse to one key |
+| `prefix_hash` | 64-bit FNV-1a hash of the first `prefix_hash_bytes` bytes of the `messages` JSON field | Fallback for bodies with no user turn (system-only probes); the only source that gives shared-prefix affinity | Keys the prompt *template*, not the conversation: every conversation of one agent shares the key, so the whole agent flocks to one node |
 | `auth_header` | 64-bit FNV-1a hash of the `Authorization` header value | Per-user affinity without client changes | Breaks if the token rotates mid-conversation; unreliable with shared tokens |
 | `ip` | Client IP address (extracted via `net.SplitHostPort`) | Simple deployments with no NAT | Unreliable behind NAT, load balancers, or Docker networking |
 
 All header and token values are hashed before storage; plaintext secrets are never written to the session store.
 
-The default configuration enables `session_header`, `prefix_hash`, and `auth_header` (in that order) and comments out `ip` because it is unreliable behind typical container networking. Adjust the list to suit your deployment.
+The default configuration enables `session_header`, `first_user_message`, `prefix_hash`, and `auth_header` (in that order) and comments out `ip` because it is unreliable behind typical container networking. Adjust the list to suit your deployment.
 
-## Session lifecycle and eviction
+Names are validated at startup when the feature is enabled: an unrecognised entry is a boot error. It used to be skipped silently at request time, which meant a typo quietly deleted one layer of the cascade and looked like "sticky sessions do not work".
+
+### Conversation-level vs template-level affinity
+
+The two body-derived sources key at different granularities, and the difference decides where load lands.
+
+`prefix_hash` hashes the opening bytes of the `messages` array. For agent clients (coding agents, bot gateways) those bytes are the **shared system prompt**, so every conversation that agent starts produces the *same* key. One key means one pin: the entire agent runs on the node that answered its first request, and because the TTL is sliding (refreshed on every hit) a busy agent never releases it. The balancer's per-request choice only ever applies to the handful of keys in the store, so an equal-priority tier never evens out. Measured on a two-node fleet: 10 191 sticky hits over 12 active sessions, with 7 288 requests on one node against 1 040 on the other - both endpoints healthy, both at priority 100.
+
+`first_user_message` hashes the first non-system turn. It is unique per conversation (so new conversations are spread by the balancer) and stable across that conversation's later turns (clients resend the history verbatim), which is exactly the affinity KV-cache reuse wants. After the switch the same traffic produced 110 sessions for 110 conversations, with new conversations alternating across the tier and follow-up turns hitting their pinned node.
+
+Shared-prefix affinity is not lost: because the tier rotates, every node serves conversations carrying the same system prompt, so each node keeps that prefix warm in its own cache.
 
 Sessions do not live forever. Three mechanisms remove them:
 
@@ -99,7 +110,7 @@ Olla writes three response headers so clients and operators can observe affinity
 | Header | Values | Meaning |
 |---|---|---|
 | `X-Olla-Sticky-Session` | `hit` / `miss` / `repin` / `disabled` | Outcome of the affinity lookup for this request |
-| `X-Olla-Sticky-Key-Source` | `session_header` / `prefix_hash` / `auth_header` / `ip` / `none` | Which key source was used (absent when outcome is `disabled`) |
+| `X-Olla-Sticky-Key-Source` | `session_header` / `first_user_message` / `prefix_hash` / `auth_header` / `ip` / `none` | Which key source was used (absent when outcome is `disabled`) |
 | `X-Olla-Session-ID` | _(echoed from request)_ | Present in the response only when the client sent `X-Olla-Session-ID`; lets stateless clients confirm the header was received |
 
 Example: first request (miss), client provides explicit session ID:
@@ -143,14 +154,22 @@ proxy:
 
     max_sessions: 10000         # LRU capacity; oldest entries are evicted when full
 
-    key_sources:                # ordered cascade, first match wins
+    key_sources:                # ordered cascade, first match wins. Unknown names
+                                # are a startup error.
       - "session_header"        # X-Olla-Session-ID header (explicit client opt-in)
-      - "prefix_hash"           # hash of first N bytes of messages JSON
+      - "first_user_message"    # hash of the first non-system turn: one key per conversation
+      - "prefix_hash"           # hash of first N bytes of messages JSON (fallback, and the
+                                # only shared-prefix-affinity source)
       - "auth_header"           # hash of Authorization header (per-user affinity)
       # - "ip"                  # client IP, opt-in; unreliable behind NAT/Docker
 
     prefix_hash_bytes: 512      # bytes of the messages field to hash for prefix_hash source;
                                 # larger values reduce false collisions at a small CPU cost
+    key_scan_bytes: 65536       # leading body bytes the handler buffers to compute a key.
+                                # The handler reads max(prefix_hash_bytes, key_scan_bytes)
+                                # and restores the body. Required by first_user_message: a
+                                # system prompt is routinely tens of kilobytes, so with a
+                                # 512-byte read the source never reaches the user turn.
 ```
 
 The only env var exposed for this feature is `OLLA_PROXY_STICKY_SESSIONS_ENABLED` (boolean). The remaining fields are configuration-file only.
@@ -194,7 +213,7 @@ Sticky sessions trade load distribution for cache locality. They are not always 
 
 - **Stateless or single-turn workloads**: embeddings, one-shot completions, and batch jobs gain nothing from affinity; use the plain load balancer.
 - **Model-routing-dominated traffic**: if requests are already hard-routed to specific endpoints by model routing, the sticky wrapper adds overhead with no benefit.
-- **Very small deployments**: two endpoints with priority load balancing already behave predictably; adding stickiness is unnecessary complexity.
+- **Single-endpoint deployments**: with one candidate there is nothing to spread and nothing to pin; the wrapper only adds a key computation.
 - **Homogeneous short-prompt workloads**: when prompts are short and vary widely, KV-cache hit rates on the backend are already low; affinity provides little gain and reduces load distribution.
 - **Deployments with aggressive autoscaling**: if backends are added and removed frequently, sessions will repin often and the affinity benefit is diluted.
 
@@ -202,7 +221,7 @@ Sticky sessions trade load distribution for cache locality. They are not always 
 
 **Decorator pattern**: `StickySessionWrapper` in `internal/adapter/balancer/sticky.go` wraps any `domain.EndpointSelector` implementation. No factory or registry changes are needed to add a new inner balancer; the wrapper is applied in `ProxyServiceWrapper.applyStickySessions()` inside `internal/app/services/proxy.go`.
 
-**Hashing**: 64-bit FNV-1a (`hash/fnv`) is used for all key derivation. It is non-cryptographic and intended only as a compact routing hint; collisions are acceptable (two different sessions occasionally land on the same backend). Do not use these keys as security tokens.
+**Hashing**: 64-bit FNV-1a (`hash/fnv`) is used for all key derivation, including `first_user_message`. It is non-cryptographic and intended only as a compact routing hint; collisions are acceptable (two different sessions occasionally land on the same backend). Do not use these keys as security tokens.
 
 **Import cycle avoidance**: `StickyOutcome` is defined in `internal/core/domain/routing.go` rather than in `internal/adapter/balancer/sticky.go`. This allows `internal/adapter/proxy/core` (the proxy engine shared layer) to read the outcome and write response headers without importing the balancer package, which would create a cycle.
 

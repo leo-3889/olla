@@ -257,8 +257,9 @@ KV-cache affinity routing for multi-turn LLM conversations. See [Sticky Sessions
 | `sticky_sessions.enabled` | bool | `false` | Enable affinity routing (opt-in) |
 | `sticky_sessions.idle_ttl_seconds` | int | `600` | Sliding TTL in seconds; 0 = no TTL expiry |
 | `sticky_sessions.max_sessions` | uint64 | `10000` | LRU capacity; oldest entry evicted when full |
-| `sticky_sessions.key_sources` | []string | `["session_header","prefix_hash","auth_header"]` | Ordered key source cascade; first match wins |
+| `sticky_sessions.key_sources` | []string | `["session_header","first_user_message","prefix_hash","auth_header"]` | Ordered key source cascade; first match wins. Unknown names are a startup error when enabled |
 | `sticky_sessions.prefix_hash_bytes` | int | `512` | Bytes of the messages field to hash for `prefix_hash` |
+| `sticky_sessions.key_scan_bytes` | int | `65536` | Leading body bytes buffered to compute a key; the handler reads `max(prefix_hash_bytes, key_scan_bytes)`. `first_user_message` needs the budget to get past a multi-KB system prompt |
 
 **Environment Variable**: `OLLA_PROXY_STICKY_SESSIONS_ENABLED` (only `enabled` is exposed as an env var)
 
@@ -272,10 +273,12 @@ proxy:
     max_sessions: 10000         # LRU cap
     key_sources:
       - "session_header"        # X-Olla-Session-ID header
-      - "prefix_hash"           # hash of messages prefix
+      - "first_user_message"    # hash of the first non-system turn (one key per conversation)
+      - "prefix_hash"           # hash of messages prefix (keys the shared prompt template)
       - "auth_header"           # hash of Authorization header
       # - "ip"                  # client IP (unreliable behind NAT)
     prefix_hash_bytes: 512
+    key_scan_bytes: 65536       # body bytes buffered for key computation
 ```
 
 ## Discovery Configuration
