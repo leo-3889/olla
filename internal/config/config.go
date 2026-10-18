@@ -100,11 +100,18 @@ func DefaultConfig() *Config {
 			MaxRetries:        3,
 			RetryBackoff:      500 * time.Millisecond,
 			StickySessions: StickySessionConfig{
-				Enabled:         false,
-				IdleTTLSeconds:  600,
-				MaxSessions:     10000,
-				KeySources:      []string{"session_header", "prefix_hash", "auth_header"},
+				Enabled:        false,
+				IdleTTLSeconds: 600,
+				MaxSessions:    10000,
+				// first_user_message is listed ahead of prefix_hash on purpose.
+				// prefix_hash keys the shared system prompt, so one agent's whole
+				// fleet of conversations collapses onto the node that answered its
+				// first request; the first user turn keys one conversation, which is
+				// the unit KV affinity is worth having. prefix_hash stays in the
+				// cascade as the fallback for bodies with no user turn.
+				KeySources:      []string{"session_header", "first_user_message", "prefix_hash", "auth_header"},
 				PrefixHashBytes: 512,
+				KeyScanBytes:    65536,
 			},
 		},
 		Discovery: DiscoveryConfig{
@@ -238,6 +245,10 @@ func (c *Config) Validate() error {
 
 	if err := c.Health.Validate(); err != nil {
 		return fmt.Errorf("health config invalid: %w", err)
+	}
+
+	if err := c.Proxy.StickySessions.Validate(); err != nil {
+		return fmt.Errorf("proxy.sticky_sessions config invalid: %w", err)
 	}
 
 	if err := c.MetricsSource.Validate(); err != nil {

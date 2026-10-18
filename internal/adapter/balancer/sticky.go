@@ -162,6 +162,9 @@ func (s *StickySessionWrapper) PurgeDeadEndpoints(routable []*domain.Endpoint) {
 // key_sources cascade. The key is model-scoped so the same client talking to
 // different models does not cross-contaminate their session state.
 //
+// Sources are tried in the configured order: session_header,
+// first_user_message, prefix_hash, auth_header, ip.
+//
 // Returns ("", "") when no source produces a usable key.
 // Exported so handlers can compute the key before invoking the balancer.
 func ComputeStickyKey(r *http.Request, modelName string, cfg config.StickySessionConfig, body []byte) (key, source string) {
@@ -172,6 +175,8 @@ func ComputeStickyKey(r *http.Request, modelName string, cfg config.StickySessio
 			k, s = stickyKeyFromSessionHeader(r, modelName)
 		case "prefix_hash":
 			k, s = stickyKeyFromPrefixHash(body, modelName, cfg.PrefixHashBytes)
+		case "first_user_message":
+			k, s = stickyKeyFromFirstTurn(body, modelName)
 		case "auth_header":
 			k, s = stickyKeyFromAuthHeader(r, modelName)
 		case "ip":
@@ -219,6 +224,56 @@ func stickyKeyFromPrefixHash(body []byte, modelName string, prefixBytes int) (st
 	h := fnv.New64a()
 	h.Write([]byte(raw[:limit]))
 	return strings.ReplaceAll(modelName, ":", "_") + ":" + uint64ToHex(h.Sum64()), "prefix_hash"
+}
+
+// stickyKeyFromFirstTurn hashes the first non-system turn of the conversation
+// (OpenAI chat "messages"; the raw "prompt" for completions-style bodies).
+//
+// Why this exists: prefix_hash keys the first prefix_hash_bytes bytes of the
+// messages array, which for agent clients is the shared system prompt. Every
+// conversation from one agent therefore produces the SAME key, so the whole
+// agent - hundreds of conversations - is pinned to one node while the sliding
+// TTL keeps refreshing on each hit, and the fleet migrates as a flock when the
+// entry finally dies. Measured 2026-10-19 on the live gateway: 10191 sticky
+// hits over 12 active sessions.
+//
+// The first user turn is unique per conversation and stable across every later
+// turn of it (chat-completions clients resend the history verbatim), so this
+// source pins one conversation to one node - the KV-warm reuse prefix_hash was
+// meant to provide, at conversation granularity instead of prompt-template
+// granularity. Requires the handler to have buffered past the system prompt:
+// see proxy.sticky_sessions.key_scan_bytes.
+func stickyKeyFromFirstTurn(body []byte, modelName string) (string, string) {
+	if len(body) == 0 {
+		return "", ""
+	}
+
+	var first string
+	if msgs := gjson.GetBytes(body, "messages"); msgs.IsArray() {
+		msgs.ForEach(func(_, turn gjson.Result) bool {
+			if turn.Get("role").String() == "system" {
+				return true
+			}
+			content := turn.Get("content").Raw
+			if content == "" || content == "null" {
+				return true
+			}
+			first = content
+			return false
+		})
+	}
+	if first == "" {
+		// Completions-style body (/v1/completions and passthroughs): the prompt
+		// itself is the conversation's opening turn.
+		first = gjson.GetBytes(body, "prompt").Raw
+	}
+	if first == "" {
+		return "", ""
+	}
+
+	h := fnv.New64a()
+	h.Write([]byte(first))
+	return "turn:" + strings.ReplaceAll(modelName, ":", "_") + ":" + uint64ToHex(h.Sum64()), "first_user_message"
 }
 
 // stickyKeyFromAuthHeader hashes the Authorization header value so that tokens
