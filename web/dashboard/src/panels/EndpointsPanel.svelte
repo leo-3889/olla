@@ -9,6 +9,8 @@
   import { fmtAgo, fmtMs, fmtPct, fmtUntil } from '../lib/format';
   import { bootstrap, DEFAULT_UI_CONFIG } from '../lib/stores/bootstrap.svelte';
   import { stableId } from '../lib/dom-id';
+  import EndpointTrend from '../components/EndpointTrend.svelte';
+  import { endpointHistory, envCurrent } from '../lib/stores/endpoint-history.svelte';
   import { getNow as liveNow } from '../lib/clock.svelte';
   import type { EndpointRuntimeMetrics, EndpointSummary } from '../lib/types';
 
@@ -110,6 +112,40 @@
 
   const initialSort: SortState = { key: 'priority', dir: 'desc' };
 
+  // --- trend chart selection ------------------------------------------------
+  // Clicking an endpoint's name selects it; the chart above the table plots
+  // the sampled generation/prefill rings for that row (identical envelope
+  // numbers to the cells - endpoint-history.svelte.ts). Default selection is
+  // the busiest endpoint, so the panel always shows a meaningful target.
+  // Selection follows row identity (id ?? url ?? name): it survives re-sort
+  // and polling; a departed endpoint falls back to the default.
+  let selectedKey = $state<string | null>(null);
+  const defaultKey = $derived.by(() => {
+    let best = '';
+    let bestReq = -1;
+    for (const r of rows) {
+      const rc = Number(r.request_count) || 0;
+      if (rc > bestReq) {
+        bestReq = rc;
+        best = rowId(r);
+      }
+    }
+    return best;
+  });
+  const activeKey = $derived(
+    selectedKey && rows.some((r) => rowId(r) === selectedKey) ? selectedKey : defaultKey,
+  );
+  const activeRow = $derived(rows.find((r) => rowId(r) === activeKey) ?? null);
+  const trendName = $derived(activeRow ? activeRow.name || activeRow.url || activeKey : '');
+  // Reading .version establishes the reactive dependency on the store's
+  // tick counter; the rings themselves live in a plain (non-reactive) Map.
+  const trendSamples = $derived(
+    endpointHistory.version >= 0 && activeKey ? endpointHistory.samplesFor(activeKey) : [],
+  );
+  function rowSelected(row: EndpointRow): string {
+    return rowId(row) === activeKey ? 'ep-selected' : '';
+  }
+
   // Svelte's keyed-each identity must be structurally unique. `row.id` is a
   // stable identifier the backend derives from the RAW (pre-sanitisation)
   // endpoint URL (see stableEndpointID in handler_status_endpoints.go) - it
@@ -145,13 +181,6 @@
 
   function envMetric(metrics: EndpointRuntimeMetrics | undefined, key: string) {
     return metrics?.metrics?.find((m) => m.key === key);
-  }
-
-  function envCurrent(metrics: EndpointRuntimeMetrics | undefined, key: string): number | null {
-    // A valid zero remains visible; only absent, invalid, or stale values are unavailable.
-    const value = envMetric(metrics, key)?.current;
-    if (metrics?.stale || typeof value !== "number" || !Number.isFinite(value)) return null;
-    return value;
   }
 
   function envPart(metrics: EndpointRuntimeMetrics | undefined, key: string, part: "avg" | "max"): number | null {
@@ -254,6 +283,9 @@
     class="panel-data"
     data-state={endpoints.status === 'error' || endpoints.status === 'stale' ? endpoints.status : null}
   >
+  {#if !loading && activeRow}
+    <EndpointTrend samples={trendSamples} name={trendName} />
+  {/if}
   {#if loading}
     <div class="table-scroll"><div class="table-loading">loading…</div>
       {#each Array(6) as _, i}<div class="skeleton row-skel" style="margin:6px 10px"></div>{/each}
@@ -265,14 +297,21 @@
       {initialSort}
       {rowId}
       {rowDomId}
+      rowClass={rowSelected}
     >
       {#snippet rowSnippet({ row: e, cellClass })}
         <td class="col-sticky">
           <div class="endpoint-cell">
-            <span class="ep-name">
+            <button
+              class="ep-name ep-select"
+              type="button"
+              aria-pressed={rowId(e) === activeKey}
+              title="Show generation/prefill trend for {e.name}"
+              onclick={() => (selectedKey = rowId(e))}
+            >
               <StatusTag status={e.status} />
               <span class="name-text" title={e.name}>{e.name}</span>
-            </span>
+            </button>
           </div>
         </td>
         <td>{e.type}</td>

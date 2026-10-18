@@ -512,6 +512,34 @@ tbody tr:hover .col-sticky {
   background: var(--bg-inset);
 }
 
+/* SELECTED endpoint row: the persistent sibling of ep-flash above. Same
+   tint + inset accent bar language; the name cell is a real <button>
+   (keyboard + screen-reader accessible selection), so the row itself
+   carries no click handler. */
+tbody tr.ep-selected td {
+  background-color: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+tbody tr.ep-selected .col-sticky {
+  background: var(--accent-soft);
+}
+.endpoint-cell button.ep-name {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  min-width: 0;
+}
+.endpoint-cell button.ep-name:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 .endpoint-cell {
   display: flex;
   flex-direction: column;

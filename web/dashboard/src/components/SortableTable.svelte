@@ -74,6 +74,9 @@
         >
       | null;
     showScrollHint?: boolean;
+    /** Optional per-row class (e.g. selection highlight owned by the
+     *  panel). Presentation only - the table never interprets it. */
+    rowClass?: (row: Row) => string;
   }
 
   let {
@@ -85,6 +88,7 @@
     rowSnippet = null,
     groupSnippet = null,
     showScrollHint = true,
+    rowClass = (_row: Row): string => '',
   }: Props = $props();
 
   // Initial sort seeds local state once; later prop changes are deliberately
@@ -217,7 +221,11 @@
         {@render groupSnippet({ rows: sorted, sort, sortRows, cellClass })}
       {:else}
         {#each uniqueKeyed as kr, i (kr.key)}
-          <tr id={rowDomId ? rowDomId(kr.row, i) : undefined} tabindex={rowDomId ? -1 : undefined}>
+          <tr
+            id={rowDomId ? rowDomId(kr.row, i) : undefined}
+            tabindex={rowDomId ? -1 : undefined}
+            class={rowClass(kr.row) || undefined}
+          >
             {@render rowSnippet?.({ row: kr.row, cellClass })}
           </tr>
         {/each}
