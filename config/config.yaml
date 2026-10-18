@@ -72,15 +72,33 @@ proxy:
   # Routes repeat turns in a conversation to the same backend, maximising KV-cache
   # hit rates for long multi-turn sessions at the cost of reduced load distribution.
   sticky_sessions:
-    enabled: false              # opt-in: route same-prefix conversations to same backend
+    enabled: false              # opt-in: route each conversation to the backend that started it
     idle_ttl_seconds: 600       # 10-min sliding window (refreshed on each matched request)
     max_sessions: 10000         # LRU evicts oldest sessions when full
-    key_sources:                # tried in order; first match wins
+    key_sources:                # tried in order; first match wins. Unknown names are a
+                                # startup error (they used to be skipped silently, so a
+                                # typo quietly deleted one layer of the cascade).
       - "session_header"        # X-Olla-Session-ID header (explicit client opt-in)
-      - "prefix_hash"           # 64-bit FNV-1a hash of first N bytes of messages JSON (best cache locality)
+      - "first_user_message"    # FNV-1a hash of the first non-system turn: keys ONE
+                                # conversation, stable across its later turns. Ordered
+                                # ahead of prefix_hash on purpose - see the note below.
+      - "prefix_hash"           # FNV-1a hash of first prefix_hash_bytes of messages JSON;
+                                # fallback for bodies with no user turn (system-only probes,
+                                # and it is the only source for shared-prefix affinity)
       - "auth_header"           # Authorization header hash (per-user affinity)
       # - "ip"                  # client IP (opt-in; unreliable behind NAT/Docker)
     prefix_hash_bytes: 512      # how many leading bytes of the messages field to hash
+    key_scan_bytes: 65536       # leading body bytes buffered to compute a key. The handler
+                                # reads max(prefix_hash_bytes, key_scan_bytes) and restores
+                                # the body. first_user_message needs this: an agent's system
+                                # prompt is tens of KB, so with a 512-byte read it would
+                                # never reach the user turn and contribute nothing.
+    # Why first_user_message beats prefix_hash for agent traffic: prefix_hash keys the
+    # opening bytes of the messages array, which is the SHARED system prompt, so every
+    # conversation from one agent produces the same key and the whole agent lands on one
+    # node for as long as the sliding TTL keeps refreshing. The first user turn is unique
+    # per conversation and resent verbatim on every later turn, so it pins exactly one
+    # conversation - the unit KV-cache affinity is worth having.
 
   # DEPRECATED as of v0.0.16 - These fields are no longer used
   # max_retries: 3        # Replaced by retry.max_attempts

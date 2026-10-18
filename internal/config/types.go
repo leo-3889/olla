@@ -227,14 +227,63 @@ type ServerRateLimits struct {
 // and routes subsequent turns to the same backend, maximising KV-cache reuse.
 type StickySessionConfig struct {
 	// KeySources lists the ordered cascade of strategies used to identify a conversation.
-	// The first match wins: session_header, prefix_hash, auth_header, ip.
+	// The first match wins: session_header, first_user_message, prefix_hash,
+	// auth_header, ip. Unknown names are rejected at startup (see Validate) -
+	// they used to be skipped silently, so a typo quietly removed one layer of
+	// the cascade.
 	KeySources     []string `yaml:"key_sources"`
 	MaxSessions    uint64   `yaml:"max_sessions"`
 	IdleTTLSeconds int      `yaml:"idle_ttl_seconds"`
 	// PrefixHashBytes is how many leading bytes of the messages field to hash.
 	// Larger values increase hash uniqueness at the cost of slightly more CPU per request.
-	PrefixHashBytes int  `yaml:"prefix_hash_bytes"`
-	Enabled         bool `yaml:"enabled"`
+	PrefixHashBytes int `yaml:"prefix_hash_bytes"`
+	// KeyScanBytes is how many leading bytes of the request body the handler
+	// buffers before computing a key. It only matters for sources that look
+	// past the opening of the messages array: an agent's system prompt is
+	// typically tens of kilobytes, so first_user_message needs a budget well
+	// above prefix_hash_bytes or it never reaches the user turn and
+	// contributes nothing. The handler reads max(prefix_hash_bytes,
+	// key_scan_bytes) and restores the body, so this is a per-request copy of
+	// at most this many bytes.
+	KeyScanBytes int  `yaml:"key_scan_bytes"`
+	Enabled      bool `yaml:"enabled"`
+}
+
+// stickyKeySourceNames are the key_sources values balancer.ComputeStickyKey
+// implements. Keep in sync with the switch in
+// internal/adapter/balancer/sticky.go.
+var stickyKeySourceNames = []string{"session_header", "first_user_message", "prefix_hash", "auth_header", "ip"}
+
+// Validate rejects a key_sources entry that no affinity source implements.
+// Request-time behaviour for an unknown name is to skip it silently, which
+// removes that layer of the cascade without any operator-visible signal; the
+// only one that was ever plausible in the field (a misspelled session_header)
+// therefore looked like "sticky sessions do not work". Cheap enough to run at
+// startup only, so it is checked when the feature is enabled.
+func (s StickySessionConfig) Validate() error {
+	if !s.Enabled {
+		return nil
+	}
+
+	known := make(map[string]struct{}, len(stickyKeySourceNames))
+	for _, name := range stickyKeySourceNames {
+		known[name] = struct{}{}
+	}
+
+	for _, src := range s.KeySources {
+		if _, ok := known[src]; !ok {
+			return fmt.Errorf("key_sources: unknown source %q (valid: %s)", src, strings.Join(stickyKeySourceNames, ", "))
+		}
+	}
+
+	if s.KeyScanBytes < 0 {
+		return errors.New("key_scan_bytes must be >= 0")
+	}
+	if s.PrefixHashBytes < 0 {
+		return errors.New("prefix_hash_bytes must be >= 0")
+	}
+
+	return nil
 }
 
 // ProxyConfig holds proxy-specific configuration

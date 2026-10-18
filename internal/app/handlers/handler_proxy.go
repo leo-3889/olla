@@ -247,7 +247,14 @@ func (a *Application) injectStickyKey(ctx context.Context, r *http.Request, mode
 	// that length without allocating an oversized buffer.
 	var bodySnap []byte
 	if r.Body != nil && r.ContentLength != 0 {
+		// Budget covers every body-reading source, not just prefix_hash:
+		// first_user_message has to get past the (often tens of KB) system
+		// prompt before it reaches the turn it keys on, so the snapshot has to
+		// be as large as the largest source needs.
 		limit := cfg.PrefixHashBytes
+		if cfg.KeyScanBytes > limit {
+			limit = cfg.KeyScanBytes
+		}
 		if limit <= 0 {
 			limit = 512
 		}
