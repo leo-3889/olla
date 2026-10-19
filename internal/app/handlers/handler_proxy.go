@@ -246,6 +246,7 @@ func (a *Application) injectStickyKey(ctx context.Context, r *http.Request, mode
 	// We cap at cfg.PrefixHashBytes+1 to handle the case where the body is exactly
 	// that length without allocating an oversized buffer.
 	var bodySnap []byte
+	var bodyTruncated bool
 	if r.Body != nil && r.ContentLength != 0 {
 		// Budget covers every body-reading source, not just prefix_hash:
 		// first_user_message has to get past the (often tens of KB) system
@@ -259,6 +260,10 @@ func (a *Application) injectStickyKey(ctx context.Context, r *http.Request, mode
 			limit = 512
 		}
 		snap, readErr := io.ReadAll(io.LimitReader(r.Body, int64(limit)+1))
+		// len(snap) > limit means bytes exist BEYOND the scan budget: the
+		// snapshot cannot contain the whole conversation, so body-scanning key
+		// sources are untrustworthy (see balancer.ComputeStickyKey).
+		bodyTruncated = len(snap) > limit
 		// Restore any bytes already consumed, even on partial-read error, so the
 		// downstream proxy always sees a complete body.
 		if len(snap) > 0 {
@@ -269,16 +274,16 @@ func (a *Application) injectStickyKey(ctx context.Context, r *http.Request, mode
 		}
 	}
 
-	return a.injectStickyKeyWithBody(ctx, r, modelName, bodySnap)
+	return a.injectStickyKeyWithBody(ctx, r, modelName, bodySnap, bodyTruncated)
 }
 
 // injectStickyKeyWithBody is the core sticky key injection path when the body has
 // already been buffered by the caller (e.g. the translation handler reads the full
 // body to extract the model name before we reach this point). Passing the bytes in
 // avoids a second read/restore cycle on the same reader.
-func (a *Application) injectStickyKeyWithBody(ctx context.Context, r *http.Request, modelName string, body []byte) (context.Context, *http.Request, *balancer.StickyOutcome) {
+func (a *Application) injectStickyKeyWithBody(ctx context.Context, r *http.Request, modelName string, body []byte, bodyTruncated bool) (context.Context, *http.Request, *balancer.StickyOutcome) {
 	cfg := a.Config.Proxy.StickySessions
-	stickyKey, stickySource := balancer.ComputeStickyKey(r, modelName, cfg, body)
+	stickyKey, stickySource := balancer.ComputeStickyKey(r, modelName, cfg, body, bodyTruncated)
 
 	outcome := &balancer.StickyOutcome{}
 	ctx = context.WithValue(ctx, constants.ContextStickyKeyKey, stickyKey)

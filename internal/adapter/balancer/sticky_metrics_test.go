@@ -57,7 +57,7 @@ func TestComputeStickyKey_PrefixHash_PromptFallback(t *testing.T) {
 		KeySources:      []string{"prefix_hash"},
 		PrefixHashBytes: 512,
 	}
-	key, source := ComputeStickyKey(req, "llama3", cfg, body)
+	key, source := ComputeStickyKey(req, "llama3", cfg, body, false)
 
 	assert.Equal(t, "prefix_hash", source, "prompt-only body must still resolve via prefix_hash")
 	assert.NotEmpty(t, key, "prompt fallback must produce a non-empty key")
@@ -77,8 +77,8 @@ func TestComputeStickyKey_PrefixHash_PreferMessagesOverPrompt(t *testing.T) {
 	chatBody := []byte(`{"messages":[{"role":"user","content":"hi"}]}`)
 	mixedBody := []byte(`{"messages":[{"role":"user","content":"hi"}],"prompt":"different content"}`)
 
-	keyChat, _ := ComputeStickyKey(&http.Request{}, "m", cfg, chatBody)
-	keyMixed, _ := ComputeStickyKey(&http.Request{}, "m", cfg, mixedBody)
+	keyChat, _ := ComputeStickyKey(&http.Request{}, "m", cfg, chatBody, false)
+	keyMixed, _ := ComputeStickyKey(&http.Request{}, "m", cfg, mixedBody, false)
 
 	assert.Equal(t, keyChat, keyMixed, "messages must take precedence over prompt when both exist")
 }
@@ -102,8 +102,8 @@ func TestComputeStickyKey_SessionHeader_EmptyModel(t *testing.T) {
 	req2, _ := http.NewRequest(http.MethodPost, "/", nil)
 	req2.Header.Set(constants.HeaderXOllaSessionID, "session-B")
 
-	keyA, sourceA := ComputeStickyKey(req1, "", cfg, nil)
-	keyB, sourceB := ComputeStickyKey(req2, "", cfg, nil)
+	keyA, sourceA := ComputeStickyKey(req1, "", cfg, nil, false)
+	keyB, sourceB := ComputeStickyKey(req2, "", cfg, nil, false)
 
 	assert.Equal(t, "session_header", sourceA)
 	assert.Equal(t, "session_header", sourceB)
@@ -127,7 +127,7 @@ func TestComputeStickyKey_PrefixHash_EmptyMessagesArray(t *testing.T) {
 		KeySources:      []string{"prefix_hash"},
 		PrefixHashBytes: 512,
 	}
-	key, source := ComputeStickyKey(req, "llama3", cfg, body)
+	key, source := ComputeStickyKey(req, "llama3", cfg, body, false)
 
 	assert.Equal(t, "prefix_hash", source, "empty messages array must fall back to prompt via prefix_hash")
 	assert.NotEmpty(t, key, "prompt fallback must produce a non-empty key when messages is []")
@@ -152,7 +152,7 @@ func TestStickySessionWrapper_EmptyModel_RoutesAndPins(t *testing.T) {
 
 	req, _ := http.NewRequest(http.MethodPost, "/", nil)
 	req.Header.Set(constants.HeaderXOllaSessionID, "llamaswap-session")
-	key, source := ComputeStickyKey(req, "", cfg, nil)
+	key, source := ComputeStickyKey(req, "", cfg, nil, false)
 	require.NotEmpty(t, key, "issue #139: empty model + session header must still yield a key")
 
 	ctx1, out1 := injectKey(context.Background(), key, source)

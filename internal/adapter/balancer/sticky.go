@@ -215,19 +215,48 @@ func (s *StickySessionWrapper) PurgeDeadEndpoints(routable []*domain.Endpoint) {
 //
 // Returns ("", "") when no source produces a usable key.
 // Exported so handlers can compute the key before invoking the balancer.
-func ComputeStickyKey(r *http.Request, modelName string, cfg config.StickySessionConfig, body []byte) (key, source string) {
+//
+// bodyTruncated reports that `body` is a scan SNAPSHOT cut short by
+// proxy.sticky_sessions.key_scan_bytes, i.e. the conversation's first turn is
+// not present. In that state the body-scanning sources are worse than useless:
+// first_user_message yields nothing, and prefix_hash falls back to hashing the
+// shared system-prompt prefix - the exact whole-agent flock this source was
+// built to replace. Both are skipped, and the cascade then STOPS: the
+// identity-wide sources (auth_header hashes the shared Authorization value, ip
+// the shared client address) would pin every conversation of one credential to
+// one node, silently and far coarser than prefix_hash. Returning no_key keeps
+// the request routable (bypass: plain balancer selection) and visible in the
+// sticky_source=no_key counter, which is how an operator learns the scan budget
+// is too small.
+func ComputeStickyKey(r *http.Request, modelName string, cfg config.StickySessionConfig, body []byte, bodyTruncated bool) (key, source string) {
+	bodyScanTruncated := false
+
 	for _, src := range cfg.KeySources {
 		var k, s string
 		switch src {
 		case "session_header":
 			k, s = stickyKeyFromSessionHeader(r, modelName)
 		case "prefix_hash":
+			if bodyTruncated {
+				bodyScanTruncated = true
+				continue
+			}
 			k, s = stickyKeyFromPrefixHash(body, modelName, cfg.PrefixHashBytes)
 		case "first_user_message":
+			if bodyTruncated {
+				bodyScanTruncated = true
+				continue
+			}
 			k, s = stickyKeyFromFirstTurn(body, modelName)
 		case "auth_header":
+			if bodyScanTruncated {
+				continue
+			}
 			k, s = stickyKeyFromAuthHeader(r, modelName)
 		case "ip":
+			if bodyScanTruncated {
+				continue
+			}
 			k, s = stickyKeyFromIP(r, modelName)
 		}
 		if k != "" {
