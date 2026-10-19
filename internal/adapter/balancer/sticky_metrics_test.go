@@ -205,3 +205,22 @@ func TestStickySessionWrapper_Stats_ReportsOutcomesAndPerEndpointSessions(t *tes
 	assert.Equal(t, uint64(1), stats.Sources["none"])
 	assert.Equal(t, 1, stats.SessionsByEndpoint[chosen.URLString], "the pinned node must own the live session")
 }
+
+// The sticky counters are the acceptance probe for pin persistence (F1) and
+// load-aware steering (F4). An inner selector error returned before
+// recordOutcome, so balancer-side failures - selector errors, an empty
+// routable tier during a full outage - were invisible in Results, making a
+// fleet that never reached an endpoint look identical to one that never got a
+// request.
+func TestStickySessionWrapper_InnerSelectErrorRecordsOutcome(t *testing.T) {
+	t.Parallel()
+
+	w := makeWrapper(t, defaultStickyConfig())
+	ctx, out := injectKey(context.Background(), "sess-inner-err:m", "session_header")
+
+	_, err := w.Select(ctx, nil) // no candidates: the inner selector must fail
+	require.Error(t, err)
+
+	assert.Equal(t, "miss", out.Result, "a balancer-side failure must be recorded, not swallowed")
+	assert.Equal(t, uint64(1), w.Stats().Results["miss"])
+}
