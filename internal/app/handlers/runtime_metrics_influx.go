@@ -17,19 +17,16 @@ import (
 // budget and the ETag semantics are tuned to it.
 const influxMetricsInterval = 10 * time.Second
 
-// influxLastRange bounds the last-value probe. It MUST stay >= the load
-// reader's freshness gate (loadReaderMaxSampleAge = 90s) with margin: a last()
-// window narrower than the gate can drop a whole endpoint state (no rows in
-// range) while the 1m-window queries still have data, so an exporter gap
-// deleted the runtime keys between 5 and 11 minutes instead of serving them
-// with the stale flag. The envelope's own staleness gate (stale_after, 60s in
-// production) decides what is "fresh"; this bound only decides what still
-// EXISTS, and it now matches influxWindowRange.
-const influxLastRange = "-11m"
-
-// influxWindowRange bounds the avg/max window queries (1m windows over the
-// same reporting window the sampler uses, plus headroom for the window).
-const influxWindowRange = "-11m"
+// influxQueryRange bounds EVERY runtime query - the last-value probe and the
+// 1m-window aggregates share one window on purpose. The bound MUST stay >=
+// the load reader's freshness gate (loadReaderMaxSampleAge = 90s) with
+// margin: a last() window narrower than the gate dropped whole endpoint
+// states (no rows in range) while the window queries still had data, so an
+// exporter gap deleted the runtime keys between 5 and 11 minutes instead of
+// serving them with the stale flag. The envelope's own staleness gate
+// (stale_after, 60s in production) decides what is "fresh"; this bound only
+// decides what still EXISTS.
+const influxQueryRange = "-11m"
 
 // influxFieldQueueDepth is the llm_runtime field carrying the engine queue
 // depth - the signal load-aware Busy grading steers on, so its freshness is
@@ -45,13 +42,13 @@ type fluxQuerier interface {
 type influxEndpointState struct {
 	newest         time.Time
 	availableSince time.Time
-	metrics        []RuntimeMetric
 	// queueAt is lastAt["queue_depth"] captured at assembly: the queue
 	// gauge's OWN sample time. newest is the freshest point of ANY field, and
 	// on a live engine the throughput fields update every scrape while
 	// queue_depth moves only when the queue moves - gating on newest judged a
 	// days-old queue reading as fresh.
 	queueAt time.Time
+	metrics []RuntimeMetric
 }
 
 // influxMetricsProvider reads engine runtime metrics from the ollametrics
@@ -179,17 +176,17 @@ func (p *influxMetricsProvider) refresh(ctx context.Context) {
 	}
 	set := fluxStringSet(names)
 
-	lastRows, err := query(influxBase(p.bucket, influxLastRange, set) + "|> last()")
-	gaugeMean, errMean := query(influxBase(p.bucket, influxWindowRange, set) + influxFieldFilter("decode_tokens_per_second", "prefill_tokens_per_second", "prefix_cache_hit_ratio", "kv_cache_usage_ratio", "draft_acceptance_ratio") + "|> aggregateWindow(every:1m, fn:mean, createEmpty:false)")
-	counterMean, errCounter := query(influxBase(p.bucket, influxWindowRange, set) + influxFieldFilter("generation_tokens_total", "prompt_tokens_total") + "|> derivative(unit:1s, nonNegative:true) |> aggregateWindow(every:1m, fn:mean, createEmpty:false)")
-	counterMax, errCounterMax := query(influxBase(p.bucket, influxWindowRange, set) + influxFieldFilter("generation_tokens_total", "prompt_tokens_total") + "|> derivative(unit:1s, nonNegative:true) |> aggregateWindow(every:1m, fn:max, createEmpty:false)")
+	lastRows, err := query(influxBase(p.bucket, set) + "|> last()")
+	gaugeMean, errMean := query(influxBase(p.bucket, set) + influxFieldFilter("decode_tokens_per_second", "prefill_tokens_per_second", "prefix_cache_hit_ratio", "kv_cache_usage_ratio", "draft_acceptance_ratio") + "|> aggregateWindow(every:1m, fn:mean, createEmpty:false)")
+	counterMean, errCounter := query(influxBase(p.bucket, set) + influxFieldFilter("generation_tokens_total", "prompt_tokens_total") + "|> derivative(unit:1s, nonNegative:true) |> aggregateWindow(every:1m, fn:mean, createEmpty:false)")
+	counterMax, errCounterMax := query(influxBase(p.bucket, set) + influxFieldFilter("generation_tokens_total", "prompt_tokens_total") + "|> derivative(unit:1s, nonNegative:true) |> aggregateWindow(every:1m, fn:max, createEmpty:false)")
 	if err != nil && errMean != nil && errCounter != nil && errCounterMax != nil {
 		if p.logger != nil {
 			p.logger.Warn("metrics_source influx: all runtime queries failed; keeping previous samples", "error", err.Error())
 		}
 		return
 	}
-	gaugeMax, errGaugeMax := query(influxBase(p.bucket, influxWindowRange, set) + influxFieldFilter("decode_tokens_per_second", "prefill_tokens_per_second", "prefix_cache_hit_ratio", "kv_cache_usage_ratio", "draft_acceptance_ratio") + "|> aggregateWindow(every:1m, fn:max, createEmpty:false)")
+	gaugeMax, errGaugeMax := query(influxBase(p.bucket, set) + influxFieldFilter("decode_tokens_per_second", "prefill_tokens_per_second", "prefix_cache_hit_ratio", "kv_cache_usage_ratio", "draft_acceptance_ratio") + "|> aggregateWindow(every:1m, fn:max, createEmpty:false)")
 	p.noteLeg("last", err)
 	p.noteLeg("gaugeMean", errMean)
 	p.noteLeg("gaugeMax", errGaugeMax)
@@ -543,8 +540,8 @@ func (s *influxSeries) throughputSemantics(gaugeField string) (string, string) {
 	return "", runtimeMetricNoteInfluxCounter
 }
 
-func influxBase(bucket, rng, set string) string {
-	return fmt.Sprintf(`from(bucket:%q) |> range(start:%s) |> filter(fn:(r)=>r._measurement=="llm_runtime") |> filter(fn:(r)=>contains(set:[%s], value:r.endpoint))`, bucket, rng, set)
+func influxBase(bucket, set string) string {
+	return fmt.Sprintf(`from(bucket:%q) |> range(start:%s) |> filter(fn:(r)=>r._measurement=="llm_runtime") |> filter(fn:(r)=>contains(set:[%s], value:r.endpoint))`, bucket, influxQueryRange, set)
 }
 
 func influxFieldFilter(fields ...string) string {
