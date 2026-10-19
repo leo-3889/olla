@@ -354,14 +354,15 @@ func (o *observeCollector) collect(ctx context.Context) (*ObservePayload, error)
 	costPeriods := []struct {
 		period string
 		into   map[string]*observeCostEntry
-		// window bounds the scan: hourly rollups accumulate 24 rows/day per
-		// endpoint, so scanning 8d of them (2.7s influx wall measured live)
-		// to find the newest period is pure waste - one hour period is
-		// open at a time and the liveness anchor below rejects anything
-		// older than 2h. -26h (not 2h) leaves a day of slack so a late
-		// writer cannot drop the live period at the window edge; ghosts
-		// inside the slack are killed by the anchor, never rendered. Day periods live on the -8d window (7 days of
-		// rows are legitimate comparators for the newest-period rule).
+		// window bounds the scan. A period start can never be older than
+		// its horizon (one hour period is open at a time; the AEST day
+		// starts 22:00Z-23:59Z, so a live day period started <=26h ago),
+		// and the liveness anchor below rejects anything past its maxAge -
+		// so -26h/-30h fetch everything renderable plus slack for a late
+		// writer, and nothing else. The windows used to be -8d: 2.7s of
+		// measured influx wall per TTL rebuild spent scanning rows the
+		// anchor always drops. Ghosts inside the slack are dropped too,
+		// never rendered.
 		window string
 		// maxAge anchors the newest-period rule to wall-clock: when EVERY
 		// endpoint is retired, "newest" is a frozen period start and the
@@ -371,7 +372,7 @@ func (o *observeCollector) collect(ctx context.Context) (*ObservePayload, error)
 		// midnight (= 22:00Z), so a UTC floor(now) would drop valid day
 		// rows; 2h/26h tolerate any offset a period can start with.
 		maxAge time.Duration
-	}{{"hour", payload.Cost.Hour, "-26h", 2 * time.Hour}, {"day", payload.Cost.Day, "-8d", 26 * time.Hour}}
+	}{{"hour", payload.Cost.Hour, "-26h", 2 * time.Hour}, {"day", payload.Cost.Day, "-30h", 26 * time.Hour}}
 	for _, cp := range costPeriods {
 		queries++
 		// _time of a cost rollup is the PERIOD START, so the window must

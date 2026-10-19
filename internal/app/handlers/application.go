@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/thushan/olla/internal/adapter/balancer"
@@ -134,6 +135,12 @@ type Application struct {
 	server    *http.Server
 	errCh     chan error
 	StartTime time.Time
+	// capabilityWarned suppresses repeated "No models found with required
+	// capabilities" warnings. The strict pre-filter verdict is a static
+	// property of registry metadata, so per-request repeats are pure noise
+	// (239 WARN/30min measured on the live fleet 2026-10-16). First
+	// occurrence per model+capabilities key logs; later ones are silent.
+	capabilityWarned sync.Map
 }
 
 // NewApplication creates a new Application instance with all required dependencies

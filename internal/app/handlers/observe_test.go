@@ -322,7 +322,7 @@ func TestObserveCostWindowPerPeriod(t *testing.T) {
 	require.NotEmpty(t, hour)
 	require.NotEmpty(t, day)
 	assert.Contains(t, hour, "range(start:-26h)", "hourly rollups must not scan 8d")
-	assert.Contains(t, day, "range(start:-8d)", "day needs the multi-day window for the newest-period rule")
+	assert.Contains(t, day, "range(start:-30h)", "a live day period started <=26h ago (AEST 22:00Z boundary); -30h is the full renderable horizon + writer slack - the newest-period rule never renders 7-day-old rows")
 }
 
 func TestObserveCostWallClockAnchor(t *testing.T) {
