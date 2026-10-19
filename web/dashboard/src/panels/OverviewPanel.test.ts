@@ -636,3 +636,41 @@ describe('observe banner isolation from panel dim', () => {
     bootstrap.config = DEFAULT_UI_CONFIG;
   });
 });
+
+describe('degraded observe with no payload', () => {
+  // Audit P1 (2026-10-17): the first-ever 503 (fresh page load during an
+  // influx outage) left the poll-store data null, and every section - plus
+  // the observe banner carrying the retry affordance - was gated on
+  // observeData. Result: a blank page with no explanation and no retry.
+  // Degraded MUST render the section shells and the banner with no data.
+  it('renders section shells and the retry banner when the FIRST observe fetch fails', async () => {
+    bootstrap.config = {
+      ...DEFAULT_UI_CONFIG,
+      metrics_source: 'influx',
+      sections: DEFAULT_UI_CONFIG.sections.map((s) => (s.id === 'power' || s.id === 'cost' || s.id === 'gpu' ? { ...s, enabled: true, reason: undefined } : s)),
+    };
+    const observe = createPollStore<ObserveResponse>({ name: 'observe-test-p1', url: '/internal/ui/observe.json', intervalMs: 60000 });
+    bootstrap.observe = observe;
+    global.fetch = vi.fn(async () => ({ status: 503, ok: false, headers: { get: () => null } }));
+    observe.refresh();
+    await vi.waitFor(() => expect(observe.status).toBe('error'));
+    expect(observe.hasData).toBe(false);
+
+    component = mount(OverviewPanel, { target: document.body });
+    flushSync();
+
+    const panel = document.getElementById('panel-overview')!;
+    expect(panel.textContent).toContain('Power');
+    expect(panel.textContent).toContain('Cost');
+    expect(panel.textContent).toContain('GPUs');
+    const shells = [...panel.querySelectorAll('.observe-empty')].filter((el) => el.textContent?.includes('no data yet'));
+    expect(shells.length).toBe(3);
+    expect(panel.textContent).toContain('source error');
+    const banners = [...panel.querySelectorAll('.banner')];
+    expect(banners.length).toBeGreaterThan(0);
+
+    observe.stop();
+    bootstrap.observe = null;
+    bootstrap.config = DEFAULT_UI_CONFIG;
+  });
+});

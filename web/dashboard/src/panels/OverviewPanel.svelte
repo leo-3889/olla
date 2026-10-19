@@ -35,6 +35,9 @@
   // "error" is not "stale": the sections keep their last good numbers, and
   // the operator must be able to tell a slow source from a dead one.
   const observeStatusLabel = $derived(bootstrap.observe?.status === 'error' ? 'source error' : 'stale');
+  const anyObserveSection = $derived(
+    bootstrap.sectionEnabled('power') || bootstrap.sectionEnabled('cost') || bootstrap.sectionEnabled('gpu'),
+  );
   function maxAgeS(values: Array<number | null | undefined>): number | null {
     const ages = values.filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
     return ages.length > 0 ? Math.max(...ages) : null;
@@ -337,15 +340,27 @@
     </div>
   {/if}
 
-  {#if observeData && (bootstrap.sectionEnabled('power') || bootstrap.sectionEnabled('cost') || bootstrap.sectionEnabled('gpu'))}
+  {#if anyObserveSection && (observeData || observeDegraded)}
     {#if bootstrap.sectionEnabled('power')}
-      <ObservePower rows={observeData.power} ageS={maxAgeS(observeData.power.map((r) => r.age_s))} degraded={observeDegraded} statusLabel={observeStatusLabel} />
+      {#if observeData}
+        <ObservePower rows={observeData.power} ageS={maxAgeS(observeData.power.map((r) => r.age_s))} degraded={observeDegraded} statusLabel={observeStatusLabel} />
+      {:else}
+        <div class="section"><div class="section-head"><h2>Power</h2><span class="section-note observe-src stale">ollametrics · {observeStatusLabel}</span></div><p class="observe-empty">no data yet</p></div>
+      {/if}
     {/if}
     {#if bootstrap.sectionEnabled('cost')}
-      <ObserveCost cost={observeData.cost} degraded={observeDegraded} statusLabel={observeStatusLabel} />
+      {#if observeData}
+        <ObserveCost cost={observeData.cost} degraded={observeDegraded} statusLabel={observeStatusLabel} />
+      {:else}
+        <div class="section"><div class="section-head"><h2>Cost</h2><span class="section-note observe-src stale">ollametrics · {observeStatusLabel}</span></div><p class="observe-empty">no data yet</p></div>
+      {/if}
     {/if}
     {#if bootstrap.sectionEnabled('gpu')}
-      <ObserveGpu gpus={observeData.gpus} absent={observeData.gpus_absent ?? []} ageS={maxAgeS(observeData.gpus.map((r) => r.age_s))} degraded={observeDegraded} statusLabel={observeStatusLabel} />
+      {#if observeData}
+        <ObserveGpu gpus={observeData.gpus} absent={observeData.gpus_absent ?? []} ageS={maxAgeS(observeData.gpus.map((r) => r.age_s))} degraded={observeDegraded} statusLabel={observeStatusLabel} />
+      {:else}
+        <div class="section"><div class="section-head"><h2>GPUs</h2><span class="section-note observe-src stale">ollametrics · {observeStatusLabel}</span></div><p class="observe-empty">no data yet</p></div>
+      {/if}
     {/if}
   {/if}
   </div>
@@ -353,7 +368,7 @@
   <!-- Outside the .panel-data wrapper on purpose (same invariant as the
        overview banner above): a correlated outage (overview stale AND
        observe degraded) must not dim this banner's retry affordance. -->
-  {#if observeData && observeDegraded && (bootstrap.sectionEnabled('power') || bootstrap.sectionEnabled('cost') || bootstrap.sectionEnabled('gpu'))}
+  {#if anyObserveSection && observeDegraded}
     <StatusBanner store={bootstrap.observe!} />
   {/if}
 </div>

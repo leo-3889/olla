@@ -64,3 +64,28 @@ describe('ObserveCost freshness and emptiness', () => {
     expect(document.querySelector('.observe-empty')?.textContent).toContain('no cost rollups');
   });
 });
+
+describe('ObserveCost period failures (audit P2a)', () => {
+  it('reads "cost query failed" - never "no rollups yet" - when a period query failed', () => {
+    component = mount(ObserveCost, {
+      target: document.body,
+      props: { cost: { currency: 'EUR', hour: {}, day: {}, errors: ['hour'] }, degraded: true, statusLabel: 'source error' },
+    });
+    flushSync();
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('cost query failed (hour)');
+    expect(text).toContain('cost query failed: hour');
+    expect(text).not.toContain('no cost rollups in the queried window yet');
+  });
+
+  it('keeps a real space between the age stamp and the dropped disclosure', () => {
+    component = mount(ObserveCost, {
+      target: document.body,
+      props: { cost: { currency: 'EUR', hour: {}, day: {}, dropped: ['ghost-b'] }, degraded: false, statusLabel: 'stale', ageS: 12 },
+    });
+    flushSync();
+    // Svelte trims whitespace-only text adjacent to block tags; the note
+    // must render '... · no current rollup: ...', not 'old· no'.
+    expect(document.body.textContent).toMatch(/ · no current rollup: ghost-b/);
+  });
+});

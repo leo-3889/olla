@@ -225,6 +225,9 @@ export interface ObserveCostEntry {
 export interface ObserveCost {
   /** endpoints whose rollup was rejected by the liveness rules (went dark) */
   dropped?: string[];
+  /** cost periods whose Flux query FAILED this cycle ("hour", "day") -
+   *  a failed period must read as an outage, not as "no rollups yet" */
+  errors?: string[];
   currency: string;
   hour: Record<string, ObserveCostEntry>;
   day: Record<string, ObserveCostEntry>;
