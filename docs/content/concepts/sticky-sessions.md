@@ -70,6 +70,10 @@ The default configuration enables `session_header`, `first_user_message`, `prefi
 
 Names are validated at startup when the feature is enabled: an unrecognised entry is a boot error. It used to be skipped silently at request time, which meant a typo quietly deleted one layer of the cascade and looked like "sticky sessions do not work".
 
+### Multipart uploads (audio)
+
+The body-derived sources fingerprint a JSON body. OpenAI audio transcription requests are `multipart/form-data` - an audio file plus form fields - so there is no JSON body to fingerprint and every body-derived source declines the request. A transcription upload that sends no `session_header` is therefore reported as `sticky_source: no_key` with key source `none`. This is by design, not a sticky failure: each voice model is served by exactly one endpoint, so there is no fan-out for a pin to prevent and no multi-turn KV-cache state to preserve across turns. Routing such uploads is the inspector's job - it reads the `model` form field to select the endpoint - and the `no_key` counter honestly records that the cascade ran and legitimately had nothing to key on.
+
 ### Conversation-level vs template-level affinity
 
 The two body-derived sources key at different granularities, and the difference decides where load lands.

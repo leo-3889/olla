@@ -218,7 +218,7 @@ curl -X GET 'http://localhost:40114/olla/models?include_unavailable=true'
 | `models[].name` | string | Model display name |
 | `models[].provider` | string | Provider type (ollama/lmstudio/openai/vllm) |
 | `models[].endpoint` | string | Backend endpoint name |
-| `models[].capabilities` | array | Supported capabilities |
+| `models[].capabilities` | array | Supported capabilities (`text-generation`, `vision`, `long-context`, `audio-transcription`, `audio-speech`, ...). Canonicalised from the engine's declared capability flags when the engine declares them (see [Model unification](../concepts/model-unification.md#engine-declared-capabilities-rank-above-inference)); name-pattern inference is the fallback |
 | `models[].context_window` | integer | Maximum context size |
 | `models[].max_tokens` | integer | Maximum output tokens |
 | `models[].vision` | boolean | Vision support |

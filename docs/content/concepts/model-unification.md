@@ -438,6 +438,18 @@ If none of these produce a usable file, Olla falls back to its embedded defaults
 
     This is a real failure mode, not a hypothetical: it broke `config/models.yaml` itself (issue #204) before the file's patterns were switched to single quotes.
 
+### Engine-declared capabilities rank above inference
+
+The capabilities a model advertises on `/olla/models` come from the engine first. When a backend's own model listing includes a `capabilities` map, Olla canonicalises the declared-true flags into registry vocabulary and ranks them above the name-pattern inference described above:
+
+| Engine flag (declared true) | Advertised capability |
+|---|---|
+| `image` | `vision` |
+| `audio` | `audio-transcription` |
+| `audio_generation` | `audio-speech` |
+
+True flags outside this table are ignored - the engines' vocabulary is not the registry's, and inventing capability names produces an advertised list no client can filter against. A declared `chat: false` suppresses the `text-generation` name-pattern fallback for that model: transcription and speech engines declare exactly that, and without the suppression the name fallback would stamp a voice model as a chat model. Engines that declare no capabilities map keep pure name-pattern / type-based behaviour - e.g. a llama.cpp server whose `/v1/models` carries no map: its engine may well do vision, but the declaration belongs to the engine, so the gateway honestly does not advertise it.
+
 ### Worked example: adding a capability pattern
 
 To make Olla recognise a locally fine-tuned "guard" model family as having a `content-moderation` capability, add a pattern under `capabilities.name_patterns` in your own `models.yaml`:
