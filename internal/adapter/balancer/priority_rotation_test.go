@@ -2,6 +2,7 @@ package balancer
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -134,4 +135,48 @@ func TestPrioritySelector_WeightedRotationIsProportional(t *testing.T) {
 			assert.NotEqual(t, "warming", sequence[i-1], "warming endpoint must not be queued back to back")
 		}
 	}
+}
+
+func TestPrioritySelector_ConcurrentRotationIsFair(t *testing.T) {
+	selector := NewPrioritySelector(NewTestStatsCollector())
+	ctx := context.Background()
+
+	a := createPriorityEndpoint("a", 11434, domain.StatusHealthy, 100)
+	b := createPriorityEndpoint("b", 11435, domain.StatusHealthy, 100)
+
+	// The SWRR credit map is shared state on the request hot path. Two
+	// goroutines hammer the same selector: the -race detector owns the data
+	// race question, this test owns the arithmetic - the rotation must stay
+	// even when selection interleaves.
+	const per = 500
+	counts := map[string]int{}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			local := map[string]int{}
+			for range per {
+				endpoint, err := selector.Select(ctx, []*domain.Endpoint{a, b})
+				if err != nil {
+					return
+				}
+				local[endpoint.Name]++
+			}
+			mu.Lock()
+			for k, v := range local {
+				counts[k] += v
+			}
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+
+	assert.Equal(t, per*2, counts["a"]+counts["b"], "every select must land on a twin")
+	delta := counts["a"] - counts["b"]
+	if delta < 0 {
+		delta = -delta
+	}
+	assert.LessOrEqual(t, delta, 2, "interleaved rotation must stay even")
 }
