@@ -120,7 +120,7 @@ class ThemeStore {
   // and App.svelte used to call destroy() from its $effect cleanup - which
   // runs on dev HMR / unmount while nothing ever re-armed the listener, so
   // the OS-follow feature silently died for the rest of the page's life.
-  // The listener lives exactly as long as the singleton: the page.'
+  // The listener lives exactly as long as the singleton: the page.
 
 }
 
