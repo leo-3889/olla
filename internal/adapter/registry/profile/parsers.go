@@ -231,7 +231,8 @@ func (p *openAIParser) Parse(data []byte) ([]*domain.ModelInfo, error) {
 		// include max_model_len which is worth surfacing
 		hasDetails := (model.Created != nil && *model.Created > 0) ||
 			model.OwnedBy != nil ||
-			(model.MaxModelLen != nil && *model.MaxModelLen > 0)
+			(model.MaxModelLen != nil && *model.MaxModelLen > 0) ||
+			len(model.Capabilities) > 0
 
 		if hasDetails {
 			details := &domain.ModelDetails{}
@@ -247,6 +248,10 @@ func (p *openAIParser) Parse(data []byte) ([]*domain.ModelInfo, error) {
 
 			if model.OwnedBy != nil && *model.OwnedBy != "" {
 				details.Publisher = model.OwnedBy
+			}
+
+			if len(model.Capabilities) > 0 {
+				details.Capabilities = model.Capabilities
 			}
 
 			modelInfo.Details = details

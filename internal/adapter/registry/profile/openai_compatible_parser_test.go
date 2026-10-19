@@ -228,3 +228,32 @@ func TestOpenAIParser_Parse(t *testing.T) {
 		}
 	})
 }
+
+func TestOpenAIParser_ParseCapturesEngineCapabilities(t *testing.T) {
+	t.Parallel()
+
+	parser := &openAIParser{}
+
+	// radiance advertises its own feature map on /v1/models; the 2026-10-14
+	// vision audit found the parsers discarding it, so the registry advertised
+	// a vision model as text-generation only.
+	response := `{
+		"object": "list",
+		"data": [
+			{
+				"id": "qwen4exp",
+				"object": "model",
+				"owned_by": "radiance",
+				"capabilities": {"image": true, "video": true}
+			}
+		]
+	}`
+
+	models, err := parser.Parse([]byte(response))
+	require.NoError(t, err)
+	require.Len(t, models, 1)
+	require.NotNil(t, models[0].Details, "a capabilities-only entry is metadata worth keeping")
+	require.NotNil(t, models[0].Details.Capabilities)
+	assert.True(t, models[0].Details.Capabilities["image"])
+	assert.True(t, models[0].Details.Capabilities["video"])
+}

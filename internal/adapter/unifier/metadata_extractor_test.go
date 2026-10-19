@@ -753,3 +753,22 @@ func TestParseContextLength(t *testing.T) {
 		})
 	}
 }
+
+func TestInferCapabilitiesEngineDeclaration(t *testing.T) {
+	// A name the pattern list cannot see, with the engine's own image=true
+	// declaration canonicalised upstream: the engine declaration must add
+	// vision...
+	engine := map[string]interface{}{"engine_capabilities": []string{"vision"}}
+	got := inferCapabilitiesFromMetadata("chat", "qwen4exp", 0, engine)
+	assert.Contains(t, got, "vision", "the engine's own declaration outranks name patterns")
+
+	// ...and the same model without the declaration must NOT advertise it -
+	// proving the capability came from the engine, not from a name pattern.
+	control := inferCapabilitiesFromMetadata("chat", "qwen4exp", 0, nil)
+	assert.NotContains(t, control, "vision")
+}
+
+func TestCanonicalEngineCapabilitiesVocabulary(t *testing.T) {
+	caps := canonicalEngineCapabilities(map[string]bool{"image": true, "video": true, "future-flag": true})
+	assert.Equal(t, []string{"vision"}, caps, "only declared-true flags with a known mapping are canonicalised; unknown true keys are ignored")
+}

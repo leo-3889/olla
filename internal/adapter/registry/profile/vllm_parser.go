@@ -62,6 +62,13 @@ func (p *vllmParser) Parse(data []byte) ([]*domain.ModelInfo, error) {
 			hasDetails = true
 		}
 
+		// Engine-declared feature map (radiance/vLLM forks advertise it under
+		// the OpenAI shape); the registry trusts it over name patterns.
+		if len(model.Capabilities) > 0 {
+			details.Capabilities = model.Capabilities
+			hasDetails = true
+		}
+
 		if hasDetails {
 			modelInfo.Details = details
 		}

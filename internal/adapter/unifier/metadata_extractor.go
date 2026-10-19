@@ -135,6 +135,17 @@ func inferCapabilitiesFromMetadata(modelType, modelName string, contextLength in
 
 	capabilities["text-generation"] = true
 
+	// The engine's OWN declaration is the most trusted source, ahead of every
+	// heuristic below: the name-pattern list matches names like "vlm"/"llava",
+	// so a vision model named qwen4exp - whose engine advertises
+	// capabilities.image=true on /v1/models - was advertised by the registry
+	// as text-generation only.
+	if engineCaps, ok := metadata["engine_capabilities"].([]string); ok {
+		for _, c := range engineCaps {
+			capabilities[c] = true
+		}
+	}
+
 	modelTypeLower := strings.ToLower(modelType)
 	if typeCaps, exists := config.Capabilities.TypeCapabilities[modelTypeLower]; exists {
 		for _, cap := range typeCaps {
@@ -445,4 +456,17 @@ func extractPublisher(modelName string, metadata map[string]interface{}) string 
 	}
 
 	return ""
+}
+
+// canonicalEngineCapabilities maps engine-declared /v1/models feature flags
+// onto the registry's capability vocabulary. Only declared-true flags with a
+// known mapping contribute; unknown true keys are ignored - the engines'
+// vocabulary is not the registry's, and inventing capability names makes the
+// advertised list un-filterable.
+func canonicalEngineCapabilities(caps map[string]bool) []string {
+	var out []string
+	if caps["image"] {
+		out = append(out, "vision")
+	}
+	return out
 }
