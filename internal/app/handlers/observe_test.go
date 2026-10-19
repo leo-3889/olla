@@ -27,6 +27,7 @@ type stubObserveQuerier struct {
 	svcRows   []map[string]any
 	err       error
 	gpuErr    error // fail ONLY the gpu (llm_runtime) query
+	powerErr  error // fail ONLY the power (llm_host_power) query
 	hourErr   error // fail ONLY the hour cost query
 }
 
@@ -41,6 +42,8 @@ func (s *stubObserveQuerier) query(_ context.Context, flux string) ([]map[string
 		return nil, s.gpuErr
 	case strings.Contains(flux, "period==\"hour\"") && s.hourErr != nil:
 		return nil, s.hourErr
+	case strings.Contains(flux, "llm_host_power") && s.powerErr != nil:
+		return nil, s.powerErr
 	case strings.Contains(flux, "llm_host_power"):
 		return s.powerRows, nil
 	case strings.Contains(flux, "period==\"hour\""):
@@ -496,4 +499,42 @@ func TestObserveNegativeCacheIgnoresClientAbort(t *testing.T) {
 	_, err = c2.payload(context.Background())
 	require.Error(t, err)
 	assert.Equal(t, calls, stub2.calls, "genuine failures keep the negative cache")
+}
+
+// The plug twin of TestObserveGpusAbsent: a configured plug that exports
+// nothing must be NAMED, and a failed power query must not render as "all
+// plugs healthy, none seen".
+func TestObservePowerAbsent(t *testing.T) {
+	now := time.Date(2026, 10, 16, 9, 0, 0, 0, time.UTC)
+	powerRow := func(target, field string, value any) map[string]any {
+		return map[string]any{"power_target_id": target, "device_name": "Meter " + target, "node": "n", "_field": field, "_value": value, "_time": now.Format(time.RFC3339Nano)}
+	}
+	cfg := observeConfig() // shelly-ai-395 + shelly-ai-box
+
+	// One plug reports, the other is dead: the dead one is disclosed.
+	stub := &stubObserveQuerier{powerRows: []map[string]any{powerRow("shelly-ai-box", "active_power_w", 90.0)}}
+	c := &observeCollector{cfg: cfg, client: stub, now: func() time.Time { return now }, ttl: observeTTL}
+	p, err := c.payload(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"shelly-ai-395"}, p.PowerAbsent, "dead plug must be named, not hidden")
+	assert.Len(t, p.Power, 1)
+
+	// Every plug reports: nothing absent.
+	stub2 := &stubObserveQuerier{powerRows: []map[string]any{
+		powerRow("shelly-ai-box", "active_power_w", 90.0),
+		powerRow("shelly-ai-395", "active_power_w", 9.0),
+	}}
+	c2 := &observeCollector{cfg: cfg, client: stub2, now: func() time.Time { return now }, ttl: observeTTL}
+	p2, err := c2.payload(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, p2.PowerAbsent)
+
+	// Errored power query: nothing was verified, so EVERY configured target
+	// is disclosed (mirrors the gpu-err rule).
+	stub3 := &stubObserveQuerier{powerErr: errors.New("connection refused")}
+	c3 := &observeCollector{cfg: cfg, client: stub3, now: func() time.Time { return now }, ttl: observeTTL}
+	p3, err := c3.payload(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"shelly-ai-395", "shelly-ai-box"}, p3.PowerAbsent,
+		"a failed power query must not render as an empty healthy grid")
 }
