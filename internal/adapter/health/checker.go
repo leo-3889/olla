@@ -61,6 +61,12 @@ func (c *HTTPHealthChecker) SetLoadAwareness(threshold float64, reader LoadReade
 	c.busyQueueDepth = threshold
 }
 
+// LoadAwarenessArmed reports whether Busy grading is active (threshold > 0
+// and a reader wired). Exposed for startup logging and lifecycle tests.
+func (c *HTTPHealthChecker) LoadAwarenessArmed() bool {
+	return c.busyQueueDepth > 0 && c.loadReader != nil
+}
+
 // gradeProbeStatus maps a transport-successful probe to a serving status,
 // grading Healthy -> Busy when the engine reports a queue at or above the
 // threshold. Kept as a pure function: the graded Busy is NOT a probe failure
