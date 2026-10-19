@@ -110,16 +110,7 @@ func (s *DiscoveryService) Start(ctx context.Context) error {
 	}
 
 	s.healthChecker = health.NewHTTPHealthCheckerWithDefaults(s.endpointRepo, s.logger)
-	if s.busyQueueDepth > 0 && s.loadReader != nil {
-		s.healthChecker.SetLoadAwareness(s.busyQueueDepth, s.loadReader)
-		// Log through the checker's own verdict: the accessor is the single
-		// source of truth for "armed", so the boot line and the grading
-		// cannot drift apart (a threshold set through any future path is
-		// reported exactly as the checker sees it).
-		if s.healthChecker.LoadAwarenessArmed() {
-			s.logger.Info("Load-aware Busy grading armed", "queue_depth_threshold", s.busyQueueDepth)
-		}
-	}
+	s.armLoadAwareGrading()
 
 	// Evict sticky session entries for backends that LEFT THE FLEET. The purgeFn
 	// is nil when sticky sessions are disabled, making this callback a cheap
@@ -219,6 +210,22 @@ func (s *DiscoveryService) Start(ctx context.Context) error {
 }
 
 // Stop gracefully shuts down discovery components
+// armLoadAwareGrading wires the queue reader into the health checker and
+// reports the result once. The boot line is gated on the checker's own
+// accessor - the single source of truth for "armed" - so the logged
+// sentence and the grading state cannot drift apart if arming ever grows a
+// path that does not go through the config field. Extracted from Start so
+// the pinned gocognit budget for Start stays green.
+func (s *DiscoveryService) armLoadAwareGrading() {
+	if s.busyQueueDepth <= 0 || s.loadReader == nil {
+		return
+	}
+	s.healthChecker.SetLoadAwareness(s.busyQueueDepth, s.loadReader)
+	if s.healthChecker.LoadAwarenessArmed() {
+		s.logger.Info("Load-aware Busy grading armed", "queue_depth_threshold", s.busyQueueDepth)
+	}
+}
+
 func (s *DiscoveryService) Stop(ctx context.Context) error {
 	s.logger.Info(" Stopping discovery service")
 
