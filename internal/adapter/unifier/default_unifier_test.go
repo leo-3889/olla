@@ -365,3 +365,48 @@ func TestDefaultUnifier_NilAndEmptyInputs(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, result, 2)
 }
+
+func TestUnifyModelVoiceCapabilityDeclaration(t *testing.T) {
+	u := NewDefaultUnifier()
+	ctx := context.Background()
+	voice := createTestEndpoint("http://192.168.2.242:5021", "voice-sst-395")
+
+	whisper, err := u.UnifyModel(ctx, &domain.ModelInfo{
+		Name: "whisper-small",
+		Details: &domain.ModelDetails{
+			Capabilities: map[string]bool{"chat": false, "audio": true, "audio_generation": false},
+		},
+	}, voice)
+	require.NoError(t, err)
+	require.NotNil(t, whisper)
+	assert.Contains(t, whisper.Capabilities, "audio-transcription")
+	assert.NotContains(t, whisper.Capabilities, "text-generation",
+		"whisper declares chat:false: the advertised list must not claim text generation")
+	assert.Equal(t, true, whisper.Metadata["engine_chat_disabled"],
+		"the chat:false marker reaches the unified metadata")
+
+	kokoro, err := u.UnifyModel(ctx, &domain.ModelInfo{
+		Name: "kokoro-82m",
+		Details: &domain.ModelDetails{
+			Capabilities: map[string]bool{"chat": false, "audio": false, "audio_generation": true},
+		},
+	}, createTestEndpoint("http://192.168.2.242:5022", "voice-tts-395"))
+	require.NoError(t, err)
+	require.NotNil(t, kokoro)
+	assert.Contains(t, kokoro.Capabilities, "audio-speech")
+	assert.NotContains(t, kokoro.Capabilities, "text-generation")
+
+	// qwen4exp shape: image:true, no chat key -> vision + text-generation
+	// unchanged; no disclaimer marker.
+	qwen, err := u.UnifyModel(ctx, &domain.ModelInfo{
+		Name: "qwen4exp",
+		Details: &domain.ModelDetails{
+			Capabilities: map[string]bool{"image": true, "video": true},
+		},
+	}, createTestEndpoint("http://192.168.2.250:8000", "radiance-9700-64"))
+	require.NoError(t, err)
+	require.NotNil(t, qwen)
+	assert.Contains(t, qwen.Capabilities, "vision")
+	assert.Contains(t, qwen.Capabilities, "text-generation")
+	assert.NotContains(t, qwen.Metadata, "engine_chat_disabled")
+}

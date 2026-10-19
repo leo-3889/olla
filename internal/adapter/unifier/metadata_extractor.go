@@ -181,6 +181,19 @@ func inferCapabilitiesFromMetadata(modelType, modelName string, contextLength in
 		}
 	}
 
+	// An engine that declares chat:false on /v1/models (whisper-small,
+	// kokoro-82m) disclaims text generation; applyModelDetails carries that
+	// disclaimer as engine_chat_disabled. The unconditional baseline above
+	// plus the type/name-pattern fallbacks would otherwise advertise such a
+	// model as [text-generation] - a lie that makes a transcriber or a TTS
+	// voice look like a chat model to any capability filter. Drop the
+	// inferred stamp; an explicit "text-generation" declared in source
+	// metadata (preserved below) still wins, because a source that declares
+	// it means it.
+	if disabled, ok := metadata["engine_chat_disabled"].(bool); ok && disabled {
+		delete(capabilities, "text-generation")
+	}
+
 	// Preserve explicitly declared capabilities from source metadata
 	if metadata != nil {
 		if caps, ok := metadata["capabilities"].([]interface{}); ok {
@@ -467,6 +480,12 @@ func canonicalEngineCapabilities(caps map[string]bool) []string {
 	var out []string
 	if caps["image"] {
 		out = append(out, "vision")
+	}
+	if caps["audio"] {
+		out = append(out, "audio-transcription")
+	}
+	if caps["audio_generation"] {
+		out = append(out, "audio-speech")
 	}
 	return out
 }

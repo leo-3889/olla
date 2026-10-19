@@ -437,6 +437,14 @@ func (u *DefaultUnifier) applyModelDetails(model *Model, details *domain.ModelDe
 	}
 	if len(details.Capabilities) > 0 {
 		model.Metadata["engine_capabilities"] = canonicalEngineCapabilities(details.Capabilities)
+		// chat:false is not a capability - it is the engine disclaiming text
+		// generation. Carry it as a marker so the inference fallback drops
+		// the inferred text-generation stamp (see inferCapabilitiesFromMetadata).
+		// chat:true and an absent key both mean "no opinion": inference
+		// proceeds unchanged.
+		if chat, declared := details.Capabilities["chat"]; declared && !chat {
+			model.Metadata["engine_chat_disabled"] = true
+		}
 	}
 }
 

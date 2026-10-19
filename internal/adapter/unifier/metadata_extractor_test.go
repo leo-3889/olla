@@ -772,3 +772,58 @@ func TestCanonicalEngineCapabilitiesVocabulary(t *testing.T) {
 	caps := canonicalEngineCapabilities(map[string]bool{"image": true, "video": true, "future-flag": true})
 	assert.Equal(t, []string{"vision"}, caps, "only declared-true flags with a known mapping are canonicalised; unknown true keys are ignored")
 }
+
+func TestCanonicalEngineCapabilitiesAudioVocabulary(t *testing.T) {
+	// voice-sst-395 (whisper-small) declares {audio:true, chat:false,
+	// audio_generation:false}; kokoro-82m declares {audio:false, chat:false,
+	// audio_generation:true}. Each must canonicalise to exactly one audio
+	// capability; chat is a disclaimer, not a capability (it travels as the
+	// engine_chat_disabled marker), and unknown true flags stay ignored (V2 rule).
+	assert.Equal(t, []string{"audio-transcription"},
+		canonicalEngineCapabilities(map[string]bool{"audio": true, "chat": false, "audio_generation": false}),
+		"whisper declares transcription only")
+	assert.Equal(t, []string{"audio-speech"},
+		canonicalEngineCapabilities(map[string]bool{"audio": false, "chat": false, "audio_generation": true}),
+		"kokoro declares speech only")
+	assert.Equal(t, []string{"vision"},
+		canonicalEngineCapabilities(map[string]bool{"image": true, "chat": true, "video": true}),
+		"chat:true adds nothing; video/future flags stay ignored")
+	assert.Empty(t, canonicalEngineCapabilities(map[string]bool{"chat": false}),
+		"a bare chat:false is a disclaimer, not a capability")
+}
+
+func TestInferCapabilitiesChatFalseSuppressesTextGeneration(t *testing.T) {
+	// The shape applyModelDetails produces for whisper-small's declaration:
+	// the advertised list must carry the audio capability and NOT the
+	// inferred text-generation.
+	whisper := map[string]interface{}{
+		"engine_capabilities":  []string{"audio-transcription"},
+		"engine_chat_disabled": true,
+	}
+	got := inferCapabilitiesFromMetadata("chat", "whisper-small", 0, whisper)
+	assert.Contains(t, got, "audio-transcription")
+	assert.NotContains(t, got, "text-generation",
+		"an engine declaring chat:false must not be advertised as a text generator")
+
+	kokoro := map[string]interface{}{
+		"engine_capabilities":  []string{"audio-speech"},
+		"engine_chat_disabled": true,
+	}
+	got = inferCapabilitiesFromMetadata("chat", "kokoro-82m", 0, kokoro)
+	assert.Contains(t, got, "audio-speech")
+	assert.NotContains(t, got, "text-generation")
+
+	// Control: the same declaration WITHOUT the chat:false marker keeps the
+	// inference baseline - the pre-W3 behaviour that advertised whisper as
+	// [text-generation] on the live gateway.
+	control := inferCapabilitiesFromMetadata("chat", "whisper-small", 0,
+		map[string]interface{}{"engine_capabilities": []string{"audio-transcription"}})
+	assert.Contains(t, control, "text-generation")
+
+	// qwen4exp shape: image:true with no chat key - vision + text-generation
+	// stay unchanged (V2 behaviour).
+	qwen := inferCapabilitiesFromMetadata("chat", "qwen4exp", 0,
+		map[string]interface{}{"engine_capabilities": []string{"vision"}})
+	assert.Contains(t, qwen, "vision")
+	assert.Contains(t, qwen, "text-generation")
+}
