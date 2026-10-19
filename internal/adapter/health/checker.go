@@ -29,9 +29,90 @@ type HTTPHealthChecker struct {
 	recoveryCallback  RecoveryCallback
 	unhealthyCallback UnhealthyCallback
 	healthClient      *HealthClient
-	ticker            *time.Ticker
-	stopCh            chan struct{}
-	isRunning         atomic.Bool
+
+	// Load-aware Busy grading (proxy.busy_queue_depth). Zero threshold (the
+	// default) keeps the probe verdict ungraded: only the operator's opt-in
+	// steers on engine queue depth.
+	loadReader     LoadReader
+	busyQueueDepth float64
+	ticker         *time.Ticker
+	stopCh         chan struct{}
+	isRunning      atomic.Bool
+}
+
+// LoadReader reports the freshest engine queue depth for an endpoint
+// (load-aware Busy grading). Implemented by the runtime-metrics sampler;
+// "not known" is an honest answer, not a zero.
+type LoadReader interface {
+	QueueDepthFor(endpoint *domain.Endpoint) (float64, bool)
+}
+
+// SetLoadAwareness arms Busy grading: a probe-healthy endpoint whose engine
+// queue depth is >= threshold is graded Busy (routable at reduced SWRR
+// weight) instead of Healthy, so new conversations steer away from a
+// saturating node BEFORE it starts refusing connections. threshold <= 0
+// disables grading.
+func (c *HTTPHealthChecker) SetLoadAwareness(threshold float64, reader LoadReader) {
+	c.loadReader = reader
+	c.busyQueueDepth = threshold
+}
+
+// gradeProbeStatus maps a transport-successful probe to a serving status,
+// grading Healthy -> Busy when the engine reports a queue at or above the
+// threshold. Kept as a pure function: the graded Busy is NOT a probe failure
+// (the engine answered; the old scheduler counting Busy as failure and
+// breaker-striking a loaded-but-alive node must not be reintroduced), so
+// isSuccess is computed from the raw probe result, never from the grade.
+func gradeProbeStatus(status domain.EndpointStatus, threshold float64, reader LoadReader, endpoint *domain.Endpoint) domain.EndpointStatus {
+	if threshold <= 0 || reader == nil || status != domain.StatusHealthy {
+		return status
+	}
+	if q, ok := reader.QueueDepthFor(endpoint); ok && q >= threshold {
+		return domain.StatusBusy
+	}
+	return status
+}
+
+// deadlineClient adapts http.Client's per-client hard Timeout to each
+// request's context deadline. The probe budget is endpoint.CheckTimeout
+// (enforced as a context deadline in HealthClient.performSingleCheck), but a
+// single shared http.Client with a fixed Timeout (historically
+// DefaultHealthCheckerTimeout = 5s) caps every probe at that constant: a
+// check_timeout above it was a placebo, and a healthy-but-slow engine (probe
+// latency 5-10s under queue pressure, measured on the live fleet 2026-10-19)
+// was declared unhealthy for a budget it was never given. The context
+// deadline stays the authority - the per-client Timeout sits one second
+// above it so real timeouts surface as context.DeadlineExceeded (classified
+// Timeout, retried/backed off correctly) rather than the transport's opaque
+// "timeout awaiting response headers". One client per 1s budget bucket, all
+// sharing the template Transport, so connection pooling is preserved.
+type deadlineClient struct {
+	mu       sync.Mutex
+	templ    *http.Client
+	byBudget map[time.Duration]*http.Client
+}
+
+func newDeadlineClient(templ *http.Client) *deadlineClient {
+	return &deadlineClient{templ: templ, byBudget: make(map[time.Duration]*http.Client)}
+}
+
+func (d *deadlineClient) Do(req *http.Request) (*http.Response, error) {
+	budget := DefaultHealthCheckerTimeout
+	if dl, ok := req.Context().Deadline(); ok {
+		if left := time.Until(dl).Round(time.Second); left > 0 {
+			budget = left
+		}
+	}
+	d.mu.Lock()
+	client, ok := d.byBudget[budget]
+	if !ok {
+		c := *d.templ // shallow copy: same Transport, per-budget Timeout
+		c.Timeout = budget + time.Second
+		client = &c
+		d.byBudget[budget] = client
+	}
+	d.mu.Unlock()
+	return client.Do(req)
 }
 
 func NewHTTPHealthChecker(repository domain.EndpointRepository, logger logger.StyledLogger, client HTTPClient) *HTTPHealthChecker {
@@ -79,7 +160,7 @@ func NewHTTPHealthCheckerWithDefaults(repository domain.EndpointRepository, logg
 			// environment proxy risks leaking those credentials to a third party.
 		},
 	}
-	return NewHTTPHealthChecker(repository, logger, client)
+	return NewHTTPHealthChecker(repository, logger, newDeadlineClient(client))
 }
 
 func (c *HTTPHealthChecker) Check(ctx context.Context, endpoint *domain.Endpoint) (domain.HealthCheckResult, error) {
@@ -243,7 +324,7 @@ func (c *HTTPHealthChecker) checkEndpoint(ctx context.Context, endpoint *domain.
 	result, err := c.healthClient.Check(ctx, endpoint)
 
 	oldStatus := endpoint.Status
-	newStatus := result.Status
+	newStatus := gradeProbeStatus(result.Status, c.busyQueueDepth, c.loadReader, endpoint)
 	statusChanged := oldStatus != newStatus
 
 	endpointCopy := *endpoint

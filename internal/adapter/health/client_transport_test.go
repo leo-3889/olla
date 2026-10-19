@@ -31,12 +31,15 @@ func extractTransport(t *testing.T) *http.Transport {
 
 	checker := NewHTTPHealthCheckerWithDefaults(newMockRepository(), newHealthTestLogger(t))
 
-	// The client field is an HTTPClient interface; NewHTTPHealthCheckerWithDefaults
-	// always passes a *http.Client so the assertion is safe in tests.
-	httpClient, ok := checker.healthClient.client.(*http.Client)
+	// The client field is an HTTPClient interface;
+	// NewHTTPHealthCheckerWithDefaults passes a *deadlineClient (per-budget
+	// clients keyed off the request context, all sharing the template's
+	// Transport) so the assertion digs to the template.
+	dispatcher, ok := checker.healthClient.client.(*deadlineClient)
 	if !ok {
-		t.Fatal("health client is not *http.Client; update this test if the type changes")
+		t.Fatal("health client is not *deadlineClient; update this test if the type changes")
 	}
+	httpClient := dispatcher.templ
 
 	transport, ok := httpClient.Transport.(*http.Transport)
 	if !ok {
