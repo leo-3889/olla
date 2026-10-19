@@ -31,16 +31,16 @@ type StickyOutcome = domain.StickyOutcome
 // goroutines will select valid backends and the last writer wins, which
 // converges quickly in practice.
 type StickySessionWrapper struct {
-	inner domain.EndpointSelector
-	store *ttlcache.Cache[string, string]
-	cfg   config.StickySessionConfig
+	inner        domain.EndpointSelector
+	store        *ttlcache.Cache[string, string]
+	resultCounts map[string]uint64
+	sourceCounts map[string]uint64
+	cfg          config.StickySessionConfig
 
 	// mu guards the outcome counters (results per outcome, per key source).
 	// Select is the per-request hot path; the critical section is two map
 	// increments, so a mutex is cheaper than per-source atomics here.
-	mu           sync.Mutex
-	resultCounts map[string]uint64
-	sourceCounts map[string]uint64
+	mu sync.Mutex
 }
 
 // recordOutcome counts a routing decision for /internal/stats/sticky.
@@ -363,14 +363,6 @@ func stickyKeyFromIP(r *http.Request, modelName string) (string, string) {
 
 // StickyStats holds a point-in-time snapshot of sticky session activity.
 type StickyStats struct {
-	Enabled        bool   `json:"enabled"`
-	ActiveSessions int    `json:"active_sessions"`
-	Insertions     uint64 `json:"insertions"`
-	Hits           uint64 `json:"hits"`
-	Misses         uint64 `json:"misses"`
-	Evictions      uint64 `json:"evictions"`
-	MaxSessions    uint64 `json:"max_sessions"`
-	IdleTTLSeconds int    `json:"idle_ttl_seconds"`
 
 	// Results counts Select outcomes by label (hit/miss/bypass/no_key) and
 	// Sources by producing key source; both are wrapper-level, unlike the
@@ -381,6 +373,15 @@ type StickyStats struct {
 	Results            map[string]uint64 `json:"results"`
 	Sources            map[string]uint64 `json:"key_sources"`
 	SessionsByEndpoint map[string]int    `json:"sessions_by_endpoint"`
+	ActiveSessions     int               `json:"active_sessions"`
+	Insertions         uint64            `json:"insertions"`
+	Hits               uint64            `json:"hits"`
+	Misses             uint64            `json:"misses"`
+	Evictions          uint64            `json:"evictions"`
+	MaxSessions        uint64            `json:"max_sessions"`
+	IdleTTLSeconds     int               `json:"idle_ttl_seconds"`
+
+	Enabled bool `json:"enabled"`
 }
 
 // Stats returns a point-in-time snapshot of the session store metrics.

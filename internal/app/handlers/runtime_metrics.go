@@ -55,14 +55,14 @@ const runtimeMetricsBodyLimit = 4 << 20
 type EndpointRuntimeMetrics struct {
 	SampledAt      time.Time `json:"sampled_at"`
 	AvailableSince time.Time `json:"available_since"`
-	Stale          bool      `json:"stale"`
-	Kind           string    `json:"kind,omitempty"`
+	// SourceAgeS is seconds since the newest underlying sample.
+	SourceAgeS *float64 `json:"source_age_s,omitempty"`
+	Kind       string   `json:"kind,omitempty"`
 	// Source names who produced the numbers: "sampler" (this process
 	// scraping the engine) or "ollametrics" (canonical InfluxDB series).
-	Source string `json:"source"`
-	// SourceAgeS is seconds since the newest underlying sample.
-	SourceAgeS *float64        `json:"source_age_s,omitempty"`
-	Metrics    []RuntimeMetric `json:"metrics,omitempty"`
+	Source  string          `json:"source"`
+	Metrics []RuntimeMetric `json:"metrics,omitempty"`
+	Stale   bool            `json:"stale"`
 }
 
 type endpointRuntimeMetricsSampler struct {
@@ -70,27 +70,27 @@ type endpointRuntimeMetricsSampler struct {
 	logger      logger.StyledLogger
 	client      *http.Client
 	now         func() time.Time
-	mu          sync.RWMutex
 	states      map[string]*runtimeMetricsState
 	warnedKinds map[string]struct{}
+	mu          sync.RWMutex
 }
 
 type runtimeMetricsState struct {
-	available       bool
+	last            runtimeCounters
 	availableSince  time.Time
 	sampledAt       time.Time
-	stale           bool
-	last            runtimeCounters
-	hasLast         bool
+	nextAttempt     time.Time
+	KVUsage         *float64
+	QueueDepth      *float64
+	RequestsRunning *float64
 	generation      throughputAggregate
 	prefill         throughputAggregate
 	cache           ratioAggregate
 	specAccept      ratioAggregate
-	KVUsage         *float64
-	QueueDepth      *float64
-	RequestsRunning *float64
 	failures        int
-	nextAttempt     time.Time
+	available       bool
+	stale           bool
+	hasLast         bool
 }
 
 type runtimeSample struct {
@@ -128,7 +128,7 @@ func trimWindowed(samples []runtimeSample, at time.Time) []runtimeSample {
 
 // windowStats derives the reporting-window average and maximum from the
 // retained samples.
-func windowStats(samples []runtimeSample) (avg, max *float64) {
+func windowStats(samples []runtimeSample) (avg, peak *float64) {
 	if len(samples) == 0 {
 		return nil, nil
 	}
@@ -548,16 +548,17 @@ func recordThroughput(a *throughputAggregate, at time.Time, oldTokens, newTokens
 // recordRatio reports whether a delta ratio was recorded.
 func recordRatio(a *ratioAggregate, at time.Time, old, next runtimeCounters) bool {
 	var oldN, newN, oldD, newD *float64
-	if old.CacheHits != nil && next.CacheHits != nil && old.CacheQueries != nil && next.CacheQueries != nil {
+	switch {
+	case old.CacheHits != nil && next.CacheHits != nil && old.CacheQueries != nil && next.CacheQueries != nil:
 		oldN, newN, oldD, newD = old.CacheHits, next.CacheHits, old.CacheQueries, next.CacheQueries
-	} else if old.CachedPromptTokens != nil && next.CachedPromptTokens != nil && old.ComputedPromptTokens != nil && next.ComputedPromptTokens != nil {
+	case old.CachedPromptTokens != nil && next.CachedPromptTokens != nil && old.ComputedPromptTokens != nil && next.ComputedPromptTokens != nil:
 		// llama.cpp's prompt_tokens_total counts only COMPUTED (non-cached)
 		// prompt tokens, while prompt_tokens_cached_total counts cached ones,
 		// so the hit rate is cached / (cached + computed).
 		oldN, newN = old.CachedPromptTokens, next.CachedPromptTokens
 		oldD = floatPtr(*old.CachedPromptTokens + *old.ComputedPromptTokens)
 		newD = floatPtr(*next.CachedPromptTokens + *next.ComputedPromptTokens)
-	} else {
+	default:
 		return false
 	}
 	n, d := *newN-*oldN, *newD-*oldD

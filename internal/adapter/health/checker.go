@@ -32,15 +32,16 @@ type HTTPHealthChecker struct {
 	logger            logger.StyledLogger
 	recoveryCallback  RecoveryCallback
 	unhealthyCallback UnhealthyCallback
-	healthClient      *HealthClient
 
 	// Load-aware Busy grading (proxy.busy_queue_depth). Zero threshold (the
 	// default) keeps the probe verdict ungraded: only the operator's opt-in
 	// steers on engine queue depth.
-	loadReader     LoadReader
-	busyQueueDepth float64
+	loadReader   LoadReader
+	healthClient *HealthClient
+
 	ticker         *time.Ticker
 	stopCh         chan struct{}
+	busyQueueDepth float64
 	isRunning      atomic.Bool
 }
 
@@ -97,9 +98,9 @@ func gradeProbeStatus(status domain.EndpointStatus, threshold float64, reader Lo
 // "timeout awaiting response headers". One client per 1s budget bucket, all
 // sharing the template Transport, so connection pooling is preserved.
 type deadlineClient struct {
-	mu       sync.Mutex
 	templ    *http.Client
 	byBudget map[time.Duration]*http.Client
+	mu       sync.Mutex
 }
 
 func newDeadlineClient(templ *http.Client) *deadlineClient {

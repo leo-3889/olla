@@ -40,19 +40,27 @@ type SystemSummary struct {
 	// start so the dashboard can compute a live uptime between polls without
 	// refetching. Not omitempty: always known once the process is up. Sits
 	// alongside the existing relative uptime string.
-	StartTime          time.Time `json:"start_time"`
-	Status             string    `json:"status"`
-	EndpointsUp        string    `json:"endpoints_up"`
-	SuccessRate        string    `json:"success_rate"`
-	AvgLatency         string    `json:"avg_latency"`
-	TotalTraffic       string    `json:"total_traffic"`
-	UptimeHuman        string    `json:"uptime"`
-	Version            string    `json:"version"`
-	Commit             string    `json:"commit"`
-	ActiveConnections  int64     `json:"active_connections"`
-	SecurityViolations int64     `json:"security_violations"`
-	TotalRequests      int64     `json:"total_requests"`
-	TotalFailures      int64     `json:"total_failures"`
+	StartTime    time.Time `json:"start_time"`
+	Status       string    `json:"status"`
+	EndpointsUp  string    `json:"endpoints_up"`
+	SuccessRate  string    `json:"success_rate"`
+	AvgLatency   string    `json:"avg_latency"`
+	TotalTraffic string    `json:"total_traffic"`
+	UptimeHuman  string    `json:"uptime"`
+	Version      string    `json:"version"`
+	Commit       string    `json:"commit"`
+	// HealthMode is the computation that produced Status: "host" (the endpoint
+	// fleet, the historical behaviour) or "model" (a configured list of
+	// models/aliases). Always present so clients can tell which verdict they are
+	// looking at.
+	HealthMode string `json:"health_mode"`
+	// Models is the per-model breakdown in model mode. Omitted (nil) in host
+	// mode so the payload is unchanged for the default configuration.
+	Models             []health.ModelHealthEntry `json:"models,omitempty"`
+	ActiveConnections  int64                     `json:"active_connections"`
+	SecurityViolations int64                     `json:"security_violations"`
+	TotalRequests      int64                     `json:"total_requests"`
+	TotalFailures      int64                     `json:"total_failures"`
 	// HasTraffic lets the dashboard branch on the no-traffic state without
 	// parsing SuccessRate. Always present (not omitempty). In host mode - and
 	// in model mode while the model verdict has no signal yet - it is exactly
@@ -65,14 +73,6 @@ type SystemSummary struct {
 	// fresh boot, which coupled with the legacy status threshold produced a
 	// misleading "critical" verdict.
 	HasTraffic bool `json:"has_traffic"`
-	// HealthMode is the computation that produced Status: "host" (the endpoint
-	// fleet, the historical behaviour) or "model" (a configured list of
-	// models/aliases). Always present so clients can tell which verdict they are
-	// looking at.
-	HealthMode string `json:"health_mode"`
-	// Models is the per-model breakdown in model mode. Omitted (nil) in host
-	// mode so the payload is unchanged for the default configuration.
-	Models []health.ModelHealthEntry `json:"models,omitempty"`
 }
 
 type ProxySummary struct {
@@ -124,26 +124,32 @@ type SecurityViolation struct {
 	RateLimits int64 `json:"rate_limits"`
 	SizeLimits int64 `json:"size_limits"`
 }
+
+// Field order is the packed order `make align-check` verifies: the slice and
+// time.Time sit after the composite summaries, keeping the GC scan window at
+// 312 pointer bytes instead of 336. encoding/json emits keys in this order, so
+// the payload's KEY ORDER changes (consumers parse by name; the status ETag
+// rotates once on the deploy, then is stable).
 type StatusResponse struct {
-	Timestamp time.Time          `json:"timestamp"`
 	Proxy     ProxySummary       `json:"proxy"`
-	Endpoints []EndpointResponse `json:"endpoints"`
-	Security  SecuritySummary    `json:"security"`
 	System    SystemSummary      `json:"system"`
+	Security  SecuritySummary    `json:"security"`
+	Endpoints []EndpointResponse `json:"endpoints"`
+	Timestamp time.Time          `json:"timestamp"`
 }
 
 type statusSnapshot struct {
 	endpointStats   map[string]ports.EndpointStats
 	connectionStats map[string]int64
 	endpointModels  map[string]*domain.EndpointModels
-	all             []*domain.Endpoint
-	healthy         []*domain.Endpoint
-	proxyStats      ports.ProxyStats
-	securityStats   ports.SecurityStats
 	// modelStats is the per-model request stats, gathered here so the model
 	// health evaluator can aggregate the configured models' own traffic without
 	// a second collector call.
-	modelStats map[string]ports.ModelStats
+	modelStats    map[string]ports.ModelStats
+	all           []*domain.Endpoint
+	healthy       []*domain.Endpoint
+	proxyStats    ports.ProxyStats
+	securityStats ports.SecurityStats
 }
 
 func (a *Application) gatherStatusSnapshot(ctx context.Context) (*statusSnapshot, error) {
@@ -275,10 +281,10 @@ func (a *Application) buildSystemSummary(ctx context.Context, all, healthy []*do
 	// signal (e.g. a fresh boot before model discovery has run) a model-based
 	// verdict would be a spurious "critical", so re-run the host evaluator and
 	// report the host verdict instead - the honest label is then "host".
-	healthMode := "host"
-	if evaluator.Mode() == "model" {
+	healthMode := health.ModeHost
+	if evaluator.Mode() == health.ModeModel {
 		if result.HasModelSignal {
-			healthMode = "model"
+			healthMode = health.ModeModel
 		} else {
 			result = health.NewHostEvaluator().Evaluate(ctx, in)
 		}
@@ -327,7 +333,7 @@ func (a *Application) buildSystemSummary(ctx context.Context, all, healthy []*do
 	// The per-model breakdown is only meaningful when a model verdict was
 	// actually used; in host mode (and the model-mode fallback) it stays
 	// omitted so the default payload is unchanged.
-	if healthMode == "model" && len(result.Models) > 0 {
+	if healthMode == health.ModeModel && len(result.Models) > 0 {
 		summary.Models = result.Models
 	}
 	return summary

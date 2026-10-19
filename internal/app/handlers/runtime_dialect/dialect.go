@@ -61,18 +61,18 @@ type Column struct {
 
 // Dialect describes one backend family.
 type Dialect struct {
-	// Kind is the canonical runtime kind (config.CanonicalRuntimeKind).
-	Kind string
-	// EngineScoped marks whose throughput values are engine-wide batch
-	// aggregates across concurrent requests rather than per-stream speed;
-	// the envelope states it so the UI never guesses from the kind.
-	EngineScoped bool
 	// Select projects a parsed exposition into engine-neutral counters.
 	Select func(values map[string]float64) Counters
+	// Kind is the canonical runtime kind (config.CanonicalRuntimeKind).
+	Kind string
 	// Columns lists what backends of this kind can render, in display
 	// order. Signals that render attached to a column (speculative
 	// acceptance) or inside one (requests running) are not columns.
 	Columns []Column
+	// EngineScoped marks whose throughput values are engine-wide batch
+	// aggregates across concurrent requests rather than per-stream speed;
+	// the envelope states it so the UI never guesses from the kind.
+	EngineScoped bool
 }
 
 var registry = map[string]Dialect{}

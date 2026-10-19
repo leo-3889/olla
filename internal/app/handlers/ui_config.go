@@ -17,12 +17,12 @@ import (
 const uiConfigRoute = "/internal/ui/config.json"
 
 type uiSection struct {
-	ID      string `json:"id"`
-	Enabled bool   `json:"enabled"`
+	ID string `json:"id"`
 	// Reason explains a disabled section to the operator, not the patient:
 	// "power needs metrics_source.mode=influx" is actionable, an absent
 	// section is not.
-	Reason string `json:"reason,omitempty"`
+	Reason  string `json:"reason,omitempty"`
+	Enabled bool   `json:"enabled"`
 }
 
 type uiMetricColumn struct {
@@ -43,11 +43,11 @@ type uiPollIntervals struct {
 // frontend falls back to an identical built-in default when this endpoint
 // cannot be reached, so both copies must stay byte-equivalent in meaning.
 type UIConfig struct {
-	Schema               int              `json:"schema"`
 	MetricsSource        string           `json:"metrics_source"`
-	PollMS               uiPollIntervals  `json:"poll_ms"`
 	Sections             []uiSection      `json:"sections"`
 	RuntimeMetricColumns []uiMetricColumn `json:"runtime_metric_columns"`
+	PollMS               uiPollIntervals  `json:"poll_ms"`
+	Schema               int              `json:"schema"`
 }
 
 // uiPollIntervalsFrom publishes the configured dashboard poll intervals in

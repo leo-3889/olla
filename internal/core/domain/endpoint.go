@@ -44,24 +44,24 @@ type Endpoint struct {
 	AuthHeaderName string `json:"-"`
 	// AuthHeaderValue is the fully composed header value (e.g. "Bearer tok", "Basic base64(...)").
 	// Never serialised; leaking credentials through logs or status endpoints would be a security issue.
-	AuthHeaderValue        string `json:"-"`
-	LastLatency            time.Duration
-	CheckInterval          time.Duration
-	CheckTimeout           time.Duration
-	Priority               int
-	ConsecutiveFailures    int
-	BackoffMultiplier      int
-	RuntimeMetricsEnabled  bool
-	RuntimeMetricsInterval time.Duration
-	RuntimeMetricsTimeout  time.Duration
+	AuthHeaderValue string `json:"-"`
 	// RuntimeMetricsKind pins the Prometheus metric dialect ("vllm",
 	// "llamacpp", "radiance") when the endpoint type alone does not identify
 	// it; empty means detect from type and name.
 	RuntimeMetricsKind string
 	// RuntimeMetricsPath overrides the metrics scrape path (an absolute URL
 	// is honoured too); empty means "/metrics".
-	RuntimeMetricsPath string
-	PreservePath       bool
+	RuntimeMetricsPath     string
+	LastLatency            time.Duration
+	CheckInterval          time.Duration
+	CheckTimeout           time.Duration
+	Priority               int
+	ConsecutiveFailures    int
+	BackoffMultiplier      int
+	RuntimeMetricsInterval time.Duration
+	RuntimeMetricsTimeout  time.Duration
+	RuntimeMetricsEnabled  bool
+	PreservePath           bool
 }
 
 func (e *Endpoint) GetURLString() string {

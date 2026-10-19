@@ -32,9 +32,9 @@ type fluxQuerier interface {
 }
 
 type influxEndpointState struct {
-	metrics        []RuntimeMetric
 	newest         time.Time
 	availableSince time.Time
+	metrics        []RuntimeMetric
 }
 
 // influxMetricsProvider reads engine runtime metrics from the ollametrics
@@ -45,13 +45,14 @@ type influxMetricsProvider struct {
 	repository domain.EndpointRepository
 	logger     logger.StyledLogger
 	client     fluxQuerier
-	bucket     string
-	staleAfter time.Duration
 	now        func() time.Time
 
-	mu       sync.RWMutex
-	states   map[string]*influxEndpointState
-	firstSee map[string]time.Time
+	states     map[string]*influxEndpointState
+	firstSee   map[string]time.Time
+	bucket     string
+	staleAfter time.Duration
+
+	mu sync.RWMutex
 }
 
 func newInfluxMetricsProvider(influx config.InfluxSourceConfig, token string, repository domain.EndpointRepository, log logger.StyledLogger) *influxMetricsProvider {
@@ -250,8 +251,8 @@ func (p *influxMetricsProvider) Snapshot(endpoint *domain.Endpoint) *EndpointRun
 // envelope shows: average of window values, maximum window value, and the
 // value of the newest window (the "current" for counter-derived rates).
 type influxWindowAgg struct {
-	sum, count, max float64
 	latest          time.Time
+	sum, count, max float64
 	latestValue     float64
 	has             bool
 }
@@ -352,8 +353,8 @@ func (s *influxSeries) envelope() []RuntimeMetric {
 		if avg, ok := s.throughputAvg(pair.gaugeField, pair.counterField); ok {
 			metric.Avg = floatPtr(avg)
 		}
-		if max, ok := s.throughputMax(pair.gaugeField, pair.counterField); ok {
-			metric.Max = floatPtr(max)
+		if peak, ok := s.throughputMax(pair.gaugeField, pair.counterField); ok {
+			metric.Max = floatPtr(peak)
 		}
 		if metric.Current == nil && metric.Avg == nil && metric.Max == nil {
 			continue

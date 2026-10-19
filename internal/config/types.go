@@ -26,20 +26,20 @@ type Config struct {
 	//       - gpt-oss:120b
 	//       - gpt-oss-120b-MLX
 	//       - gguf_gpt_oss_120b.gguf
-	ModelAliases  map[string][]string `yaml:"model_aliases,omitempty"`
-	Health        HealthConfig        `yaml:"health"`
-	Logging       LoggingConfig       `yaml:"logging"`
-	Filename      string              `yaml:"-"`
-	Dashboard     DashboardConfig     `yaml:"dashboard"`
-	Translators   TranslatorsConfig   `yaml:"translators"`
-	ModelRegistry ModelRegistryConfig `yaml:"model_registry"`
-	Discovery     DiscoveryConfig     `yaml:"discovery"`
-	Proxy         ProxyConfig         `yaml:"proxy"`
-	Server        ServerConfig        `yaml:"server"`
-	Engineering   EngineeringConfig   `yaml:"engineering"`
+	ModelAliases map[string][]string `yaml:"model_aliases,omitempty"`
+	Logging      LoggingConfig       `yaml:"logging"`
+	Filename     string              `yaml:"-"`
 	// MetricsSource selects the dashboard runtime-metric backend
 	// (sampler | influx reading the ollametrics InfluxDB).
 	MetricsSource MetricsSourceConfig `yaml:"metrics_source,omitempty"`
+	Health        HealthConfig        `yaml:"health"`
+	Translators   TranslatorsConfig   `yaml:"translators"`
+	ModelRegistry ModelRegistryConfig `yaml:"model_registry"`
+	Dashboard     DashboardConfig     `yaml:"dashboard"`
+	Discovery     DiscoveryConfig     `yaml:"discovery"`
+	Server        ServerConfig        `yaml:"server"`
+	Proxy         ProxyConfig         `yaml:"proxy"`
+	Engineering   EngineeringConfig   `yaml:"engineering"`
 }
 
 // CorsConfig controls browser cross-origin access to the Olla API.
@@ -321,11 +321,13 @@ type ProxyConfig struct {
 	// BusyQueueDepth arms load-aware Busy steering: a probe-healthy endpoint
 	// whose engine queue depth is at or above this value is graded Busy
 	// (routable, SWRR weight 0.3) so NEW conversations steer away from a
-	// saturating node before it starts refusing. 0 = off (default): the
-	// graded ladder stays inert and dispatch behaves as healthy-only.
-	// Requires runtime_metrics on the endpoint (the queue depth signal comes
-	// from the engine scrape; under metrics_source influx no live sampler
-	// exists and grading stays inert by design).
+	// saturating node before it starts refusing. 0 = off (default): nothing is
+	// graded Busy, so the weight ladder degenerates to the healthy tier.
+	// Requires runtime_metrics on the endpoint: the queue signal is the engine
+	// scrape under the sampler, and the llm_runtime queue_depth gauge under
+	// metrics_source influx (influxRuntimeMetricsProvider.QueueDepthFor), so
+	// grading is armed in BOTH metrics modes. It stays inert when the queue
+	// signal is absent, zero, or older than 90s.
 	BusyQueueDepth        int           `yaml:"busy_queue_depth"`
 	ConnectionTimeout     time.Duration `yaml:"connection_timeout"`
 	ConnectionKeepAlive   time.Duration `yaml:"connection_keep_alive"`
@@ -381,9 +383,6 @@ type AuthConfig struct {
 // RuntimeMetricsConfig opts an endpoint into Prometheus exposition sampling
 // of its own inference engine.
 type RuntimeMetricsConfig struct {
-	Enabled  bool          `yaml:"enabled"`
-	Interval time.Duration `yaml:"interval"`
-	Timeout  time.Duration `yaml:"timeout"`
 	// Kind pins the metric dialect ("vllm", "llamacpp", "radiance") for
 	// endpoints whose type alone does not identify it, e.g. a radiance
 	// backend registered as openai-compatible. Omit only when the type
@@ -393,7 +392,10 @@ type RuntimeMetricsConfig struct {
 	// Path overrides the metrics scrape target path (default "/metrics").
 	// An absolute URL is honoured too, for engines serving metrics on a
 	// separate port.
-	Path string `yaml:"path,omitempty"`
+	Path     string        `yaml:"path,omitempty"`
+	Interval time.Duration `yaml:"interval"`
+	Timeout  time.Duration `yaml:"timeout"`
+	Enabled  bool          `yaml:"enabled"`
 }
 
 // EndpointConfig holds configuration for an AI inference endpoint.
@@ -405,6 +407,7 @@ type EndpointConfig struct {
 	// This lets applyEndpointDefaults distinguish "user set 0" from "user said nothing",
 	// since 0 is a valid, lower-than-default priority value.
 	Priority       *int                  `yaml:"priority"`
+	RuntimeMetrics *RuntimeMetricsConfig `yaml:"runtime_metrics,omitempty"`
 	URL            string                `yaml:"url"`
 	Name           string                `yaml:"name"`
 	Type           string                `yaml:"type"`
@@ -412,7 +415,6 @@ type EndpointConfig struct {
 	ModelURL       string                `yaml:"model_url"`
 	CheckInterval  time.Duration         `yaml:"check_interval"`
 	CheckTimeout   time.Duration         `yaml:"check_timeout"`
-	RuntimeMetrics *RuntimeMetricsConfig `yaml:"runtime_metrics,omitempty"`
 	PreservePath   bool                  `yaml:"preserve_path"`
 }
 
@@ -728,7 +730,7 @@ type SuccessRateThresholds struct {
 // (0, 100] and critical_below must not exceed degraded_below.
 func (c *HealthConfig) Validate() error {
 	switch c.Mode {
-	case "host", "model":
+	case HealthModeHost, HealthModeModel:
 		// valid
 	case "":
 		// Absent mode: DefaultConfig supplies "host". Tolerate an empty

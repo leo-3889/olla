@@ -29,11 +29,6 @@ import (
 type PrioritySelector struct {
 	statsCollector ports.StatsCollector
 
-	// swrrMu guards the rotation state. Select is the per-request hot path;
-	// the critical section is a handful of float adds over one tier (fleets
-	// are single-digit endpoints), so a mutex costs less than the lock-free
-	// bookkeeping needed to keep a rotation exact under concurrency.
-	swrrMu sync.Mutex
 	// currentWeight is the SWRR credit per endpoint, keyed by URLString (the
 	// identity the sticky wrapper and PurgeDeadEndpoints already use). Each
 	// pass adds the endpoint's weight and the winner pays the tier total, so
@@ -44,6 +39,12 @@ type PrioritySelector struct {
 	// is bounded by the number of distinct endpoints the process has routed to,
 	// which is config-sized, so it is not pruned.
 	currentWeight map[string]float64
+
+	// swrrMu guards the rotation state. Select is the per-request hot path;
+	// the critical section is a handful of float adds over one tier (fleets
+	// are single-digit endpoints), so a mutex costs less than the lock-free
+	// bookkeeping needed to keep a rotation exact under concurrency.
+	swrrMu sync.Mutex
 }
 
 // NewPrioritySelector creates a new priority-based endpoint selector

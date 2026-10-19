@@ -16,7 +16,7 @@ func testThresholds() config.SuccessRateThresholds {
 // mkEndpoints builds n endpoints, the first k of them healthy.
 func mkEndpoints(n, healthyCount int) []*domain.Endpoint {
 	endpoints := make([]*domain.Endpoint, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		status := domain.StatusHealthy
 		if i >= healthyCount {
 			status = domain.StatusUnhealthy

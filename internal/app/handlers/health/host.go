@@ -17,7 +17,7 @@ func NewHostEvaluator() *HostEvaluator {
 }
 
 // Mode reports the computation kind for the response's health_mode field.
-func (e *HostEvaluator) Mode() string { return "host" }
+func (e *HostEvaluator) Mode() string { return ModeHost }
 
 // Evaluate computes the host-mode verdict.
 func (e *HostEvaluator) Evaluate(_ context.Context, in *Input) *Result {

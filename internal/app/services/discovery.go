@@ -22,15 +22,16 @@ import (
 // are validated before the proxy accepts traffic, preventing "no healthy endpoints"
 // errors during the critical startup phase.
 type DiscoveryService struct {
+	statsCollector ports.StatsCollector
+	logger         logger.StyledLogger
+	registry       domain.ModelRegistry
+	endpointRepo   domain.EndpointRepository
+	loadReader     health.LoadReader
 	config         *config.DiscoveryConfig
 	registryConfig *config.ModelRegistryConfig
 	healthChecker  *health.HTTPHealthChecker
-	statsCollector ports.StatsCollector
 	statsService   *StatsService
-	logger         logger.StyledLogger
 	modelDiscovery *discovery.ModelDiscoveryService
-	registry       domain.ModelRegistry
-	endpointRepo   domain.EndpointRepository
 	// purgeDeadFn, when set, is called with the current routable endpoint list
 	// whenever a backend transitions to unhealthy. Wired by the proxy layer so sticky
 	// session entries for dead backends are evicted promptly rather than waiting for TTL.
@@ -42,7 +43,6 @@ type DiscoveryService struct {
 	// before any service starts, so the params are stashed here and applied
 	// when the checker comes into existence.
 	busyQueueDepth float64
-	loadReader     health.LoadReader
 }
 
 // NewDiscoveryService creates a new discovery service

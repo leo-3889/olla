@@ -36,8 +36,6 @@ const observeTTL = 12 * time.Second
 // Pointer fields mean "the device did not report this field" - the UI draws
 // a dash, never a zero.
 type observePowerRow struct {
-	Target     string   `json:"target"`
-	Endpoint   string   `json:"endpoint"`
 	DeviceName *string  `json:"device_name"`
 	Node       *string  `json:"node"`
 	Watts      *float64 `json:"watts"`
@@ -46,11 +44,11 @@ type observePowerRow struct {
 	Overpower  *float64 `json:"overpower"`
 	OutputOn   *float64 `json:"output_on"`
 	AgeS       *float64 `json:"age_s"`
+	Target     string   `json:"target"`
+	Endpoint   string   `json:"endpoint"`
 }
 
 type observeGpuRow struct {
-	Endpoint           string   `json:"endpoint"`
-	GPU                string   `json:"gpu"`
 	Node               *string  `json:"node"`
 	BusyPercent        *float64 `json:"busy_percent"`
 	MemActivityPercent *float64 `json:"mem_activity_percent"`
@@ -60,19 +58,21 @@ type observeGpuRow struct {
 	VRamTotalBytes     *float64 `json:"vram_total_bytes"`
 	Present            *float64 `json:"present"`
 	AgeS               *float64 `json:"age_s"`
+	Endpoint           string   `json:"endpoint"`
+	GPU                string   `json:"gpu"`
 }
 
 type observeCostEntry struct {
-	Cost         *float64 `json:"cost"`
-	EnergyKWh    *float64 `json:"energy_kwh"`
-	Tokens       *float64 `json:"tokens"`
-	PeriodStatus string   `json:"period_status,omitempty"`
-	PeriodStart  string   `json:"period_start,omitempty"`
-	Currency     string   `json:"currency,omitempty"`
+	Cost      *float64 `json:"cost"`
+	EnergyKWh *float64 `json:"energy_kwh"`
+	Tokens    *float64 `json:"tokens"`
 	// AgeS is how old the cost SERVICE's newest heartbeat is (not the
 	// rollup: rollup _time is the period start, so it can never express
 	// freshness). Seconds; nil when the heartbeat is unknown.
-	AgeS *float64 `json:"age_s"`
+	AgeS         *float64 `json:"age_s"`
+	PeriodStatus string   `json:"period_status,omitempty"`
+	PeriodStart  string   `json:"period_start,omitempty"`
+	Currency     string   `json:"currency,omitempty"`
 }
 
 type observeCost struct {
@@ -96,11 +96,10 @@ type observeCost struct {
 // sampler mode it is the empty shape with source "sampler" (200, never an
 // error: the sections are config-disabled then anyway).
 type ObservePayload struct {
-	Schema      int               `json:"schema"`
 	GeneratedAt time.Time         `json:"generated_at"`
 	Source      string            `json:"source"`
-	Power       []observePowerRow `json:"power"`
 	Cost        observeCost       `json:"cost"`
+	Power       []observePowerRow `json:"power"`
 	GPUs        []observeGpuRow   `json:"gpus"`
 	// GPUsAbsent lists configured metrics_source.influx.gpu_endpoints that
 	// returned ZERO rows in the window: a dead exporter erases its cards
@@ -108,6 +107,7 @@ type ObservePayload struct {
 	// 2 of 5 GPUs reads as a healthy small fleet. The UI must render an
 	// explicit "no data" card per entry.
 	GPUsAbsent []string `json:"gpus_absent"`
+	Schema     int      `json:"schema"`
 }
 
 func newEmptyObservePayload(source string, now time.Time) *ObservePayload {
@@ -123,20 +123,20 @@ func newEmptyObservePayload(source string, now time.Time) *ObservePayload {
 }
 
 type observeCollector struct {
-	cfg    config.InfluxSourceConfig
-	client fluxQuerier
-	logger logger.StyledLogger
-	now    func() time.Time
-	ttl    time.Duration
-
-	mu     sync.Mutex
-	memo   *ObservePayload
-	memoAt time.Time
+	memoAt    time.Time
+	memoErrAt time.Time
+	client    fluxQuerier
+	logger    logger.StyledLogger
 	// Negative cache: a wedged Influx must not be re-fanned (5 queries) on
 	// every client poll; failures are memoized for TTL/2 and served from
 	// the memo (the 503 has no ETag, so clients revalidate cheaply).
-	memoErr   error
-	memoErrAt time.Time
+	memoErr error
+	now     func() time.Time
+	memo    *ObservePayload
+	cfg     config.InfluxSourceConfig
+	ttl     time.Duration
+
+	mu sync.Mutex
 }
 
 func newObserveCollector(influx config.InfluxSourceConfig, token string, log logger.StyledLogger) *observeCollector {
@@ -177,10 +177,13 @@ func (o *observeCollector) payload(ctx context.Context) (*ObservePayload, error)
 	return payload, nil
 }
 
-//nolint:gocognit // the complexity IS the section matrix: power, cost and GPU
-// each fan out over queries with their own error/absent disclosure rules. The
-// per-section helpers are already extracted (powerRows/costRows/gpuRows);
-// flattening the orchestration would hide which leg is allowed to fail.
+// collect builds the observe payload: power, cost and GPU each fan out over
+// their own queries with per-leg error/absent disclosure. The per-section
+// helpers are already extracted (powerRows/costRows/gpuRows); the complexity of
+// this function IS the section matrix, and flattening the orchestration would
+// hide which leg is allowed to fail.
+//
+//nolint:gocognit // section matrix, not incidental logic - see above
 func (o *observeCollector) collect(ctx context.Context) (*ObservePayload, error) {
 	payload := newEmptyObservePayload(runtimeMetricsSourceInflux, o.now())
 	cycleCtx, cancel := context.WithTimeout(ctx, 2*fluxClientTimeout)
@@ -281,11 +284,11 @@ func (o *observeCollector) collect(ctx context.Context) (*ObservePayload, error)
 			sort.Strings(payload.GPUsAbsent)
 		} else {
 			type gpuGroup struct {
-				endpoint string
-				gpu      string
+				newest   time.Time
 				fields   map[string]float64
 				node     *string
-				newest   time.Time
+				endpoint string
+				gpu      string
 			}
 			groups := map[string]*gpuGroup{}
 			for _, row := range rows {
@@ -393,10 +396,10 @@ func (o *observeCollector) collect(ctx context.Context) (*ObservePayload, error)
 			continue
 		}
 		type costGroup struct {
+			newest   time.Time
 			fields   map[string]float64
 			status   string
 			currency string
-			newest   time.Time
 			haveTime bool
 		}
 		groups := map[string]*costGroup{}
