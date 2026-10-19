@@ -98,6 +98,13 @@ describe('sampleEndpoints ring', () => {
     expect(endpointHistory.samplesFor('a')).toHaveLength(2);
   });
 
+  it('304-style ticks (no body, ok) keep every ring intact', () => {
+    sampleEndpoints(payload([ep('a', 1, 1), ep('b', 2, 2)]), true, 1);
+    sampleEndpoints(null, true, 2); // ETag cache hit: data===null, ok===true
+    expect(endpointHistory.samplesFor('a')).toHaveLength(1);
+    expect(endpointHistory.samplesFor('b')).toHaveLength(1);
+  });
+
   it('stale envelope samples as gaps, not zeros', () => {
     sampleEndpoints(payload([ep('a', 9, 9, true)]), true, 1);
     expect(endpointHistory.samplesFor('a')).toEqual([{ t: 1, gen: null, prefill: null }]);

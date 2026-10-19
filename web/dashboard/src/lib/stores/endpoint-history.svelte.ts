@@ -69,7 +69,10 @@ let version = $state(0);
  *  the outage; fabricating a gap sample per endpoint adds no information
  *  the x-axis does not already show). */
 export function sampleEndpoints(data: EndpointStatusResponse | null, ok: boolean, now: number = Date.now()): void {
-  if (!ok) return;
+  // 304 cache hits fire onTick(null, true): no body is NOT an empty fleet.
+  // Sampling the null payload would prune every ring (the fleet vanishes
+  // between two ETag-cached ticks) - cached ticks simply add no sample.
+  if (!ok || !data) return;
   const seen = new Set<string>();
   for (const { key, sample } of samplesFromPayload(data, now)) {
     seen.add(key);
