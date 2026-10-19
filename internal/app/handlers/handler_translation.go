@@ -447,7 +447,16 @@ func (a *Application) translationHandler(trans translator.RequestTranslator) htt
 		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 		transformedReq, err := trans.TransformRequest(ctx, r)
 		if err != nil {
-			a.writeTranslatorError(w, trans, pr, err, http.StatusBadRequest)
+			// A translator's "cannot express this content" is a 415, not a
+			// 400: the body parsed fine, the format cannot carry it. The
+			// Anthropic image path used to answer 200 with the images
+			// silently dropped - an explicit refusal is the honest answer.
+			status := http.StatusBadRequest
+			var unsupported *translator.UnsupportedContentError
+			if errors.As(err, &unsupported) {
+				status = http.StatusUnsupportedMediaType
+			}
+			a.writeTranslatorError(w, trans, pr, err, status)
 			a.recordTranslatorMetrics(trans, pr, mode, fallbackReason)
 			return
 		}

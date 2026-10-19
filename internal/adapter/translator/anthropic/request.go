@@ -183,7 +183,10 @@ func (t *Translator) convertSingleMessage(msg AnthropicMessage) ([]map[string]in
 
 	// user msgs can have text + tool results, assistant msgs have text + tool uses
 	if msg.Role == "user" {
-		userMsg, toolMsgs := t.convertUserMessage(contentBlocks)
+		userMsg, toolMsgs, err := t.convertUserMessage(contentBlocks)
+		if err != nil {
+			return nil, err
+		}
 		// tool messages must immediately follow the assistant tool_calls message;
 		// OpenAI-compatible backends reject any other role between them.
 		result = append(result, toolMsgs...)
@@ -201,9 +204,15 @@ func (t *Translator) convertSingleMessage(msg AnthropicMessage) ([]map[string]in
 }
 
 // split user message into text + tool results (openai needs tool results as separate messages)
-func (t *Translator) convertUserMessage(blocks []interface{}) (map[string]interface{}, []map[string]interface{}) {
+func (t *Translator) convertUserMessage(blocks []interface{}) (map[string]interface{}, []map[string]interface{}, error) {
 	var textParts []string
 	var toolResults []map[string]interface{}
+	// parts keeps document order for the multimodal wire format. It is only
+	// used when the message carries an image: a text-only user message keeps
+	// the joined-string content byte-for-byte, so the overwhelmingly common
+	// path is untouched.
+	var parts []map[string]interface{}
+	hasImage := false
 
 	for _, block := range blocks {
 		blockMap, ok := block.(map[string]interface{})
@@ -216,6 +225,7 @@ func (t *Translator) convertUserMessage(blocks []interface{}) (map[string]interf
 		case contentTypeText:
 			if text, ok := blockMap["text"].(string); ok && text != "" {
 				textParts = append(textParts, text)
+				parts = append(parts, map[string]interface{}{"type": contentTypeText, "text": text})
 			}
 		case contentTypeToolResult:
 			// map tool_use_id to tool_call_id
@@ -246,20 +256,61 @@ func (t *Translator) convertUserMessage(blocks []interface{}) (map[string]interf
 				"content":      content,
 			})
 		case contentTypeImage:
-			// TODO: image support later
-			t.logger.Debug("Image content not yet supported in Phase 1")
+			part, err := imagePart(blockMap)
+			if err != nil {
+				return nil, nil, err
+			}
+			hasImage = true
+			parts = append(parts, part)
 		}
 	}
 
 	var userMsg map[string]interface{}
-	if len(textParts) > 0 {
+	switch {
+	case hasImage && len(parts) > 0:
+		// Multimodal: the OpenAI chat format wants the parts array; text
+		// blocks ride in document order next to their images.
+		userMsg = map[string]interface{}{
+			"role":    "user",
+			"content": parts,
+		}
+	case len(textParts) > 0:
 		userMsg = map[string]interface{}{
 			"role":    "user",
 			"content": strings.Join(textParts, ""),
 		}
 	}
 
-	return userMsg, toolResults
+	return userMsg, toolResults, nil
+}
+
+// imagePart maps an Anthropic image block to its OpenAI chat-format twin.
+// base64 sources travel as data URLs. source.type=url is rejected, not
+// rewritten: fetching a client-supplied URL from the gateway would turn it
+// into an SSRF primitive, and shipping the raw URL to the backend hands the
+// fetch to an engine whose egress the operator never chose. A client that
+// means the model to see the image sends base64 (the Anthropic SDKs'
+// default for local files).
+func imagePart(block map[string]interface{}) (map[string]interface{}, error) {
+	source, _ := block["source"].(map[string]interface{})
+	if source == nil {
+		return nil, fmt.Errorf("invalid content type: image block without source")
+	}
+	sourceType, _ := source["type"].(string)
+	if sourceType != "base64" {
+		return nil, &translator.UnsupportedContentError{
+			Detail: fmt.Sprintf("image source.type=%q; the Anthropic translator carries base64 images only (url sources are not fetched server-side)", sourceType),
+		}
+	}
+	mediaType, _ := source["media_type"].(string)
+	data, _ := source["data"].(string)
+	if mediaType == "" || data == "" {
+		return nil, fmt.Errorf("invalid content type: base64 image block missing media_type or data")
+	}
+	return map[string]interface{}{
+		"type":      "image_url",
+		"image_url": map[string]interface{}{"url": "data:" + mediaType + ";base64," + data},
+	}, nil
 }
 
 // combine text + tool uses into single openai message
