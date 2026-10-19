@@ -195,3 +195,37 @@ func TestInfluxProviderUnavailableEndpointExcludedFromQuerySet(t *testing.T) {
 	require.NotZero(t, stub.calls)
 	assert.Nil(t, p.Snapshot(down), "unroutable endpoints never surface runtime metrics")
 }
+
+func TestInfluxProviderQueueDepthFor(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	ep := &domain.Endpoint{Name: "ep1", URLString: "http://ep1:8000", Type: "openai-compatible", RuntimeMetricsKind: "radiance", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true}
+	provider := newProviderForTest(&stubFluxQuerier{}, []*domain.Endpoint{ep}, func() time.Time { return now })
+
+	// Fresh sample with a queue gauge: known.
+	provider.states["ep1"] = &influxEndpointState{
+		metrics: []RuntimeMetric{{Key: runtimeMetricKeyQueueDepth, Current: floatPtr(4)}},
+		newest:  now.Add(-30 * time.Second),
+	}
+	q, ok := provider.QueueDepthFor(ep)
+	assert.True(t, ok)
+	assert.InDelta(t, 4.0, q, 1e-9)
+
+	// Older than the load-reader bound: not known (no steering on old data).
+	provider.states["ep1"].newest = now.Add(-91 * time.Second)
+	_, ok = provider.QueueDepthFor(ep)
+	assert.False(t, ok, "sample older than 90s must not steer routing")
+
+	// Tracked but engine exports no queue gauge (halogen-style gap): not known.
+	provider.states["ep1"] = &influxEndpointState{
+		metrics: []RuntimeMetric{{Key: runtimeMetricKeyKvCacheUsagePercent, Current: floatPtr(33)}},
+		newest:  now,
+	}
+	_, ok = provider.QueueDepthFor(ep)
+	assert.False(t, ok)
+
+	// Endpoint outside the tracked set (state deleted by markUnavailable).
+	_, ok = provider.QueueDepthFor(&domain.Endpoint{Name: "ep2", URLString: "http://ep2:8000", RuntimeMetricsKind: "radiance", Status: domain.StatusHealthy})
+	assert.False(t, ok)
+	_, ok = provider.QueueDepthFor(nil)
+	assert.False(t, ok)
+}
