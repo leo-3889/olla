@@ -32,7 +32,6 @@ type RequestProfile struct {
 	EstimatedTokens int         // For capacity planning
 
 	RequiresFunctionCall bool
-	RequiresVision       bool
 
 	// FailClosedOnNoMatch marks a profile whose SupportedBy represents a hard
 	// provider-type boundary rather than a soft compatibility hint. Set only by
