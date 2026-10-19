@@ -169,6 +169,7 @@ Proxy engine and request handling settings.
 | `engine` | string | `"olla"` | Proxy engine (`olla` or `sherpa`; `sherpa` is in maintenance mode) |
 | `profile` | string | `"auto"` | Proxy profile (`auto`, `streaming`, `standard`) |
 | `load_balancer` | string | `"least-connections"` | Load balancer strategy (`round-robin`, `least-connections`, `priority`) |
+| `busy_queue_depth` | int | `0` | Load-aware Busy steering (priority balancer): a probe-healthy endpoint whose engine queue depth is at/above this value is graded `busy` (routable, weight 0.3), so new conversations steer away from a saturating node BEFORE it refuses connections. 0 = off. Requires `runtime_metrics` enabled on the endpoint (the queue signal is the engine scrape); under `metrics_source: influx` no live sampler exists and grading stays inert |
 
 Example:
 
@@ -312,7 +313,7 @@ discovery:
 | `static.endpoints[].health_check_url` | string | No | Health check path (optional, uses profile default if not specified) |
 | `static.endpoints[].model_url` | string | No | Model discovery path (optional, uses profile default if not specified) |
 | `static.endpoints[].check_interval` | duration | No | Health check interval (default: `5s`) |
-| `static.endpoints[].check_timeout` | duration | No | Health check timeout (default: `2s`) |
+| `static.endpoints[].check_timeout` | duration | No | Health check timeout (default: `10s`). Enforced per probe: each check gets an http.Client whose hard timeout follows this budget (plus 1s slack), so budgets above the 5s historical client cap are effective |
 | `static.endpoints[].runtime_metrics` | object | No | Opt-in server-side `/metrics` sampler (see below) |
 | `static.endpoints[].model_filter` | object | No | Model filtering for this endpoint |
 | `static.endpoints[].auth` | object | No | Outbound authentication credentials (see below) |

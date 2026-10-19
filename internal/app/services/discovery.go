@@ -289,6 +289,15 @@ func (s *DiscoveryService) SetStatsService(statsService *StatsService) {
 	s.statsService = statsService
 }
 
+// SetLoadAwareness arms load-aware Busy grading on the health checker
+// (proxy.busy_queue_depth, reader = runtime-metrics sampler). threshold <= 0
+// is inert. Safe before Start(): the checker instance is fixed at construction.
+func (s *DiscoveryService) SetLoadAwareness(threshold float64, reader health.LoadReader) {
+	if s.healthChecker != nil {
+		s.healthChecker.SetLoadAwareness(threshold, reader)
+	}
+}
+
 // SetPurgeDeadEndpointsFn registers a function to call with the current routable
 // endpoint list whenever a backend transitions to unhealthy. Used by the proxy layer
 // to evict sticky session entries for dead backends without waiting for TTL expiry.

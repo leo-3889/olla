@@ -54,6 +54,16 @@ type HTTPService struct {
 	securitySvc      *SecurityService
 }
 
+// QueueDepthFor implements health.LoadReader for load-aware Busy steering:
+// it delegates to the HTTP application's runtime-metrics sampler (the sole
+// home of live engine queue depth).
+func (s *HTTPService) QueueDepthFor(endpoint *domain.Endpoint) (float64, bool) {
+	if s.application == nil {
+		return 0, false
+	}
+	return s.application.QueueDepthFor(endpoint)
+}
+
 // NewHTTPService creates a new HTTP service
 func NewHTTPService(
 	config *config.ServerConfig,

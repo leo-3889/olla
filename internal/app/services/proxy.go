@@ -254,8 +254,17 @@ func (a *endpointRepositoryAdapter) GetEndpoints(ctx context.Context) ([]*domain
 	return a.repo.GetAll(ctx)
 }
 
+// GetHealthyEndpoints is the proxy dispatch candidate source. It returns the
+// ROUTABLE set (healthy/busy/warming), not healthy-only: the priority
+// selector grades traffic weights by status (1.0/0.3/0.1) and load-aware
+// Busy grading is meaningless while the candidate filter excludes Busy - the
+// healthy-only filter made the whole graded-weight ladder dead code, and an
+// all-Busy top tier produced a 503 instead of degraded routing. With the
+// default threshold (grading off) Busy/Warming are unreachable statuses in
+// practice, so the filter change is behavior-neutral until opted in.
+// Status/model listing endpoints keep the strict GetHealthy.
 func (a *endpointRepositoryAdapter) GetHealthyEndpoints(ctx context.Context) ([]*domain.Endpoint, error) {
-	return a.repo.GetHealthy(ctx)
+	return a.repo.GetRoutable(ctx)
 }
 
 func (a *endpointRepositoryAdapter) RefreshEndpoints(ctx context.Context) error {

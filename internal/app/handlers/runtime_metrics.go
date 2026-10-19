@@ -490,6 +490,26 @@ func recordGaugeRatio(a *ratioAggregate, at time.Time, percent *float64) {
 	a.avg, _ = windowStats(a.samples)
 }
 
+// QueueDepthFor reports the freshest sampled engine queue depth, consumed by
+// the health checker for load-aware Busy grading. Stale, absent, or >90s old
+// samples answer "not known" - the probe verdict stays ungraded rather than
+// steering on old data.
+func (s *endpointRuntimeMetricsSampler) QueueDepthFor(endpoint *domain.Endpoint) (float64, bool) {
+	if s == nil || endpoint == nil {
+		return 0, false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	st := s.states[endpoint.URLString]
+	if st == nil || !st.available || st.stale || st.QueueDepth == nil {
+		return 0, false
+	}
+	if !st.sampledAt.IsZero() && s.now().Sub(st.sampledAt) > 90*time.Second {
+		return 0, false
+	}
+	return *st.QueueDepth, true
+}
+
 func (s *endpointRuntimeMetricsSampler) Snapshot(endpoint *domain.Endpoint) *EndpointRuntimeMetrics {
 	if s == nil || endpoint == nil || !endpoint.RuntimeMetricsEnabled || runtimeMetricsKind(endpoint) == "" || !endpoint.Status.IsRoutable() {
 		return nil
@@ -802,4 +822,18 @@ func writeEndpointRuntimePrometheusMetrics(b *strings.Builder, endpoints []*doma
 			}
 		}
 	}
+}
+
+// QueueDepthFor bridges health.LoadReader to the runtime-metrics provider for
+// app wiring. The influx provider carries no sampler state, so the type
+// assertion fails and grading stays inert under metrics_source: influx (the
+// engine queue lives in Influx on that path, not in the sampler).
+func (a *Application) QueueDepthFor(endpoint *domain.Endpoint) (float64, bool) {
+	p, ok := a.runtimeMetrics.(interface {
+		QueueDepthFor(endpoint *domain.Endpoint) (float64, bool)
+	})
+	if !ok {
+		return 0, false
+	}
+	return p.QueueDepthFor(endpoint)
 }
