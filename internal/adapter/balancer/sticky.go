@@ -360,6 +360,35 @@ func stickyKeyFromFirstTurn(body []byte, modelName string) (string, string) {
 			return false
 		})
 	}
+	if system == "" {
+		// Anthropic-format bodies carry the system prompt as a TOP-LEVEL field
+		// (a plain string, or an array of {type:"text",text:...} blocks). The
+		// Anthropic->OpenAI translator folds it into messages[0].system, but the
+		// sticky key is computed from the RAW body before translation
+		// (handler_translation), so without this fold the fingerprint omits the
+		// system prompt entirely: conversations that open with the same text
+		// under DIFFERENT system prompts - several agents behind one gateway -
+		// collide onto one pin. Match the translator's flattening
+		// (request.go: joined text blocks).
+		if sysTop := gjson.GetBytes(body, "system"); sysTop.Exists() {
+			if sysTop.IsArray() {
+				var parts []string
+				sysTop.ForEach(func(_, block gjson.Result) bool {
+					if text := block.Get("text").String(); text != "" {
+						parts = append(parts, text)
+					}
+					return true
+				})
+				system = strings.Join(parts, "\n")
+			} else {
+				// String() not Raw: the block form yields unquoted text, and the
+				// two Anthropic system shapes must fingerprint identically (the
+				// JSON quotes of Raw would split one prompt across two pins).
+				system = sysTop.String()
+			}
+		}
+	}
+
 	if first == "" {
 		// Completions-style body (/v1/completions and passthroughs): the prompt
 		// itself is the conversation's opening turn.

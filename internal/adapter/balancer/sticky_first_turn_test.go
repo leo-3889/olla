@@ -256,3 +256,52 @@ func TestStickyKey_TruncatedBodyStopsAtNoKeyNeverSharedCredential(t *testing.T) 
 	assert.NotEmpty(t, keyAuth)
 	assert.Equal(t, "auth_header", sourceAuth)
 }
+
+// Anthropic-format requests keep the system prompt at the TOP LEVEL, and the
+// sticky key is computed from the raw body before the translator folds it into
+// messages. Without the fold, the fingerprint is the opener alone: "hi" from
+// solarbot and "hi" from wa-router become one pin on one node.
+func TestStickyKey_AnthropicTopLevelSystemFoldsIntoTheFingerprint(t *testing.T) {
+	t.Parallel()
+
+	anthropicBody := func(t *testing.T, system any, opener string) []byte {
+		t.Helper()
+		b, err := json.Marshal(map[string]any{
+			"model":      "claude-ish",
+			"max_tokens": 64,
+			"system":     system,
+			"messages": []map[string]any{{
+				"role":    "user",
+				"content": []map[string]any{{"type": "text", "text": opener}},
+			}},
+		})
+		require.NoError(t, err)
+		return b
+	}
+
+	req, err := http.NewRequest(http.MethodPost, "/v1/messages", nil)
+	require.NoError(t, err)
+	cfg := firstTurnConfig("first_user_message")
+
+	// The fingerprint folds at most sysFingerprintBytes of the system prompt, so
+	// the distinguishing text goes FIRST (agents name themselves up front, and a
+	// shared prefix beyond the window is a documented collision, not this defect).
+	shared := strings.Repeat("You are a careful assistant. ", 120)
+	require.Greater(t, len(shared), 2048, "fixture: padding past the fingerprint window")
+	stringSystem := anthropicBody(t, "You are solarbot. "+shared, "hi")
+	blocksSystem := anthropicBody(t, []map[string]string{{"type": "text", "text": "You are wa-router. " + shared}}, "hi")
+
+	keyA, sourceA := ComputeStickyKey(req, "m", cfg, stringSystem, false)
+	require.Equal(t, "first_user_message", sourceA)
+	keyB, _ := ComputeStickyKey(req, "m", cfg, blocksSystem, false)
+	assert.NotEqual(t, keyA, keyB, "same opener under different system prompts must not share a pin")
+
+	keyA2, _ := ComputeStickyKey(req, "m", cfg, stringSystem, false)
+	assert.Equal(t, keyA, keyA2, "the fold must be deterministic across turns")
+
+	// The two Anthropic system shapes must agree with each other: a plain
+	// string and the equivalent single text block are the same prompt.
+	sameAsBlocks := anthropicBody(t, "You are wa-router. "+shared, "hi")
+	keyC, _ := ComputeStickyKey(req, "m", cfg, sameAsBlocks, false)
+	assert.Equal(t, keyB, keyC, "string and [{type:text}] system forms are one prompt")
+}
