@@ -64,8 +64,13 @@ type influxMetricsProvider struct {
 	client     fluxQuerier
 	now        func() time.Time
 
-	states     map[string]*influxEndpointState
-	firstSee   map[string]time.Time
+	states   map[string]*influxEndpointState
+	firstSee map[string]time.Time
+	// legFailing tracks per-query-leg failure across cycles so a PARTIAL
+	// cycle failure (one window leg dies while last() lives) is logged on
+	// transition: the all-fail warn only covers the total case, and silently
+	// blanked avg/max columns were indistinguishable from an idle engine.
+	legFailing map[string]bool
 	bucket     string
 	staleAfter time.Duration
 
@@ -81,6 +86,7 @@ func newInfluxMetricsProvider(influx config.InfluxSourceConfig, token string, re
 		staleAfter: influx.StaleAfter,
 		now:        time.Now,
 		states:     map[string]*influxEndpointState{},
+		legFailing: map[string]bool{},
 		firstSee:   map[string]time.Time{},
 	}
 }
@@ -183,7 +189,12 @@ func (p *influxMetricsProvider) refresh(ctx context.Context) {
 		}
 		return
 	}
-	gaugeMax, _ := query(influxBase(p.bucket, influxWindowRange, set) + influxFieldFilter("decode_tokens_per_second", "prefill_tokens_per_second", "prefix_cache_hit_ratio", "kv_cache_usage_ratio", "draft_acceptance_ratio") + "|> aggregateWindow(every:1m, fn:max, createEmpty:false)")
+	gaugeMax, errGaugeMax := query(influxBase(p.bucket, influxWindowRange, set) + influxFieldFilter("decode_tokens_per_second", "prefill_tokens_per_second", "prefix_cache_hit_ratio", "kv_cache_usage_ratio", "draft_acceptance_ratio") + "|> aggregateWindow(every:1m, fn:max, createEmpty:false)")
+	p.noteLeg("last", err)
+	p.noteLeg("gaugeMean", errMean)
+	p.noteLeg("gaugeMax", errGaugeMax)
+	p.noteLeg("counterMean", errCounter)
+	p.noteLeg("counterMax", errCounterMax)
 
 	series := map[string]*influxSeries{}
 	absorbAll := func(rows []map[string]any, bucket string) {
@@ -322,6 +333,26 @@ func newInfluxSeries() *influxSeries {
 // structurally identical column-wise.
 // at returns the freshest sample time recorded for one field (zero when the
 // field never arrived).
+// noteLeg logs a query leg on FAILURE/RECOVERY transitions (never per
+// cycle - the refresh runs every 10s). legs allowed to fail independently:
+// the cycle keeps last() rows when only a window leg dies, which used to be
+// silent and read as "engine idle, no averages".
+func (p *influxMetricsProvider) noteLeg(leg string, err error) {
+	failing := err != nil
+	p.mu.Lock()
+	prev := p.legFailing[leg]
+	p.legFailing[leg] = failing
+	p.mu.Unlock()
+	if p.logger == nil || failing == prev {
+		return
+	}
+	if failing {
+		p.logger.Warn("metrics_source influx: query leg failing", "leg", leg, "error", err.Error())
+	} else {
+		p.logger.Info("metrics_source influx: query leg recovered", "leg", leg)
+	}
+}
+
 func (s *influxSeries) at(field string) time.Time { return s.lastAt[field] }
 
 func (s *influxSeries) absorb(row map[string]any, bucket string) {
