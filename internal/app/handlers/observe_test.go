@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -321,8 +323,22 @@ func TestObserveCostWindowPerPeriod(t *testing.T) {
 	}
 	require.NotEmpty(t, hour)
 	require.NotEmpty(t, day)
-	assert.Contains(t, hour, "range(start:-26h)", "hourly rollups must not scan 8d")
-	assert.Contains(t, day, "range(start:-30h)", "a live day period started <=26h ago (AEST 22:00Z boundary); -30h is the full renderable horizon + writer slack - the newest-period rule never renders 7-day-old rows")
+	// Contract is the SHAPE of each window, not its literal: a period's scan
+	// must cover its liveness anchor (hour 2h, day 26h) plus writer slack, and
+	// stay near the renderable horizon. The historical -8d scanned ~12x the rows
+	// the wall-clock anchor always drops (2.7s of influx wall per TTL rebuild).
+	window := func(q string) time.Duration {
+		m := regexp.MustCompile(`range\(start:-(\d+)h\)`).FindStringSubmatch(q)
+		require.NotNil(t, m, "cost query must carry an explicit bounded window: %s", q)
+		n, err := strconv.Atoi(m[1])
+		require.NoError(t, err)
+		return time.Duration(n) * time.Hour
+	}
+	hw, dw := window(hour), window(day)
+	assert.GreaterOrEqual(t, hw, 2*time.Hour, "hour window must cover its 2h liveness anchor")
+	assert.Less(t, hw, 12*time.Hour, "an open hour period started <1h ago; scanning more is pure cost")
+	assert.GreaterOrEqual(t, dw, 27*time.Hour, "a live day period started <=26h ago (AEST 22:00Z boundary) + writer slack")
+	assert.Less(t, dw, 36*time.Hour, "the newest-period rule never renders 3-day-old rows")
 }
 
 func TestObserveCostWallClockAnchor(t *testing.T) {

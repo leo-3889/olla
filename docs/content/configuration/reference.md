@@ -169,7 +169,7 @@ Proxy engine and request handling settings.
 | `engine` | string | `"olla"` | Proxy engine (`olla` or `sherpa`; `sherpa` is in maintenance mode) |
 | `profile` | string | `"auto"` | Proxy profile (`auto`, `streaming`, `standard`) |
 | `load_balancer` | string | `"least-connections"` | Load balancer strategy (`round-robin`, `least-connections`, `priority`) |
-| `busy_queue_depth` | int | `0` | Load-aware Busy steering (priority balancer): a probe-healthy endpoint whose engine queue depth is at/above this value is graded `busy` (routable, weight 0.3), so new conversations steer away from a saturating node BEFORE it refuses connections. 0 = off. Requires `runtime_metrics` enabled on the endpoint (the queue signal is the engine scrape); under `metrics_source: influx` no live sampler exists and grading stays inert |
+| `busy_queue_depth` | int | `0` | Load-aware Busy steering (priority balancer): a probe-healthy endpoint whose engine queue depth is at/above this value is graded `busy` (routable, weight 0.3), so new conversations steer away from a saturating node BEFORE it refuses connections. 0 = off. Requires `runtime_metrics` enabled on the endpoint: the queue signal is the engine scrape under the sampler, and the `llm_runtime` `queue_depth` gauge under `metrics_source: influx` (so grading is live in both modes). Grading is inert when that signal is absent, zero, or older than 90s. Busy endpoints keep carrying traffic at the reduced weight, so lower this value only after measuring: on the live fleet `queue_depth >= 8` is routine under agent fan-out, and grading at 1-3 starves the healthy tier's weight budget. |
 
 Example:
 

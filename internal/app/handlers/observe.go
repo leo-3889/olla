@@ -177,6 +177,10 @@ func (o *observeCollector) payload(ctx context.Context) (*ObservePayload, error)
 	return payload, nil
 }
 
+//nolint:gocognit // the complexity IS the section matrix: power, cost and GPU
+// each fan out over queries with their own error/absent disclosure rules. The
+// per-section helpers are already extracted (powerRows/costRows/gpuRows);
+// flattening the orchestration would hide which leg is allowed to fail.
 func (o *observeCollector) collect(ctx context.Context) (*ObservePayload, error) {
 	payload := newEmptyObservePayload(runtimeMetricsSourceInflux, o.now())
 	cycleCtx, cancel := context.WithTimeout(ctx, 2*fluxClientTimeout)
@@ -358,11 +362,16 @@ func (o *observeCollector) collect(ctx context.Context) (*ObservePayload, error)
 		// its horizon (one hour period is open at a time; the AEST day
 		// starts 22:00Z-23:59Z, so a live day period started <=26h ago),
 		// and the liveness anchor below rejects anything past its maxAge -
-		// so -26h/-30h fetch everything renderable plus slack for a late
+		// so each window fetches everything renderable plus slack for a late
 		// writer, and nothing else. The windows used to be -8d: 2.7s of
 		// measured influx wall per TTL rebuild spent scanning rows the
 		// anchor always drops. Ghosts inside the slack are dropped too,
-		// never rendered.
+		// never rendered. A period start is an ABSOLUTE instant, so the open
+		// hour period always started within the last hour (tz offsets cannot
+		// shift it): -4h is the renderable hour plus 3h of writer slack, and
+		// recomputed CLOSED hour rows older than maxAge are anchor-dropped
+		// whether or not the window scans them - narrowing changes cost, not
+		// output. Day keeps -30h (26h horizon + 4h slack, AEST 22:00Z starts).
 		window string
 		// maxAge anchors the newest-period rule to wall-clock: when EVERY
 		// endpoint is retired, "newest" is a frozen period start and the
@@ -372,7 +381,7 @@ func (o *observeCollector) collect(ctx context.Context) (*ObservePayload, error)
 		// midnight (= 22:00Z), so a UTC floor(now) would drop valid day
 		// rows; 2h/26h tolerate any offset a period can start with.
 		maxAge time.Duration
-	}{{"hour", payload.Cost.Hour, "-26h", 2 * time.Hour}, {"day", payload.Cost.Day, "-30h", 26 * time.Hour}}
+	}{{"hour", payload.Cost.Hour, "-4h", 2 * time.Hour}, {"day", payload.Cost.Day, "-30h", 26 * time.Hour}}
 	for _, cp := range costPeriods {
 		queries++
 		// _time of a cost rollup is the PERIOD START, so the window must

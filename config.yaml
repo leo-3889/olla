@@ -60,6 +60,15 @@ proxy:
   # - "standard": Normal HTTP delivery without forced flushing, suitable for REST APIs
   profile: "auto" # Available: auto, streaming, standard
   load_balancer: "least-connections" # Available: round-robin, least-connections, priority
+  # Load-aware Busy steering: a probe-healthy endpoint whose engine queue depth
+  # is at/above this value is graded "busy" - it stays routable at weight 0.3, so
+  # new conversations steer away from a saturating node before it starts refusing.
+  # 0 = off (default). Needs load_balancer: "priority" to affect selection and
+  # runtime_metrics on the endpoint (queue signal: engine scrape, or the
+  # llm_runtime queue_depth gauge under metrics_source: influx). Measure before
+  # lowering: on a loaded fleet queue_depth >= 8 is routine, and grading at 1-3
+  # spends the healthy tier's weight budget on saturated nodes.
+  busy_queue_depth: 0
   # stream_buffer_size: 8192 # Buffer size per request - larger = fewer syscalls, more memory. Unset: the engine default applies (Olla 64KiB, Sherpa 8KiB).
   connection_timeout: 60s
   connection_keep_alive: 30s # TCP keep-alive interval for backend connections
