@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"strings"
 
@@ -29,6 +31,17 @@ const (
 	// Requests where "model" is absent or appears beyond this ceiling will not be routed by
 	// model name - capability-based or default routing applies instead.
 	modelScanSize = 8 * 1024 * 1024
+
+	// multipartModelScanSize bounds the bytes buffered when scanning a
+	// multipart/form-data body (OpenAI /v1/audio/transcriptions) for its
+	// "model" field. The field may follow a multi-megabyte "file" part, so the
+	// whole body must be scanned; 8 MB covers conversational audio clips while
+	// bounding memory per request. Larger uploads get default routing.
+	multipartModelScanSize = 8 * 1024 * 1024
+
+	// multipartModelFieldLimit bounds the "model" form field we will read.
+	// Model names are small text; anything larger is not a model name.
+	multipartModelFieldLimit = 256
 )
 
 type modelRequest struct {
@@ -67,6 +80,14 @@ func (bi *BodyInspector) Inspect(ctx context.Context, r *http.Request, profile *
 	}
 
 	contentType := r.Header.Get(constants.HeaderContentType)
+	if strings.Contains(strings.ToLower(contentType), "multipart/form-data") {
+		// OpenAI audio transcription requests carry the model as a form field in
+		// a multipart body. Route them by registry membership the same way JSON
+		// bodies are routed; audio endpoints are not chat models and must not
+		// fall onto the default chain.
+		bi.inspectMultipart(r, profile, contentType)
+		return nil
+	}
 	if !strings.Contains(strings.ToLower(contentType), constants.ContentTypeJSON) {
 		bi.logger.Debug("Skipping body inspection for non-JSON content", "content_type", contentType)
 		return nil
@@ -160,6 +181,73 @@ func (bi *BodyInspector) Inspect(ctx context.Context, r *http.Request, profile *
 	}
 
 	return nil
+}
+
+// inspectMultipart extracts the "model" form field from a multipart request
+// (OpenAI /v1/audio/transcriptions) so the proxy can route by registry
+// membership. The body is buffered and restored, mirroring the JSON path: the
+// downstream proxy must forward the upload byte-identical. Bodies larger than
+// multipartModelScanSize are left untouched (capability/default routing).
+func (bi *BodyInspector) inspectMultipart(r *http.Request, profile *domain.RequestProfile, contentType string) {
+	_, params, err := mime.ParseMediaType(contentType)
+	if err != nil || params["boundary"] == "" {
+		bi.logger.Debug("Multipart body without a usable boundary, skipping inspection", "error", err)
+		return
+	}
+	if r.ContentLength > multipartModelScanSize {
+		bi.logger.Debug("Multipart body exceeds the model-scan ceiling, skipping inspection",
+			"content_length", r.ContentLength)
+		return
+	}
+
+	buffer, err := bi.bufferPool.Get()
+	if err != nil {
+		return
+	}
+	defer func() {
+		buffer.Reset()
+		bi.bufferPool.Put(buffer)
+	}()
+
+	if _, err := io.Copy(buffer, io.LimitReader(r.Body, multipartModelScanSize)); err != nil {
+		bi.logger.Debug("Failed to read multipart body", "error", err)
+		return
+	}
+
+	// Copy before the deferred Reset()/Put() invalidates the pooled slice, and
+	// restore the body for the downstream proxy exactly like the JSON path.
+	restored := append([]byte(nil), buffer.Bytes()...)
+	origBody := r.Body
+	r.Body = readCloser{
+		Reader: io.MultiReader(bytes.NewReader(restored), origBody),
+		Closer: origBody,
+	}
+
+	mr := multipart.NewReader(bytes.NewReader(restored), params["boundary"])
+	for {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			return
+		}
+		if err != nil {
+			bi.logger.Debug("Multipart parse failed, continuing with default routing", "error", err)
+			return
+		}
+		if part.FormName() != "model" {
+			_ = part.Close()
+			continue
+		}
+		data, err := io.ReadAll(io.LimitReader(part, multipartModelFieldLimit+1))
+		_ = part.Close()
+		if err != nil || len(data) == 0 || len(data) > multipartModelFieldLimit {
+			return
+		}
+		if model := strings.TrimSpace(string(data)); model != "" {
+			profile.ModelName = bi.normalizeModelName(model)
+			bi.logger.Debug("Extracted model name from multipart form", "model", profile.ModelName)
+		}
+		return
+	}
 }
 
 func (bi *BodyInspector) extractModelName(body []byte) string {
