@@ -103,7 +103,10 @@ func (rp *RequestProfile) SetInspectionMeta(key string, value interface{}) {
 // Defined here (not in adapter/balancer) so that adapter/proxy/core can read it
 // without creating an import cycle.
 type StickyOutcome struct {
-	// Result is "hit", "miss", "repin", or "disabled".
+	// Result is "hit", "miss", "bypass" (pin kept, node blipped, inner
+	// selector served this turn), or "no_key" (sticky enabled, cascade
+	// produced no key). "repin"/"disabled" are retired: a blip no longer
+	// overwrites the pin, and this wrapper only exists when enabled.
 	Result string
 	// Source is which key source produced the affinity key.
 	Source string

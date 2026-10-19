@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jellydator/ttlcache/v3"
@@ -33,6 +34,21 @@ type StickySessionWrapper struct {
 	inner domain.EndpointSelector
 	store *ttlcache.Cache[string, string]
 	cfg   config.StickySessionConfig
+
+	// mu guards the outcome counters (results per outcome, per key source).
+	// Select is the per-request hot path; the critical section is two map
+	// increments, so a mutex is cheaper than per-source atomics here.
+	mu           sync.Mutex
+	resultCounts map[string]uint64
+	sourceCounts map[string]uint64
+}
+
+// recordOutcome counts a routing decision for /internal/stats/sticky.
+func (s *StickySessionWrapper) recordOutcome(result, source string) {
+	s.mu.Lock()
+	s.resultCounts[result]++
+	s.sourceCounts[source]++
+	s.mu.Unlock()
 }
 
 // NewStickySessionWrapper wraps inner with sticky session affinity using cfg.
@@ -52,9 +68,11 @@ func NewStickySessionWrapper(inner domain.EndpointSelector, cfg config.StickySes
 	)
 
 	return &StickySessionWrapper{
-		inner: inner,
-		store: store,
-		cfg:   cfg,
+		inner:        inner,
+		store:        store,
+		cfg:          cfg,
+		resultCounts: make(map[string]uint64),
+		sourceCounts: make(map[string]uint64),
 	}
 }
 
@@ -94,9 +112,15 @@ func (s *StickySessionWrapper) Select(ctx context.Context, endpoints []*domain.E
 	source, _ := ctx.Value(constants.ContextStickyKeySourceKey).(string)
 
 	if key == "" {
-		// No affinity key — pass through transparently.
+		// No affinity key — pass through transparently. This wrapper only
+		// exists when the feature is enabled, so "disabled" would be a lie:
+		// the cascade ran and every source declined. Operators reading
+		// "disabled" concluded sticky was off when it was the key that was
+		// missing (an over-eager scan budget, a streaming path that never
+		// buffered) — "no_key" states what actually happened.
+		s.recordOutcome("no_key", "none")
 		if outcome != nil {
-			outcome.Result = "disabled"
+			outcome.Result = "no_key"
 			outcome.Source = "none"
 		}
 		return s.inner.Select(ctx, endpoints)
@@ -109,6 +133,7 @@ func (s *StickySessionWrapper) Select(ctx context.Context, endpoints []*domain.E
 		for _, ep := range endpoints {
 			if ep.Status.IsRoutable() && ep.URLString == pinnedURL {
 				// Sticky hit — backend is still alive and serving this model.
+				s.recordOutcome("hit", source)
 				if outcome != nil {
 					outcome.Result = "hit"
 					outcome.Source = source
@@ -116,7 +141,6 @@ func (s *StickySessionWrapper) Select(ctx context.Context, endpoints []*domain.E
 				return ep, nil
 			}
 		}
-		// Pinned backend is gone or unhealthy — fall through to repin.
 	}
 
 	chosen, err := s.inner.Select(ctx, endpoints)
@@ -124,15 +148,23 @@ func (s *StickySessionWrapper) Select(ctx context.Context, endpoints []*domain.E
 		return nil, err
 	}
 
-	// Record the affinity mapping for future turns.
-	s.store.Set(key, chosen.URLString, ttlcache.DefaultTTL)
-
 	result := "miss"
 	if item != nil {
-		// We had a pin but the backend was no longer routable.
-		result = "repin"
+		// Blip: the pinned backend is present (this candidate list is
+		// per-model and registry-scoped) but currently non-routable. Ride
+		// the turn out on the inner selector and KEEP the pin — no store.Set.
+		// The old behaviour overwrote the entry with the surviving node, so
+		// one 46s health blip migrated every conversation on that node and
+		// none of them ever went home: a permanent, self-inflicted KV-cache
+		// cold start on the whole fleet. With the pin kept, the conversation
+		// returns to its warm node the moment it recovers.
+		result = "bypass"
+	} else {
+		// First turn of a conversation — pin the chosen backend.
+		s.store.Set(key, chosen.URLString, ttlcache.DefaultTTL)
 	}
 
+	s.recordOutcome(result, source)
 	if outcome != nil {
 		outcome.Result = result
 		outcome.Source = source
@@ -141,9 +173,15 @@ func (s *StickySessionWrapper) Select(ctx context.Context, endpoints []*domain.E
 	return chosen, nil
 }
 
-// PurgeDeadEndpoints removes session entries that point to backends no longer
-// present in the provided routable set. Callers can invoke this periodically
-// (e.g. on health-check updates) to reclaim store capacity proactively.
+// PurgeDeadEndpoints removes session entries that point to backends ABSENT
+// from the provided endpoint set. The contract is REGISTRY membership, not
+// health: callers must pass every registered endpoint (GetAll), healthy or
+// not, so this evicts pins only when an endpoint leaves the fleet (config
+// removal) - the one unambiguous case. Passing the routable subset used to
+// delete every pin to a node the moment it flapped unhealthy, which -
+// combined with Select's pin-overwrite on repin - turned a 46s blip into a
+// fleet-wide KV cold start. Blips are now ridden out by Select (bypass).
+// Pins to a permanently dead node age out through the idle TTL.
 func (s *StickySessionWrapper) PurgeDeadEndpoints(routable []*domain.Endpoint) {
 	alive := make(map[string]struct{}, len(routable))
 	for _, ep := range routable {
@@ -248,10 +286,22 @@ func stickyKeyFromFirstTurn(body []byte, modelName string) (string, string) {
 		return "", ""
 	}
 
-	var first string
+	// The key folds the system prompt fingerprint into the first user turn:
+	// hashing the turn ALONE collides on identical openers - "hi", "continue",
+	// a fixed job prompt - and every conversation that opens with the same
+	// text on the same model shares a key (and a node). A fleet running
+	// fixed-opener consumers (the wa-bot class) re-flocks exactly like the
+	// prefix_hash design this source replaced. Two agents that share a system
+	// prompt AND an opener remain one pin: from the gateway's view they are
+	// byte-identical requests, and no key can separate them.
+	const sysFingerprintBytes = 2048
+	var first, system string
 	if msgs := gjson.GetBytes(body, "messages"); msgs.IsArray() {
 		msgs.ForEach(func(_, turn gjson.Result) bool {
 			if turn.Get("role").String() == "system" {
+				if system == "" {
+					system = turn.Get("content").Raw
+				}
 				return true
 			}
 			content := turn.Get("content").Raw
@@ -271,7 +321,12 @@ func stickyKeyFromFirstTurn(body []byte, modelName string) (string, string) {
 		return "", ""
 	}
 
+	if len(system) > sysFingerprintBytes {
+		system = system[:sysFingerprintBytes]
+	}
 	h := fnv.New64a()
+	h.Write([]byte(system))
+	h.Write([]byte{0x1f}) // unit separator: system||turn must not equal turn of a body with the bytes merged
 	h.Write([]byte(first))
 	return "turn:" + strings.ReplaceAll(modelName, ":", "_") + ":" + uint64ToHex(h.Sum64()), "first_user_message"
 }
@@ -316,20 +371,51 @@ type StickyStats struct {
 	Evictions      uint64 `json:"evictions"`
 	MaxSessions    uint64 `json:"max_sessions"`
 	IdleTTLSeconds int    `json:"idle_ttl_seconds"`
+
+	// Results counts Select outcomes by label (hit/miss/bypass/no_key) and
+	// Sources by producing key source; both are wrapper-level, unlike the
+	// ttlcache hits/misses above which are store lookups. SessionsByEndpoint
+	// maps pinned backend URL -> live session count: the per-node answer
+	// ("is the fast tier even right now") that the aggregate counters cannot
+	// give.
+	Results            map[string]uint64 `json:"results"`
+	Sources            map[string]uint64 `json:"key_sources"`
+	SessionsByEndpoint map[string]int    `json:"sessions_by_endpoint"`
 }
 
 // Stats returns a point-in-time snapshot of the session store metrics.
 func (s *StickySessionWrapper) Stats() StickyStats {
 	m := s.store.Metrics()
+
+	s.mu.Lock()
+	results := make(map[string]uint64, len(s.resultCounts))
+	for k, v := range s.resultCounts {
+		results[k] = v
+	}
+	sources := make(map[string]uint64, len(s.sourceCounts))
+	for k, v := range s.sourceCounts {
+		sources[k] = v
+	}
+	s.mu.Unlock()
+
+	byEndpoint := make(map[string]int)
+	s.store.Range(func(item *ttlcache.Item[string, string]) bool {
+		byEndpoint[item.Value()]++
+		return true
+	})
+
 	return StickyStats{
-		Enabled:        true,
-		ActiveSessions: s.store.Len(),
-		Insertions:     m.Insertions,
-		Hits:           m.Hits,
-		Misses:         m.Misses,
-		Evictions:      m.Evictions,
-		MaxSessions:    s.cfg.MaxSessions,
-		IdleTTLSeconds: s.cfg.IdleTTLSeconds,
+		Enabled:            true,
+		ActiveSessions:     s.store.Len(),
+		Insertions:         m.Insertions,
+		Hits:               m.Hits,
+		Misses:             m.Misses,
+		Evictions:          m.Evictions,
+		MaxSessions:        s.cfg.MaxSessions,
+		IdleTTLSeconds:     s.cfg.IdleTTLSeconds,
+		Results:            results,
+		Sources:            sources,
+		SessionsByEndpoint: byEndpoint,
 	}
 }
 
