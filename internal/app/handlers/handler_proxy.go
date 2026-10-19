@@ -475,7 +475,10 @@ func (a *Application) logRequestResult(pr *proxyRequest, err error) {
 			}
 		}
 
-		// "disabled" carries no signal; omit it to avoid noise in deployments without sticky sessions
+		// "disabled" carries no signal; omit it to avoid noise in deployments
+		// without sticky sessions. "no_key" DOES carry signal (the cascade
+		// ran and declined - usually a scan budget below the system prompt)
+		// and is logged.
 		if pr.stickyOutcome != "" && pr.stickyOutcome != "disabled" {
 			infoFields = append(infoFields, "sticky_outcome", pr.stickyOutcome)
 		}
