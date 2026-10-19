@@ -145,6 +145,15 @@ func (s *StickySessionWrapper) Select(ctx context.Context, endpoints []*domain.E
 
 	chosen, err := s.inner.Select(ctx, endpoints)
 	if err != nil {
+		// Record before returning: an inner selector failure pins nothing, so
+		// it IS a miss, and these balancer-side failures (selector errors, an
+		// empty routable tier under a full outage) are exactly what the sticky
+		// counters - the F1/F4 acceptance probe - were blind to.
+		s.recordOutcome("miss", source)
+		if outcome != nil {
+			outcome.Result = "miss"
+			outcome.Source = source
+		}
 		return nil, err
 	}
 
