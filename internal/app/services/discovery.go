@@ -112,7 +112,13 @@ func (s *DiscoveryService) Start(ctx context.Context) error {
 	s.healthChecker = health.NewHTTPHealthCheckerWithDefaults(s.endpointRepo, s.logger)
 	if s.busyQueueDepth > 0 && s.loadReader != nil {
 		s.healthChecker.SetLoadAwareness(s.busyQueueDepth, s.loadReader)
-		s.logger.Info("Load-aware Busy grading armed", "queue_depth_threshold", s.busyQueueDepth)
+		// Log through the checker's own verdict: the accessor is the single
+		// source of truth for "armed", so the boot line and the grading
+		// cannot drift apart (a threshold set through any future path is
+		// reported exactly as the checker sees it).
+		if s.healthChecker.LoadAwarenessArmed() {
+			s.logger.Info("Load-aware Busy grading armed", "queue_depth_threshold", s.busyQueueDepth)
+		}
 	}
 
 	// Evict sticky session entries for backends that LEFT THE FLEET. The purgeFn
