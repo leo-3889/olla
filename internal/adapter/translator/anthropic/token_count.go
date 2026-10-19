@@ -289,7 +289,11 @@ func countContentBlockChars(block *ContentBlock) int {
 		return len(block.Name) + countToolInput(block.Input)
 
 	case contentTypeImage:
-		// image blocks don't contribute to character count
+		// Image blocks contribute nothing to this character-based estimate.
+		// The count_tokens endpoint is the gateway's text-only heuristic;
+		// the engine is authoritative for vision tokens (prompt_tokens
+		// grows with the image on every live backend), so a fabricated
+		// image token count is deliberately not added here.
 		return 0
 
 	default:
