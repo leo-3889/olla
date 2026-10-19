@@ -37,6 +37,12 @@ type DiscoveryService struct {
 	// Stored atomically because SetPurgeDeadEndpointsFn is called from the main goroutine
 	// while the health-check goroutine may concurrently invoke the callback.
 	purgeDeadFn atomic.Pointer[func([]*domain.Endpoint)]
+	// Load-aware Busy grading params (proxy.busy_queue_depth). The health
+	// checker is created in Start(), and the app wiring calls SetLoadAwareness
+	// before any service starts, so the params are stashed here and applied
+	// when the checker comes into existence.
+	busyQueueDepth float64
+	loadReader     health.LoadReader
 }
 
 // NewDiscoveryService creates a new discovery service
@@ -104,6 +110,10 @@ func (s *DiscoveryService) Start(ctx context.Context) error {
 	}
 
 	s.healthChecker = health.NewHTTPHealthCheckerWithDefaults(s.endpointRepo, s.logger)
+	if s.busyQueueDepth > 0 && s.loadReader != nil {
+		s.healthChecker.SetLoadAwareness(s.busyQueueDepth, s.loadReader)
+		s.logger.Info("Load-aware Busy grading armed", "queue_depth_threshold", s.busyQueueDepth)
+	}
 
 	// Purge sticky session entries for any backend that goes offline. The purgeFn is
 	// nil when sticky sessions are disabled, making this callback a cheap no-op then.
@@ -283,10 +293,14 @@ func (s *DiscoveryService) SetStatsService(statsService *StatsService) {
 	s.statsService = statsService
 }
 
-// SetLoadAwareness arms load-aware Busy grading on the health checker
-// (proxy.busy_queue_depth, reader = runtime-metrics sampler). threshold <= 0
-// is inert. Safe before Start(): the checker instance is fixed at construction.
+// SetLoadAwareness arms load-aware Busy grading (proxy.busy_queue_depth,
+// reader = runtime-metrics sampler). threshold <= 0 is inert. Safe at any
+// point in the lifecycle: the checker is created in Start(), which runs AFTER
+// the app wiring phase, so the params are stashed on the service and applied
+// when the checker is constructed (and immediately, if it already exists).
 func (s *DiscoveryService) SetLoadAwareness(threshold float64, reader health.LoadReader) {
+	s.busyQueueDepth = threshold
+	s.loadReader = reader
 	if s.healthChecker != nil {
 		s.healthChecker.SetLoadAwareness(threshold, reader)
 	}
