@@ -168,18 +168,7 @@ func inferCapabilitiesFromMetadata(modelType, modelName string, contextLength in
 	}
 
 	// Context window size determines long-form processing capabilities
-	if contextLength > 0 {
-		thresholds := config.Capabilities.ContextThresholds
-		switch {
-		case contextLength >= thresholds["ultra_long_context"]:
-			capabilities["ultra-long-context"] = true
-			capabilities["long-context"] = true
-		case contextLength >= thresholds["long_context"]:
-			capabilities["long-context"] = true
-		case contextLength >= thresholds["extended_context"]:
-			capabilities["extended-context"] = true
-		}
-	}
+	applyContextWindowCapabilities(capabilities, contextLength, config)
 
 	// An engine that declares chat:false on /v1/models (whisper-small,
 	// kokoro-82m) disclaims text generation; applyModelDetails carries that
@@ -211,6 +200,25 @@ func inferCapabilitiesFromMetadata(modelType, modelName string, contextLength in
 	}
 
 	return result
+}
+
+// applyContextWindowCapabilities stamps the long-context ladder from the
+// configured thresholds. Extracted from inferCapabilitiesFromMetadata to keep
+// that function's branch count legible.
+func applyContextWindowCapabilities(capabilities map[string]bool, contextLength int64, config *ModelUnificationConfig) {
+	if contextLength <= 0 {
+		return
+	}
+	thresholds := config.Capabilities.ContextThresholds
+	switch {
+	case contextLength >= thresholds["ultra_long_context"]:
+		capabilities["ultra-long-context"] = true
+		capabilities["long-context"] = true
+	case contextLength >= thresholds["long_context"]:
+		capabilities["long-context"] = true
+	case contextLength >= thresholds["extended_context"]:
+		capabilities["extended-context"] = true
+	}
 }
 
 // extractFamilyAndVariant extracts family and variant from model name

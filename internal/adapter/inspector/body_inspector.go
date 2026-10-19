@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -233,7 +234,7 @@ func (bi *BodyInspector) inspectMultipart(r *http.Request, profile *domain.Reque
 	mr := multipart.NewReader(bytes.NewReader(restored), params["boundary"])
 	for {
 		part, err := mr.NextPart()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return
 		}
 		if err != nil {
