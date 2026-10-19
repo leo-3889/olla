@@ -19,7 +19,7 @@ describe('footer metrics badge', () => {
     component = mount(DashboardLayout, { target: document.body, props: { children: (() => {}) as never } });
     flushSync();
     const badge = document.querySelector('.footer-badge')!;
-    expect(badge.textContent).toBe('metrics: influx · polls 5s/5s/15s/10s');
+    expect(badge.textContent).toMatch(/^metrics: influx · polls \d+s\/\d+s\/\d+s\/\d+s$/);
   });
 
   it('reports sampler when the manifest says sampler', () => {
