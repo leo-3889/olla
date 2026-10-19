@@ -236,11 +236,14 @@ func (s *ProxyServiceWrapper) StickyStats() *balancer.StickyStats {
 	return &stats
 }
 
-// PurgeDeadEndpoints removes sticky session entries that point to backends absent
-// from the routable set. It is a no-op when sticky sessions are disabled.
-func (s *ProxyServiceWrapper) PurgeDeadEndpoints(routable []*domain.Endpoint) {
+// PurgeDeadEndpoints removes sticky session entries that point to backends ABSENT
+// from the registry - `registered` must be the GetAll list (healthy and unhealthy
+// alike), never the routable subset: the wrapper evicts pins only when an endpoint
+// has left the fleet, and health blips are ridden out with a bypass outcome.
+// It is a no-op when sticky sessions are disabled.
+func (s *ProxyServiceWrapper) PurgeDeadEndpoints(registered []*domain.Endpoint) {
 	if s.stickyWrapper != nil {
-		s.stickyWrapper.PurgeDeadEndpoints(routable)
+		s.stickyWrapper.PurgeDeadEndpoints(registered)
 	}
 }
 

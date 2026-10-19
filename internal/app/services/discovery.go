@@ -320,9 +320,11 @@ func (s *DiscoveryService) SetLoadAwareness(threshold float64, reader health.Loa
 	}
 }
 
-// SetPurgeDeadEndpointsFn registers a function to call with the current routable
-// endpoint list whenever a backend transitions to unhealthy. Used by the proxy layer
-// to evict sticky session entries for dead backends without waiting for TTL expiry.
+// SetPurgeDeadEndpointsFn registers a function the health checker calls with the
+// REGISTERED endpoint list (GetAll) after an endpoint transitions to unhealthy -
+// the proxy layer turns that into a sticky purge of pins whose target left the
+// fleet. The argument is deliberately not the routable set: a health blip must
+// not delete the affected node's KV affinity.
 func (s *DiscoveryService) SetPurgeDeadEndpointsFn(fn func([]*domain.Endpoint)) {
 	s.purgeDeadFn.Store(&fn)
 }
