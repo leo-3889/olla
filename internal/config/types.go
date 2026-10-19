@@ -239,20 +239,29 @@ type StickySessionConfig struct {
 
 // ProxyConfig holds proxy-specific configuration
 type ProxyConfig struct {
-	ProfileFilter         *domain.FilterConfig `yaml:"profile_filter,omitempty"`
-	Engine                string               `yaml:"engine"`
-	LoadBalancer          string               `yaml:"load_balancer"`
-	Profile               string               `yaml:"profile"`
-	StickySessions        StickySessionConfig  `yaml:"sticky_sessions"`
-	ConnectionTimeout     time.Duration        `yaml:"connection_timeout"`
-	ConnectionKeepAlive   time.Duration        `yaml:"connection_keep_alive"`
-	ResponseTimeout       time.Duration        `yaml:"response_timeout"`
-	ReadTimeout           time.Duration        `yaml:"read_timeout"`
-	ResponseHeaderTimeout time.Duration        `yaml:"response_header_timeout"`
-	TLSHandshakeTimeout   time.Duration        `yaml:"tls_handshake_timeout"`
-	RetryBackoff          time.Duration        `yaml:"retry_backoff"` // Deprecated: Use model_registry.routing_strategy instead. TODO: Removal: v0.1.0
-	StreamBufferSize      int                  `yaml:"stream_buffer_size"`
-	MaxRetries            int                  `yaml:"max_retries"` // Deprecated: Use model_registry.routing_strategy instead. TODO: Removal: v0.1.0
+	ProfileFilter  *domain.FilterConfig `yaml:"profile_filter,omitempty"`
+	Engine         string               `yaml:"engine"`
+	LoadBalancer   string               `yaml:"load_balancer"`
+	Profile        string               `yaml:"profile"`
+	StickySessions StickySessionConfig  `yaml:"sticky_sessions"`
+	// BusyQueueDepth arms load-aware Busy steering: a probe-healthy endpoint
+	// whose engine queue depth is at or above this value is graded Busy
+	// (routable, SWRR weight 0.3) so NEW conversations steer away from a
+	// saturating node before it starts refusing. 0 = off (default): the
+	// graded ladder stays inert and dispatch behaves as healthy-only.
+	// Requires runtime_metrics on the endpoint (the queue depth signal comes
+	// from the engine scrape; under metrics_source influx no live sampler
+	// exists and grading stays inert by design).
+	BusyQueueDepth        int           `yaml:"busy_queue_depth"`
+	ConnectionTimeout     time.Duration `yaml:"connection_timeout"`
+	ConnectionKeepAlive   time.Duration `yaml:"connection_keep_alive"`
+	ResponseTimeout       time.Duration `yaml:"response_timeout"`
+	ReadTimeout           time.Duration `yaml:"read_timeout"`
+	ResponseHeaderTimeout time.Duration `yaml:"response_header_timeout"`
+	TLSHandshakeTimeout   time.Duration `yaml:"tls_handshake_timeout"`
+	RetryBackoff          time.Duration `yaml:"retry_backoff"` // Deprecated: Use model_registry.routing_strategy instead. TODO: Removal: v0.1.0
+	StreamBufferSize      int           `yaml:"stream_buffer_size"`
+	MaxRetries            int           `yaml:"max_retries"` // Deprecated: Use model_registry.routing_strategy instead. TODO: Removal: v0.1.0
 }
 
 // DiscoveryConfig holds service discovery configuration

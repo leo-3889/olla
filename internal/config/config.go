@@ -218,6 +218,10 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("translators config invalid: %w", err)
 	}
 
+	if c.Proxy.BusyQueueDepth < 0 {
+		return errors.New("proxy.busy_queue_depth must be >= 0 (0 disables load-aware Busy steering)")
+	}
+
 	if err := c.Server.Cors.Validate(); err != nil {
 		return fmt.Errorf("server.cors config invalid: %w", err)
 	}
