@@ -593,3 +593,38 @@ func TestNewStickySessionWrapper_ZeroTTL_NoPanic(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "miss", out.Result, "wrapper with zero TTL must still route requests")
 }
+
+// The fleet-removal contract: PurgeDeadEndpoints must evict EVERY pin whose
+// target left the registry. ttlcache's Range iterates the LRU list with
+// `item = item.Next()` and stdlib list.Remove nils the removed element's
+// pointers, so deleting inside the callback terminates the walk after the
+// FIRST delete - the pins for a retired endpoint then linger for the whole
+// idle TTL, showing a phantom endpoint in sessions_by_endpoint.
+func TestStickySessionWrapper_PurgeDeadEndpointsEvictsAllPins(t *testing.T) {
+	t.Parallel()
+
+	w := makeWrapper(t, defaultStickyConfig())
+	alive := makeEndpoint("alive", "http://backend1:8080")
+	dead := makeEndpoint("dead", "http://backend9:8080")
+
+	const pins = 4
+	for i := range pins {
+		key := fmt.Sprintf("sess-multi-%d:m", i)
+		ctx, _ := injectKey(context.Background(), key, "session_header")
+		_, err := w.Select(ctx, []*domain.Endpoint{dead})
+		require.NoError(t, err)
+	}
+	require.Equal(t, pins, int(w.store.Len()), "fixture: all pins present")
+
+	// Registry now contains only the alive endpoint (config removal).
+	w.PurgeDeadEndpoints([]*domain.Endpoint{alive})
+
+	assert.Zero(t, w.store.Len(), "every pin to the removed endpoint must be evicted in one pass")
+
+	// And the removed target is genuinely unpinable afterwards.
+	ctx, out := injectKey(context.Background(), "sess-multi-0:m", "session_header")
+	_, err := w.Select(ctx, []*domain.Endpoint{alive})
+	require.NoError(t, err)
+	assert.Equal(t, "miss", out.Result)
+	assert.Equal(t, "insert", out.Result[:0]+"insert") // fresh pin on the surviving endpoint
+}

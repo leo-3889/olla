@@ -188,12 +188,22 @@ func (s *StickySessionWrapper) PurgeDeadEndpoints(routable []*domain.Endpoint) {
 		alive[ep.URLString] = struct{}{}
 	}
 
+	// Collect first, delete after: ttlcache's Range walks the LRU list with
+	// `item = item.Next()` and stdlib container/list.Remove nils the removed
+	// element's next/prev, so deleting INSIDE the callback ends the walk at the
+	// first eviction (Range's own doc: "mutating the cache while ranging is not
+	// supported"). One pin per call is exactly the defect that left every pin of
+	// a retired endpoint alive for the whole idle TTL.
+	var dead []string
 	s.store.Range(func(item *ttlcache.Item[string, string]) bool {
 		if _, ok := alive[item.Value()]; !ok {
-			s.store.Delete(item.Key())
+			dead = append(dead, item.Key())
 		}
 		return true
 	})
+	for _, k := range dead {
+		s.store.Delete(k)
+	}
 }
 
 // ComputeStickyKey derives an affinity key for this request using the configured
