@@ -51,13 +51,13 @@ func TestStickyKey_FirstTurnSeparatesConversationsThatShareASystemPrompt(t *test
 	req, _ := http.NewRequest(http.MethodPost, "/", nil)
 
 	prefixCfg := firstTurnConfig("prefix_hash")
-	keyA, _ := ComputeStickyKey(req, "qwen4exp", prefixCfg, conversationA)
-	keyB, _ := ComputeStickyKey(req, "qwen4exp", prefixCfg, conversationB)
+	keyA, _ := ComputeStickyKey(req, "qwen4exp", prefixCfg, conversationA, false)
+	keyB, _ := ComputeStickyKey(req, "qwen4exp", prefixCfg, conversationB, false)
 	assert.Equal(t, keyA, keyB, "prefix_hash keys the shared system prompt (the flocking this source replaces)")
 
 	turnCfg := firstTurnConfig("first_user_message", "prefix_hash")
-	keyA2, sourceA := ComputeStickyKey(req, "qwen4exp", turnCfg, conversationA)
-	keyB2, sourceB := ComputeStickyKey(req, "qwen4exp", turnCfg, conversationB)
+	keyA2, sourceA := ComputeStickyKey(req, "qwen4exp", turnCfg, conversationA, false)
+	keyB2, sourceB := ComputeStickyKey(req, "qwen4exp", turnCfg, conversationB, false)
 	assert.Equal(t, "first_user_message", sourceA)
 	assert.Equal(t, "first_user_message", sourceB)
 	assert.NotEqual(t, keyA2, keyB2, "two conversations must not share an affinity key")
@@ -80,8 +80,8 @@ func TestStickyKey_FirstTurnIsStableAcrossLaterTurns(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPost, "/", nil)
 	cfg := firstTurnConfig("first_user_message", "prefix_hash")
 
-	key1, _ := ComputeStickyKey(req, "qwen4exp", cfg, turn1)
-	key2, _ := ComputeStickyKey(req, "qwen4exp", cfg, turn2)
+	key1, _ := ComputeStickyKey(req, "qwen4exp", cfg, turn1, false)
+	key2, _ := ComputeStickyKey(req, "qwen4exp", cfg, turn2, false)
 	assert.Equal(t, key1, key2, "a conversation must keep its pin as turns are appended")
 }
 
@@ -103,7 +103,7 @@ func TestStickyKey_FirstTurnPinsTheConversationToOneBackend(t *testing.T) {
 		first := map[string]string{"role": "user", "content": fmt.Sprintf("conversation %d opens here", i)}
 		body := agentBody(t, shared, first)
 
-		key, source := ComputeStickyKey(req, "qwen4exp", w.cfg, body)
+		key, source := ComputeStickyKey(req, "qwen4exp", w.cfg, body, false)
 		require.Equal(t, "first_user_message", source)
 		ctx, _ := injectKey(context.Background(), key, source)
 		chosen, err := w.Select(ctx, endpoints)
@@ -115,7 +115,7 @@ func TestStickyKey_FirstTurnPinsTheConversationToOneBackend(t *testing.T) {
 				map[string]string{"role": "assistant", "content": fmt.Sprintf("answer %d", turn)},
 				map[string]string{"role": "user", "content": fmt.Sprintf("follow-up %d", turn)},
 			)
-			grownKey, grownSource := ComputeStickyKey(req, "qwen4exp", w.cfg, grown)
+			grownKey, grownSource := ComputeStickyKey(req, "qwen4exp", w.cfg, grown, false)
 			require.Equal(t, source, grownSource)
 			grownCtx, grownOutcome := injectKey(context.Background(), grownKey, grownSource)
 			again, err := w.Select(grownCtx, endpoints)
@@ -136,7 +136,7 @@ func TestStickyKey_FirstTurnFallsBackToPrefixHashWithoutAUserTurn(t *testing.T) 
 	body := agentBody(t, "only a system prompt here")
 	req, _ := http.NewRequest(http.MethodPost, "/", nil)
 
-	key, source := ComputeStickyKey(req, "qwen4exp", firstTurnConfig("first_user_message", "prefix_hash"), body)
+	key, source := ComputeStickyKey(req, "qwen4exp", firstTurnConfig("first_user_message", "prefix_hash"), body, false)
 	assert.Equal(t, "prefix_hash", source)
 	assert.NotEmpty(t, key)
 }
@@ -147,10 +147,10 @@ func TestStickyKey_FirstTurnHandlesCompletionsPrompt(t *testing.T) {
 	cfg := firstTurnConfig("first_user_message")
 	req, _ := http.NewRequest(http.MethodPost, "/", nil)
 
-	key1, source := ComputeStickyKey(req, "qwen4exp", cfg, []byte(`{"model":"qwen4exp","prompt":"once upon a time"}`))
+	key1, source := ComputeStickyKey(req, "qwen4exp", cfg, []byte(`{"model":"qwen4exp","prompt":"once upon a time"}`), false)
 	assert.Equal(t, "first_user_message", source)
-	key2, _ := ComputeStickyKey(req, "qwen4exp", cfg, []byte(`{"model":"qwen4exp","prompt":"once upon a time"}`))
-	key3, _ := ComputeStickyKey(req, "qwen4exp", cfg, []byte(`{"model":"qwen4exp","prompt":"a different story"}`))
+	key2, _ := ComputeStickyKey(req, "qwen4exp", cfg, []byte(`{"model":"qwen4exp","prompt":"once upon a time"}`), false)
+	key3, _ := ComputeStickyKey(req, "qwen4exp", cfg, []byte(`{"model":"qwen4exp","prompt":"a different story"}`), false)
 	assert.Equal(t, key1, key2)
 	assert.NotEqual(t, key1, key3)
 }
@@ -162,14 +162,14 @@ func TestStickyKey_FirstTurnHandlesMultimodalContent(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPost, "/", nil)
 
 	body := []byte(`{"model":"qwen4exp","messages":[{"role":"system","content":"sys"},{"role":"user","content":[{"type":"text","text":"what is in this image"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}]}]}`)
-	key, source := ComputeStickyKey(req, "qwen4exp", cfg, body)
+	key, source := ComputeStickyKey(req, "qwen4exp", cfg, body, false)
 	assert.Equal(t, "first_user_message", source)
 
 	// The same conversation with a different image must move to a new pin, and
 	// the key must be stable for an identical body.
 	other := strings.Replace(string(body), "AAAA", "BBBB", 1)
-	keyOther, _ := ComputeStickyKey(req, "qwen4exp", cfg, []byte(other))
-	keySame, _ := ComputeStickyKey(req, "qwen4exp", cfg, body)
+	keyOther, _ := ComputeStickyKey(req, "qwen4exp", cfg, []byte(other), false)
+	keySame, _ := ComputeStickyKey(req, "qwen4exp", cfg, body, false)
 	assert.Equal(t, key, keySame)
 	assert.NotEqual(t, key, keyOther)
 }
@@ -183,7 +183,7 @@ func TestStickyKey_FirstTurnSkippedWhenBodyNotBuffered(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPost, "/", nil)
 	req.Header.Set("Authorization", "Bearer key-1")
 
-	key, source := ComputeStickyKey(req, "qwen4exp", cfg, nil)
+	key, source := ComputeStickyKey(req, "qwen4exp", cfg, nil, false)
 	assert.Equal(t, "auth_header", source)
 	assert.Contains(t, key, "auth:")
 }
@@ -203,8 +203,8 @@ func TestStickyKey_FirstTurnFoldsSystemPromptIntoKey(t *testing.T) {
 	b := agentBody(t, "You are agent B. "+strings.Repeat("b", 100),
 		map[string]string{"role": "user", "content": "continue"})
 
-	keyA, _ := ComputeStickyKey(req, "qwen4exp", cfg, a)
-	keyB, _ := ComputeStickyKey(req, "qwen4exp", cfg, b)
+	keyA, _ := ComputeStickyKey(req, "qwen4exp", cfg, a, false)
+	keyB, _ := ComputeStickyKey(req, "qwen4exp", cfg, b, false)
 	assert.NotEqual(t, keyA, keyB, "the same opener on two different agents must not share a pin")
 
 	// Byte-identical agent+opener stays ONE pin: from the gateway's view the
@@ -212,6 +212,47 @@ func TestStickyKey_FirstTurnFoldsSystemPromptIntoKey(t *testing.T) {
 	// residue, strictly better than the prefix_hash design).
 	a2 := agentBody(t, "You are agent A. "+strings.Repeat("a", 100),
 		map[string]string{"role": "user", "content": "continue"})
-	keyA2, _ := ComputeStickyKey(req, "qwen4exp", cfg, a2)
+	keyA2, _ := ComputeStickyKey(req, "qwen4exp", cfg, a2, false)
 	assert.Equal(t, keyA, keyA2)
+}
+
+// The scan-budget trap. key_scan_bytes bounds how far the handler reads before
+// the first turn; a body cut short inside a multi-KB system prompt yields no
+// first turn at all. Falling through the cascade in that state lands on
+// auth_header, which hashes the SHARED Authorization value: every conversation
+// of one credential - an entire fleet of agents behind one API key - pins to
+// one node, silently and far coarser than the prefix_hash flock this source
+// replaced. The cascade must stop at no_key (bypass: plain balancer routing,
+// visible in the sticky_source=no_key counter) instead.
+func TestStickyKey_TruncatedBodyStopsAtNoKeyNeverSharedCredential(t *testing.T) {
+	t.Parallel()
+
+	newReq := func() *http.Request {
+		r, err := http.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		require.NoError(t, err)
+		r.Header.Set("Authorization", "Bearer shared-client-key")
+		return r
+	}
+	cfg := firstTurnConfig("session_header", "first_user_message", "prefix_hash", "auth_header")
+
+	// A snapshot cut inside the system prompt: `messages` no longer parses, so
+	// both body-scanning sources decline - exactly what the handler sees when the
+	// first user turn starts beyond the budget.
+	truncated := []byte(`{"model":"qwen4exp","messages":[{"role":"system","content":"` + strings.Repeat("p", 4096))
+
+	key, source := ComputeStickyKey(newReq(), "qwen4exp", cfg, truncated, true)
+	assert.Empty(t, key, "a truncated snapshot must not produce a pin")
+	assert.Empty(t, source)
+
+	// Same client, complete body: the normal path is untouched.
+	complete := agentBody(t, strings.Repeat("p", 4096), map[string]string{"role": "user", "content": "first unique turn"})
+	keyFull, sourceFull := ComputeStickyKey(newReq(), "qwen4exp", cfg, complete, false)
+	assert.NotEmpty(t, keyFull)
+	assert.Equal(t, "first_user_message", sourceFull)
+
+	// And the shared-credential source still works on its own (an operator who
+	// opts into it by name gets it): only the truncated-body fall-through is cut.
+	keyAuth, sourceAuth := ComputeStickyKey(newReq(), "qwen4exp", firstTurnConfig("auth_header"), truncated, true)
+	assert.NotEmpty(t, keyAuth)
+	assert.Equal(t, "auth_header", sourceAuth)
 }

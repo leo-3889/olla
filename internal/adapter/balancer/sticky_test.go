@@ -268,7 +268,7 @@ func TestStickySessionWrapper_KeySources_SessionHeader(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPost, "/", nil)
 	req.Header.Set(constants.HeaderXOllaSessionID, "my-session-id")
 
-	key, source := ComputeStickyKey(req, "llama3", defaultStickyConfig(), nil)
+	key, source := ComputeStickyKey(req, "llama3", defaultStickyConfig(), nil, false)
 	// Fix 1: session_header now hashes the raw value with FNV-64a, producing a
 	// 16-hex-char prefix. The raw string "my-session-id" must not appear in the key.
 	assert.Equal(t, "bd95cc3ab55faccc:llama3", key)
@@ -288,7 +288,7 @@ func TestStickySessionWrapper_KeySources_PrefixHash(t *testing.T) {
 	body := []byte(`{"model":"llama3","messages":[{"role":"user","content":"hello"}]}`)
 	req, _ := http.NewRequest(http.MethodPost, "/", nil)
 
-	key, source := ComputeStickyKey(req, "llama3", defaultStickyConfig(), body)
+	key, source := ComputeStickyKey(req, "llama3", defaultStickyConfig(), body, false)
 	assert.Equal(t, "prefix_hash", source)
 	assert.NotEmpty(t, key)
 }
@@ -303,7 +303,7 @@ func TestStickySessionWrapper_KeySources_AuthHash(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPost, "/", nil)
 	req.Header.Set("Authorization", "Bearer token-xyz")
 
-	key, source := ComputeStickyKey(req, "llama3", cfg, nil)
+	key, source := ComputeStickyKey(req, "llama3", cfg, nil, false)
 	assert.Equal(t, "auth_header", source)
 	assert.NotEmpty(t, key)
 }
@@ -318,7 +318,7 @@ func TestStickySessionWrapper_KeySources_IP(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPost, "/", nil)
 	req.RemoteAddr = "192.168.1.42:12345"
 
-	key, source := ComputeStickyKey(req, "llama3", cfg, nil)
+	key, source := ComputeStickyKey(req, "llama3", cfg, nil, false)
 	assert.Equal(t, "ip", source)
 	assert.Contains(t, key, "192.168.1.42")
 }
@@ -332,7 +332,7 @@ func TestStickySessionWrapper_KeySources_NoMatch(t *testing.T) {
 	}
 	req, _ := http.NewRequest(http.MethodPost, "/", nil)
 
-	key, source := ComputeStickyKey(req, "llama3", cfg, nil)
+	key, source := ComputeStickyKey(req, "llama3", cfg, nil, false)
 	assert.Empty(t, key)
 	assert.Empty(t, source)
 }
@@ -343,8 +343,8 @@ func TestComputeStickyKey_ModelScope(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPost, "/", nil)
 	req.Header.Set(constants.HeaderXOllaSessionID, "same-session")
 
-	keyA, _ := ComputeStickyKey(req, "llama3", defaultStickyConfig(), nil)
-	keyB, _ := ComputeStickyKey(req, "mistral", defaultStickyConfig(), nil)
+	keyA, _ := ComputeStickyKey(req, "llama3", defaultStickyConfig(), nil, false)
+	keyB, _ := ComputeStickyKey(req, "mistral", defaultStickyConfig(), nil, false)
 
 	assert.NotEqual(t, keyA, keyB, "same session ID with different models must produce different keys")
 }
@@ -359,13 +359,13 @@ func TestComputeStickyKey_PrefixHashBytes_Truncation(t *testing.T) {
 		KeySources:      []string{"prefix_hash"},
 		PrefixHashBytes: 16, // very small limit
 	}
-	key1, _ := ComputeStickyKey(req, "llama3", cfg, body)
+	key1, _ := ComputeStickyKey(req, "llama3", cfg, body, false)
 
 	cfg2 := config.StickySessionConfig{
 		KeySources:      []string{"prefix_hash"},
 		PrefixHashBytes: 32,
 	}
-	key2, _ := ComputeStickyKey(req, "llama3", cfg2, body)
+	key2, _ := ComputeStickyKey(req, "llama3", cfg2, body, false)
 
 	// Different prefix lengths should produce different hashes.
 	assert.NotEqual(t, key1, key2)
@@ -449,7 +449,7 @@ func TestComputeStickyKey_SessionHeader_IsHashed(t *testing.T) {
 		PrefixHashBytes: 512,
 	}
 
-	key, source := ComputeStickyKey(req, modelName, cfg, nil)
+	key, source := ComputeStickyKey(req, modelName, cfg, nil, false)
 
 	assert.Equal(t, "session_header", source)
 	assert.NotContains(t, key, "my-session-id", "raw session ID must not appear in the key")
@@ -472,7 +472,7 @@ func TestComputeStickyKey_SessionHeader_LargeValue_IsHashed(t *testing.T) {
 		PrefixHashBytes: 512,
 	}
 
-	key, source := ComputeStickyKey(req, modelName, cfg, nil)
+	key, source := ComputeStickyKey(req, modelName, cfg, nil, false)
 
 	assert.Equal(t, "session_header", source)
 	// Regardless of input length, output is always 16 hex + ":" + model.
@@ -496,8 +496,8 @@ func TestComputeStickyKey_SessionHeader_SameValueSameKey(t *testing.T) {
 	req2, _ := http.NewRequest(http.MethodPost, "/", nil)
 	req2.Header.Set(constants.HeaderXOllaSessionID, "deterministic-session")
 
-	key1, _ := ComputeStickyKey(req1, modelName, cfg, nil)
-	key2, _ := ComputeStickyKey(req2, modelName, cfg, nil)
+	key1, _ := ComputeStickyKey(req1, modelName, cfg, nil, false)
+	key2, _ := ComputeStickyKey(req2, modelName, cfg, nil, false)
 
 	assert.Equal(t, key1, key2, "same session ID must always produce the same key")
 }
@@ -516,7 +516,7 @@ func TestComputeStickyKey_IP_IPv6Loopback(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPost, "/", nil)
 	req.RemoteAddr = "[::1]:54321"
 
-	key, source := ComputeStickyKey(req, "llama3", cfg, nil)
+	key, source := ComputeStickyKey(req, "llama3", cfg, nil, false)
 
 	assert.Equal(t, "ip", source)
 	assert.Contains(t, key, "::1", "clean IPv6 host must appear in key")
@@ -537,7 +537,7 @@ func TestComputeStickyKey_IP_IPv4(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPost, "/", nil)
 	req.RemoteAddr = "192.168.1.42:12345"
 
-	key, source := ComputeStickyKey(req, "llama3", cfg, nil)
+	key, source := ComputeStickyKey(req, "llama3", cfg, nil, false)
 
 	assert.Equal(t, "ip", source)
 	assert.Contains(t, key, "192.168.1.42", "IPv4 host must appear in key")
@@ -557,7 +557,7 @@ func TestComputeStickyKey_IP_BareAddress(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPost, "/", nil)
 	req.RemoteAddr = "10.0.0.1" // no port
 
-	key, source := ComputeStickyKey(req, "llama3", cfg, nil)
+	key, source := ComputeStickyKey(req, "llama3", cfg, nil, false)
 
 	assert.Equal(t, "ip", source)
 	assert.NotEmpty(t, key, "bare address without port must still produce a key")
