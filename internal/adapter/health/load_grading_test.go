@@ -64,7 +64,10 @@ func TestDeadlineClient_HonorsContextBudget(t *testing.T) {
 	defer cancelTight()
 	req2, err := http.NewRequestWithContext(tight, http.MethodGet, slow.URL, http.NoBody)
 	require.NoError(t, err)
-	_, err = d.Do(req2)
+	resp2, err := d.Do(req2)
+	if resp2 != nil {
+		resp2.Body.Close()
+	}
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
