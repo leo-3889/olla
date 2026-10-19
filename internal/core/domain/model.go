@@ -20,9 +20,14 @@ type ModelDetails struct {
 	Digest            *string    `json:"digest,omitempty"`             // super important for comparison checks
 	MaxContextLength  *int64     `json:"max_context_length,omitempty"` // Max context length in tokens (LMStudio gives this)
 	ModifiedAt        *time.Time `json:"modified_at,omitempty"`
-	Checkpoint        *string    `json:"checkpoint,omitempty"` // Lemonade: HuggingFace model path
-	Recipe            *string    `json:"recipe,omitempty"`     // Lemonade: inference engine (oga-cpu, oga-npu, llamacpp, flm)
-	Families          []string   `json:"families,omitempty"`
+	// Capabilities are the engine's OWN feature declarations from its
+	// /v1/models entry (radiance/vLLM advertise e.g. image=true). The
+	// registry treats them as the most-trusted capability source; name
+	// patterns are the fallback.
+	Capabilities map[string]bool `json:"capabilities,omitempty"`
+	Checkpoint   *string         `json:"checkpoint,omitempty"` // Lemonade: HuggingFace model path
+	Recipe       *string         `json:"recipe,omitempty"`     // Lemonade: inference engine (oga-cpu, oga-npu, llamacpp, flm)
+	Families     []string        `json:"families,omitempty"`
 }
 
 type ModelInfo struct {

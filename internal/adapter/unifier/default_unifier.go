@@ -435,6 +435,9 @@ func (u *DefaultUnifier) applyModelDetails(model *Model, details *domain.ModelDe
 	if details.Recipe != nil {
 		model.Metadata["recipe"] = *details.Recipe
 	}
+	if len(details.Capabilities) > 0 {
+		model.Metadata["engine_capabilities"] = canonicalEngineCapabilities(details.Capabilities)
+	}
 }
 
 // applyModelInfo transfers top-level ModelInfo fields to Model metadata
