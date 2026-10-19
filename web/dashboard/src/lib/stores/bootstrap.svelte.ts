@@ -23,7 +23,7 @@ export const DEFAULT_UI_CONFIG: UIConfig = {
     { id: 'models', enabled: true },
     { id: 'power', enabled: false, reason: 'requires metrics_source.mode=influx' },
     { id: 'cost', enabled: false, reason: 'requires metrics_source.mode=influx' },
-    { id: 'gpu', enabled: false, reason: 'requires metrics_source.mode=influx and metrics_source.influx.gpu_endpoint' },
+    { id: 'gpu', enabled: false, reason: 'requires metrics_source.mode=influx and metrics_source.influx.gpu_endpoints' },
   ],
   runtime_metric_columns: [
     { key: 'generation_tps', label: 'Generation', unit: 'tok_s', window: true },
