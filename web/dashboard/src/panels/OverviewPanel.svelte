@@ -343,7 +343,7 @@
   {#if anyObserveSection && (observeData || observeDegraded)}
     {#if bootstrap.sectionEnabled('power')}
       {#if observeData}
-        <ObservePower rows={observeData.power} ageS={maxAgeS(observeData.power.map((r) => r.age_s))} degraded={observeDegraded} statusLabel={observeStatusLabel} />
+        <ObservePower rows={observeData.power} absent={observeData.power_absent ?? []} ageS={maxAgeS(observeData.power.map((r) => r.age_s))} degraded={observeDegraded} statusLabel={observeStatusLabel} />
       {:else}
         <div class="section"><div class="section-head"><h2>Power</h2><span class="section-note observe-src stale">ollametrics · {observeStatusLabel}</span></div><p class="observe-empty">no data yet</p></div>
       {/if}

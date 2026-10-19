@@ -257,6 +257,7 @@ export interface ObserveResponse {
   /** configured gpu_endpoints with zero rows in the window (dead exporter);
    *  optional for payloads predating the field. */
   gpus_absent?: string[];
+  power_absent?: string[];
 }
 
 export interface EndpointStatusResponse {

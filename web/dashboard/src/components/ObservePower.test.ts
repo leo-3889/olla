@@ -22,3 +22,15 @@ describe('ObservePower', () => {
     expect(text).toContain('—'); // unreported temp never renders as 0
   });
 });
+
+  it('discloses configured plugs that reported nothing', () => {
+    component = mount(ObservePower, {
+      target: document.body,
+      props: { rows: [], absent: ['shelly-ai-395'], ageS: null, degraded: false },
+    });
+    flushSync();
+    const card = document.querySelector('.meter.absent');
+    expect(card).not.toBeNull();
+    expect(card!.textContent).toContain('shelly-ai-395');
+    expect(card!.textContent).toContain('no data');
+  });
