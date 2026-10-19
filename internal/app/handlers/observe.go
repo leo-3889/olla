@@ -85,6 +85,11 @@ type observeCost struct {
 	// mid-period. Without this the row vanishes silently and an empty
 	// table reads as "no fleet" instead of "these endpoints went dark".
 	Dropped []string `json:"dropped"`
+	// Errors names the cost periods whose Flux query FAILED this cycle
+	// ("hour", "day"). Without it a period failure renders as an empty
+	// map, and the UI's "no rollups yet" note sits over an error - a
+	// partial outage must read as an outage, not as an idle fleet.
+	Errors []string `json:"errors"`
 }
 
 // ObservePayload is the contract of GET /internal/ui/observe.json. In
@@ -111,7 +116,7 @@ func newEmptyObservePayload(source string, now time.Time) *ObservePayload {
 		GeneratedAt: now.UTC(),
 		Source:      source,
 		Power:       []observePowerRow{},
-		Cost:        observeCost{Currency: "EUR", Hour: map[string]*observeCostEntry{}, Day: map[string]*observeCostEntry{}, Dropped: []string{}},
+		Cost:        observeCost{Currency: "EUR", Hour: map[string]*observeCostEntry{}, Day: map[string]*observeCostEntry{}, Dropped: []string{}, Errors: []string{}},
 		GPUs:        []observeGpuRow{},
 		GPUsAbsent:  []string{},
 	}
@@ -157,7 +162,14 @@ func (o *observeCollector) payload(ctx context.Context) (*ObservePayload, error)
 	}
 	payload, err := o.collect(ctx)
 	if err != nil {
-		o.memoErr, o.memoErrAt = err, o.now()
+		// The collect context inherits the REQUEST context, so a client
+		// aborting an in-flight poll (tab close) lands here with
+		// context.Canceled while Influx is perfectly healthy. Memoizing
+		// that would serve 503 from the negative cache to EVERY client
+		// for TTL/2 - one closed tab blacking the section for everyone.
+		if ctx.Err() == nil {
+			o.memoErr, o.memoErrAt = err, o.now()
+		}
 		return nil, err
 	}
 	o.memo, o.memoAt = payload, o.now()
@@ -257,6 +269,12 @@ func (o *observeCollector) collect(ctx context.Context) (*ObservePayload, error)
 		rows, err := o.client.query(cycleCtx, fmt.Sprintf(`from(bucket:%q) |> range(start:-5m) |> filter(fn:(r)=>r._measurement=="llm_runtime") |> filter(fn:(r)=>contains(set:[%s], value:r.endpoint)) |> last()`, o.cfg.Bucket, fluxStringSet(o.cfg.GPUEndpoints)))
 		if err != nil {
 			fail("gpu", err)
+			// The success branch computes GPUsAbsent from seen rows;
+			// on a failed query NOTHING was seen, so every configured
+			// endpoint is unverified. Disclose them all - a dead GPU
+			// query must not render as an empty healthy grid.
+			payload.GPUsAbsent = append(payload.GPUsAbsent, o.cfg.GPUEndpoints...)
+			sort.Strings(payload.GPUsAbsent)
 		} else {
 			type gpuGroup struct {
 				endpoint string
@@ -340,7 +358,9 @@ func (o *observeCollector) collect(ctx context.Context) (*ObservePayload, error)
 		// endpoint, so scanning 8d of them (2.7s influx wall measured live)
 		// to find the newest period is pure waste - one hour period is
 		// open at a time and the liveness anchor below rejects anything
-		// older than 2h. Day periods live on the -8d window (7 days of
+		// older than 2h. -26h (not 2h) leaves a day of slack so a late
+		// writer cannot drop the live period at the window edge; ghosts
+		// inside the slack are killed by the anchor, never rendered. Day periods live on the -8d window (7 days of
 		// rows are legitimate comparators for the newest-period rule).
 		window string
 		// maxAge anchors the newest-period rule to wall-clock: when EVERY
@@ -359,6 +379,7 @@ func (o *observeCollector) collect(ctx context.Context) (*ObservePayload, error)
 		rows, err := o.client.query(cycleCtx, fmt.Sprintf(`from(bucket:%q) |> range(start:%s) |> filter(fn:(r)=>r._measurement=="llm_endpoint_cost_v3") |> filter(fn:(r)=>r.period==%q)`, o.cfg.CostsBucket, cp.window, cp.period))
 		if err != nil {
 			fail("cost "+cp.period, err)
+			payload.Cost.Errors = append(payload.Cost.Errors, cp.period)
 			continue
 		}
 		type costGroup struct {
