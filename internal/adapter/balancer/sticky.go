@@ -191,9 +191,9 @@ func (s *StickySessionWrapper) Select(ctx context.Context, endpoints []*domain.E
 // combined with Select's pin-overwrite on repin - turned a 46s blip into a
 // fleet-wide KV cold start. Blips are now ridden out by Select (bypass).
 // Pins to a permanently dead node age out through the idle TTL.
-func (s *StickySessionWrapper) PurgeDeadEndpoints(routable []*domain.Endpoint) {
-	alive := make(map[string]struct{}, len(routable))
-	for _, ep := range routable {
+func (s *StickySessionWrapper) PurgeDeadEndpoints(registered []*domain.Endpoint) {
+	alive := make(map[string]struct{}, len(registered))
+	for _, ep := range registered {
 		alive[ep.URLString] = struct{}{}
 	}
 
