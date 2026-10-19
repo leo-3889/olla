@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/thushan/olla/internal/adapter/balancer"
+	"github.com/thushan/olla/internal/adapter/inspector"
 	"github.com/thushan/olla/internal/adapter/proxy/core"
 	"github.com/thushan/olla/internal/app/middleware"
 	"github.com/thushan/olla/internal/core/constants"
@@ -51,6 +53,13 @@ func (a *Application) proxyHandler(w http.ResponseWriter, r *http.Request) {
 	ctx, r := a.setupRequestContext(r, pr.stats)
 
 	a.analyzeRequest(ctx, r, pr)
+
+	// Multipart audio uploads above the inspector's model-scan ceiling are
+	// skipped by the inspector, so they would silently take the default
+	// routing chain (the proven halogen-501 class). Reject loudly instead.
+	if a.rejectOversizeAudioUpload(w, r, pr) {
+		return
+	}
 
 	// Sticky session key must be computed after analyzeRequest so the model
 	// name is available; inject into context before endpoint selection.
@@ -611,6 +620,60 @@ func (a *Application) handleProxyError(w *core.ResponseStartedWriter, err error)
 
 func (a *Application) stripRoutePrefix(ctx context.Context, path string) string {
 	return util.StripRoutePrefix(ctx, path, constants.ContextRoutePrefixKey)
+}
+
+// audioTranscriptionsPathSuffix identifies the OpenAI audio transcription
+// endpoint on the route-prefix-stripped target path (/v1/audio/transcriptions).
+const audioTranscriptionsPathSuffix = "/audio/transcriptions"
+
+// rejectOversizeAudioUpload answers 413 for multipart uploads to the
+// transcription endpoint that exceed the inspector's multipart model-scan
+// ceiling (inspector.MultipartModelScanSize, 8 MB). Above the ceiling the
+// inspector skips the body (inspectMultipart never reads it), the model field
+// is never extracted, and the request silently takes the default routing
+// chain - live-proven 2026-10-19 as a >8 MB upload landing on halogen-395 and
+// 501ing. proxy.request_limits.max_body_size is 16 MiB, so 8-16 MB uploads
+// reach this handler by design; a loud 413 is the honest outcome for a body
+// the gateway provably cannot route.
+//
+// The bound is Content-Length only: chunked bodies (ContentLength -1) pass,
+// matching the inspector's own scan-skip for unknown lengths, so clients that
+// legitimately cannot precompute a length are not punished. Non-audio
+// multipart keeps today's default-routing behaviour untouched; TTS
+// (/audio/speech) is JSON and unaffected. Returns true when the response was
+// written and the caller must stop.
+func (a *Application) rejectOversizeAudioUpload(w http.ResponseWriter, r *http.Request, pr *proxyRequest) bool {
+	if r.ContentLength <= inspector.MultipartModelScanSize {
+		return false
+	}
+	if !strings.HasSuffix(pr.targetPath, audioTranscriptionsPathSuffix) {
+		return false
+	}
+	if !strings.Contains(strings.ToLower(r.Header.Get(constants.HeaderContentType)), "multipart/form-data") {
+		return false
+	}
+
+	pr.hadError = true
+	pr.requestLogger.Warn("Rejecting multipart audio upload above the model-scan ceiling",
+		"path", pr.targetPath,
+		"content_length", r.ContentLength)
+	a.logRequestRejected(pr, http.StatusRequestEntityTooLarge)
+
+	// Translator error envelope: {"error":{"message","type"}}. Transcription
+	// is an OpenAI-format route, so the type is OpenAI's invalid_request_error.
+	errorResp := map[string]interface{}{
+		"error": map[string]interface{}{
+			"message": fmt.Sprintf("multipart audio upload of %d bytes exceeds the %d byte model-scan ceiling; uploads this large cannot be routed by model and are rejected instead of falling through to default routing", r.ContentLength, inspector.MultipartModelScanSize),
+			"type":    "invalid_request_error",
+		},
+	}
+
+	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
+	w.WriteHeader(http.StatusRequestEntityTooLarge)
+	if encErr := json.NewEncoder(w).Encode(errorResp); encErr != nil {
+		pr.requestLogger.Error("Failed to write audio upload rejection response", "error", encErr)
+	}
+	return true
 }
 
 // three-stage filtering pipeline that progressively narrows down endpoints.

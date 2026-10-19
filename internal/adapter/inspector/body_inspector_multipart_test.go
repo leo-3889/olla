@@ -116,7 +116,7 @@ func TestBodyInspector_Multipart_LargeBodySkipped(t *testing.T) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/v1/audio/transcriptions", http.NoBody)
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "multipart/form-data; boundary=x")
-	req.ContentLength = multipartModelScanSize + 1
+	req.ContentLength = MultipartModelScanSize + 1
 
 	profile := &domain.RequestProfile{}
 	require.NoError(t, bi.Inspect(ctx, req, profile))

@@ -96,6 +96,13 @@ func (a *Application) providerProxyHandler(w http.ResponseWriter, r *http.Reques
 	ctx, r = a.setupRequestContext(r, pr.stats)
 	a.analyzeRequest(ctx, r, pr)
 
+	// Same loud-413 policy as proxyHandler: an oversize multipart upload on
+	// the transcription route is unroutable by model, so it must not fall
+	// onto the provider's endpoint list silently.
+	if a.rejectOversizeAudioUpload(w, r, pr) {
+		return
+	}
+
 	// Sticky session key must be computed after analyzeRequest so the model name
 	// is populated; inject into context before endpoint selection so the sticky
 	// balancer wrapper observes the key during Select(). Mirrors proxyHandler.
