@@ -271,12 +271,20 @@ func (s *DiscoveryService) GetDiscoveryService() (ports.DiscoveryService, error)
 	return s, nil
 }
 
-// GetHealthyEndpoints implements ports.DiscoveryService
+// GetHealthyEndpoints implements ports.DiscoveryService. It is a DISPATCH candidate
+// source, not a status listing: it returns the ROUTABLE set (healthy/busy/warming),
+// mirroring endpointRepositoryAdapter.GetHealthyEndpoints. The graded-weight ladder
+// (healthy 1.0 / busy 0.3 / warming 0.1) only works while a Busy endpoint stays a
+// candidate at reduced weight; with a healthy-only filter, load-aware Busy grading
+// (proxy.busy_queue_depth) removes the endpoint from routing entirely, so an alias
+// whose only live carrier is graded Busy answers 404 model_not_found for the whole
+// probe cycle instead of degrading to reduced-weight routing.
+// Status/model listing handlers keep the strict repository GetHealthy.
 func (s *DiscoveryService) GetHealthyEndpoints(ctx context.Context) ([]*domain.Endpoint, error) {
 	if s.endpointRepo == nil {
 		return nil, errors.New("endpoint repository not initialized")
 	}
-	return s.endpointRepo.GetHealthy(ctx)
+	return s.endpointRepo.GetRoutable(ctx)
 }
 
 // GetEndpoints implements ports.DiscoveryService
