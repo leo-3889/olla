@@ -1,13 +1,13 @@
 package handlers
 
 import (
-	"strings"
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/thushan/olla/internal/adapter/balancer"
