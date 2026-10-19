@@ -17,6 +17,10 @@ import (
 )
 
 const (
+	// Structured-log keys repeated across transition branches (goconst).
+	logKeyStatus      = "status"
+	logKeyNextCheckIn = "next_check_in"
+
 	DefaultConcurrentChecks        = 5
 	DefaultHealthCheckInterval     = 30 * time.Second
 	LogThrottleInterval            = 2 * time.Minute
@@ -432,7 +436,7 @@ func (c *HTTPHealthChecker) logHealthCheckResult(
 				endpoint.Name,
 				newStatus,
 				"latency", result.Latency,
-				"next_check_in", nextInterval)
+				logKeyNextCheckIn, nextInterval)
 
 		case oldStatus == domain.StatusUnknown:
 			// Initial discovery of unhealthy endpoint
@@ -452,9 +456,9 @@ func (c *HTTPHealthChecker) logHealthCheckResult(
 			}
 			c.logger.WarnWithContext("Endpoint discovered offline:", endpoint.Name, logger.LogContext{
 				UserArgs: []interface{}{
-					"status", newStatus.String(),
+					logKeyStatus, newStatus.String(),
 					"latency", result.Latency,
-					"next_check_in", nextInterval,
+					logKeyNextCheckIn, nextInterval,
 				},
 				DetailedArgs: detailedArgs,
 			})
@@ -465,7 +469,7 @@ func (c *HTTPHealthChecker) logHealthCheckResult(
 				newStatus,
 				"was", oldStatus.String(),
 				"latency", result.Latency,
-				"next_check_in", nextInterval)
+				logKeyNextCheckIn, nextInterval)
 
 		default:
 			// Status changed to unhealthy
@@ -485,11 +489,11 @@ func (c *HTTPHealthChecker) logHealthCheckResult(
 			}
 			c.logger.WarnWithContext("Endpoint status changed:", endpoint.Name, logger.LogContext{
 				UserArgs: []interface{}{
-					"status", newStatus.String(),
+					logKeyStatus, newStatus.String(),
 					"was", oldStatus.String(),
 					"consecutive_failures", endpoint.ConsecutiveFailures + 1,
 					"latency", result.Latency,
-					"next_check_in", nextInterval,
+					logKeyNextCheckIn, nextInterval,
 				},
 				DetailedArgs: detailedArgs,
 			})
@@ -513,9 +517,9 @@ func (c *HTTPHealthChecker) logHealthCheckResult(
 
 		c.logger.WarnWithContext("Endpoint still having issues:", endpoint.Name, logger.LogContext{
 			UserArgs: []interface{}{
-				"status", newStatus.String(),
+				logKeyStatus, newStatus.String(),
 				"consecutive_failures", endpoint.ConsecutiveFailures + 1,
-				"next_check_in", nextInterval,
+				logKeyNextCheckIn, nextInterval,
 			},
 			DetailedArgs: detailedArgs,
 		})

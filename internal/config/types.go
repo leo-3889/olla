@@ -752,7 +752,7 @@ func (c *HealthConfig) Validate() error {
 	case critical == 0 && degraded == 0:
 		// Unset: the standard defaults apply.
 	case critical == 0 || degraded == 0:
-		return fmt.Errorf("health.success_rate: critical_below and degraded_below must both be set or both left empty")
+		return errors.New("health.success_rate: critical_below and degraded_below must both be set or both left empty")
 	case critical <= 0 || critical > 100:
 		return fmt.Errorf("health.success_rate.critical_below must be between 0 and 100, got %g", critical)
 	case degraded <= 0 || degraded > 100:
