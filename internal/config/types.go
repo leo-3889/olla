@@ -130,8 +130,8 @@ type AccessPolicyConfig struct {
 // the existing HTTP listener at /internal/ui/.
 type DashboardConfig struct {
 	// AccessPolicy gates /internal/ui/* unconditionally whenever Enabled is
-	// true. GateInternalAPI exists for forward compatibility but is inert on
-	// this branch (see GateInternalAPI).
+	// true, and - with GateInternalAPI enabled - the operational API too
+	// (see GateInternalAPI).
 	AccessPolicy AccessPolicyConfig `yaml:"access_policy"`
 
 	// Enabled controls whether /internal/ui/* routes are registered at all.
@@ -139,12 +139,14 @@ type DashboardConfig struct {
 	// governs whether they are ever served.
 	Enabled bool `yaml:"enabled"`
 
-	// GateInternalAPI is reserved for a later change that opts the rest of
-	// /internal/* (and /version) into the same AccessPolicy. It is INERT for
-	// now: setting it true has no effect. Defaults to false because
-	// defaulting it on would silently break existing deployments that scrape
-	// /internal/metrics or poll /internal/health from hosts the policy would
-	// reject. The field ships now so that later change needs no config migration.
+	// GateInternalAPI opts the rest of the operational API - /internal/*
+	// (except the /internal/health probe) and /version - into the same
+	// AccessPolicy that guards /internal/ui/*. Defaults to false: enabling
+	// it would silently break deployments that scrape /internal/metrics or
+	// poll the status endpoints from hosts the policy rejects. The
+	// dashboard served from this process keeps working when enabled: its
+	// requests originate from the operator's browser through the same
+	// address classes the policy admits.
 	GateInternalAPI bool `yaml:"gate_internal_api"`
 }
 
@@ -159,17 +161,17 @@ func (c *DashboardConfig) ParsedCIDRs() []*net.IPNet {
 // to. No-op when the dashboard is disabled, so an explicit off switch validates
 // clean without forcing the operator to also populate the allowlists.
 //
-// GateInternalAPI is deliberately inert for now (the wrapping that would
-// extend AccessPolicy to the rest of /internal/* isn't implemented yet), so a
-// startup slog.Warn fires when it is set true. Without the warning an operator
-// who sets the flag sees silent acceptance, assumes the gate is active, and
-// is surprised when /internal/* stays open. The field itself is kept so that
-// later change needs no config migration.
+// GateInternalAPI is enforced by the route wiring (Application.internalAPIGate),
+// so a startup slog.Warn fires when it is set true, naming the effective
+// state: enabling the gate moves /internal/* (health probe exempt) and
+// /version behind the access policy, and scrapes from unlisted hosts will
+// start receiving 403. The default (false) stays silent - the shipped
+// behaviour is ungated by design.
 func (c *DashboardConfig) Validate() error {
 	if c.GateInternalAPI {
-		slog.Warn("dashboard.gate_internal_api is set but inert on this build; /internal/* is NOT gated by the dashboard access policy",
+		slog.Warn("dashboard.gate_internal_api is enabled; the dashboard access policy now gates /internal/* (except /internal/health) and /version",
 			"gate_internal_api", true,
-			"reason", "wrapping is not yet wired; treating the flag as a no-op to preserve existing monitoring scrapes")
+			"reason", "requests from hosts outside dashboard.access_policy are refused with 403; point monitoring scrapes at an allowlisted host")
 	}
 	if !c.Enabled {
 		return nil

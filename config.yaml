@@ -225,10 +225,14 @@ dashboard:
       - "::1/128"
     allowed_hosts:
       - "localhost"
-  # gate_internal_api is reserved for a future release and is inert today:
-  # setting it true has no effect (Olla logs a warning at startup if set).
-  # Once wired, it will extend the same access_policy to the rest of
-  # /internal/* and /version.
+  # gate_internal_api extends the SAME access_policy above to the rest of
+  # the operational API - /internal/status (and its /endpoints, /models
+  # sub-paths), /internal/metrics, /internal/stats/*, /internal/process -
+  # and /version, behind the identical CIDR/Host gate that guards
+  # /internal/ui*. /internal/health stays exempt (load-balancer probes).
+  # Off by default: enabling it 403s scrapes and polls from hosts the
+  # policy rejects, so point monitoring at an allowlisted address first.
+  # The boot log states the effective state when the knob is set.
   gate_internal_api: false
 
 # Model aliases allow mapping a single virtual model name to multiple actual model names

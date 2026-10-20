@@ -785,6 +785,33 @@ When enabled, displays:
 - Goroutine counts
 - Runtime information
 
+## Dashboard Access Control
+
+The embedded dashboard (`/internal/ui/`) is gated by a network-layer policy:
+every request must come from an allowlisted source IP **and** carry an
+allowlisted Host header. IP-literal Hosts are accepted unconditionally.
+
+```yaml
+dashboard:
+  enabled: true
+  gate_internal_api: false
+  access_policy:
+    allowed_cidrs:
+      - "127.0.0.0/8"
+    allowed_hosts:
+      - "localhost"
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `dashboard.enabled` | `true` | Registers the `/internal/ui/*` subtree at all. When false the routes do not exist (404), they are not 403'd. |
+| `dashboard.access_policy.allowed_cidrs` | loopback | Source-IP allowlist for the dashboard. An unparseable/absent list is deny-all (fail closed). |
+| `dashboard.access_policy.allowed_hosts` | `["localhost"]` | Host-header allowlist for non-IP Hosts; IP-literal Hosts are auto-accepted. |
+| `dashboard.gate_internal_api` | `false` | **Wired:** extends the *same* policy over the operational API - `/internal/status` (incl. `/endpoints` and `/models`), `/internal/metrics`, `/internal/stats/*`, `/internal/process` and `/version` - so the dashboard, its data endpoints, Prometheus scrapes and the status API share one perimeter. `/internal/health` is deliberately exempt: load balancers and container probes answer from addresses no operator maintains in an allowlist. Off by default because enabling it 403s monitoring scrapes and status polls from hosts the policy rejects; set it only after allowlisting those sources. The startup log names the effective state when the knob is set. |
+
+`/olla/*` proxy routes are never affected - the policy protects the
+operational surface, not inference traffic.
+
 ## Environment Variables
 
 Only the variables listed below are recognised. They are each hand-mapped in `internal/config/config.go`; arbitrary `OLLA_*` names are **not** auto-derived from YAML paths. Anything you set that isn't in this list will be silently ignored.

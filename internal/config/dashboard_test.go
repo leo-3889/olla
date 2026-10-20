@@ -151,10 +151,11 @@ func captureSlog(t *testing.T) (*bytes.Buffer, func()) {
 	return &buf, func() { slog.SetDefault(prev) }
 }
 
-// Setting GateInternalAPI=true is inert for now (the wrapping isn't
-// implemented yet), so the operator deserves a startup warning naming the
-// field. Without it, an operator who sets the flag sees silent acceptance
-// and assumes the gate is active, then is surprised when /internal/* stays open.
+// Setting GateInternalAPI=true ENFORCES the policy (Application.internalAPIGate
+// wraps the operational API), so the startup warning must state the EFFECTIVE
+// state: which routes the policy now covers and that scrapes from unlisted
+// hosts will 403. An operator who sets the flag sees this line in the boot log
+// and knows the perimeter is live.
 func TestDashboardConfig_Validate_GateInternalAPIWarnsWhenSetTrue(t *testing.T) {
 	buf, restore := captureSlog(t)
 	defer restore()
@@ -169,8 +170,16 @@ func TestDashboardConfig_Validate_GateInternalAPIWarnsWhenSetTrue(t *testing.T) 
 	if err := c.Validate(); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	if !strings.Contains(buf.String(), "gate_internal_api") {
-		t.Fatalf("expected warning mentioning gate_internal_api when set true, got: %q", buf.String())
+	out := buf.String()
+	if !strings.Contains(out, "gate_internal_api") {
+		t.Fatalf("expected warning mentioning gate_internal_api when set true, got: %q", out)
+	}
+	// The warning must state the effective state, not a placeholder:
+	// enabled + the gated surface + the health exemption.
+	for _, want := range []string{"enabled", "/internal/*", "/internal/health"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected warning to state effective state %q, got: %q", want, out)
+		}
 	}
 }
 

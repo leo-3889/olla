@@ -38,15 +38,19 @@ func (a *Application) registerRoutes() {
 	// Internal health and monitoring endpoints come first - they're critical
 	// for operations and shouldn't depend on any provider configuration
 	a.routeRegistry.RegisterWithMethod(constants.DefaultHealthCheckEndpoint, a.healthHandler, "Health check endpoint", "GET")
-	a.routeRegistry.RegisterWithMethod("/internal/status", middleware.GzipFunc(a.statusHandler), "Endpoint status", "GET")
-	a.routeRegistry.RegisterWithMethod(constants.DefaultMetricsEndpoint, a.metricsHandler, "Prometheus metrics", "GET")
-	a.routeRegistry.RegisterWithMethod("/internal/status/endpoints", middleware.GzipFunc(a.endpointsStatusHandler), "Endpoints status", "GET")
-	a.routeRegistry.RegisterWithMethod("/internal/status/models", middleware.GzipFunc(a.modelsStatusHandler), "Models status", "GET")
-	a.routeRegistry.RegisterWithMethod("/internal/stats/models", a.modelStatsHandler, "Model statistics", "GET")
-	a.routeRegistry.RegisterWithMethod("/internal/stats/translators", a.translatorStatsHandler, "Translator statistics", "GET")
-	a.routeRegistry.RegisterWithMethod("/internal/stats/sticky", a.stickyStatsHandler, "Sticky session statistics", "GET")
-	a.routeRegistry.RegisterWithMethod("/internal/process", a.processStatsHandler, "Process status", "GET")
-	a.routeRegistry.RegisterWithMethod("/version", a.versionHandler, "Olla version information", "GET")
+	// gateInternal applies the dashboard AccessPolicy to the operational API
+	// when dashboard.gate_internal_api is enabled (off by default, so
+	// existing monitoring scrapes from unlisted hosts keep working).
+	gate := a.internalAPIGate()
+	a.routeRegistry.RegisterWithMethod("/internal/status", middleware.GzipFunc(gate(a.statusHandler)), "Endpoint status", "GET")
+	a.routeRegistry.RegisterWithMethod(constants.DefaultMetricsEndpoint, gate(a.metricsHandler), "Prometheus metrics", "GET")
+	a.routeRegistry.RegisterWithMethod("/internal/status/endpoints", middleware.GzipFunc(gate(a.endpointsStatusHandler)), "Endpoints status", "GET")
+	a.routeRegistry.RegisterWithMethod("/internal/status/models", middleware.GzipFunc(gate(a.modelsStatusHandler)), "Models status", "GET")
+	a.routeRegistry.RegisterWithMethod("/internal/stats/models", gate(a.modelStatsHandler), "Model statistics", "GET")
+	a.routeRegistry.RegisterWithMethod("/internal/stats/translators", gate(a.translatorStatsHandler), "Translator statistics", "GET")
+	a.routeRegistry.RegisterWithMethod("/internal/stats/sticky", gate(a.stickyStatsHandler), "Sticky session statistics", "GET")
+	a.routeRegistry.RegisterWithMethod("/internal/process", gate(a.processStatsHandler), "Process status", "GET")
+	a.routeRegistry.RegisterWithMethod("/version", gate(a.versionHandler), "Olla version information", "GET")
 
 	// Unified model views aggregate across all providers
 	a.routeRegistry.RegisterWithMethod("/olla/models", a.unifiedModelsHandler, "Unified models listing with filtering", "GET")
@@ -442,5 +446,23 @@ func (a *Application) registerStaticProviderRoutes() {
 				}
 			}
 		}
+	}
+}
+
+// internalAPIGate returns the wrapper applied to the operational API routes.
+// With dashboard.gate_internal_api enabled, every /internal/* route (except
+// the health probe) and /version go through the SAME AccessPolicy that
+// guards /internal/ui/* - the dashboard data endpoints are exactly as
+// restricted as the dashboard itself. Disabled (the default) is a no-op:
+// deployments that scrape /internal/metrics from unlisted hosts are not
+// silently broken. /internal/health is deliberately never wrapped: load
+// balancers and container probes answer from addresses no operator wants
+// to maintain in an allowlist.
+func (a *Application) internalAPIGate() func(http.HandlerFunc) http.HandlerFunc {
+	if !a.Config.Dashboard.GateInternalAPI {
+		return func(h http.HandlerFunc) http.HandlerFunc { return h }
+	}
+	return func(h http.HandlerFunc) http.HandlerFunc {
+		return dashboard.AccessMiddleware(a.Config.Dashboard, a.logger, h).ServeHTTP
 	}
 }

@@ -35,7 +35,12 @@ import (
 // /internal/ui/ and every sub-path. Mounted under /internal/ so its assets
 // share the same access-policy zone as the data they display, and so no
 // profile-driven provider route can collide (provider routes are always
-// under /olla/).
+// under /olla/). By default this middleware wraps ONLY the /internal/ui*
+// paths: /internal/status and /internal/metrics ride the same listener
+// ungated, exactly as they did before the dashboard existed. Setting
+// dashboard.gate_internal_api widens the SAME policy to the operational API
+// (Application.internalAPIGate), so an operator who wants a perimeter gets
+// the dashboard and its data under one consistent boundary.
 const DashboardRoute = "/internal/ui/"
 
 // SlashlessDashboardRoute is the exact-match path without the trailing slash.
