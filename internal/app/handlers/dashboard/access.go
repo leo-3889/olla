@@ -35,12 +35,13 @@ import (
 // treats the trailing slash as a catch-all, so this single registration covers
 // /internal/ui/ and every sub-path. Mounted under /internal/ so no
 // profile-driven provider route can collide (provider routes are always
-// under /olla/). Note the zone is NOT access-gated as a whole: this
-// middleware wraps ONLY the /internal/ui* paths. /internal/status and
-// /internal/metrics ride the same listener unauthenticated by design
-// (config gate_internal_api is currently inert), so the dashboard's own
-// data endpoints are no more restricted than they were before this
-// middleware existed - the policy here protects the UI shell, not the API.
+// under /olla/). By default this middleware wraps ONLY the /internal/ui*
+// paths plus the dashboard's data extras: /internal/status and
+// /internal/metrics ride the same listener ungated, exactly as they did
+// before the dashboard existed. Setting dashboard.gate_internal_api widens
+// the SAME policy to the operational API (Application.internalAPIGate), so
+// an operator who wants a perimeter gets the dashboard and its data under
+// one consistent boundary.
 const DashboardRoute = "/internal/ui/"
 
 // SlashlessDashboardRoute is the exact-match path without the trailing slash.

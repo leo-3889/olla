@@ -205,10 +205,10 @@ func TestShippedConfig_DashboardPopulated(t *testing.T) {
 	}
 
 	// gate_internal_api defaults to false: turning it on by default would
-	// break existing Prometheus scrapes of /internal/metrics on upgrade. The
-	// field is inert on this branch regardless (simple-dashboard.md §5.2);
-	// this assertion pins the shipped default so a future PR wiring it does
-	// not also have to flip the shipped file.
+	// break existing Prometheus scrapes of /internal/metrics on upgrade.
+	// When enabled it applies the dashboard AccessPolicy to /internal/* +
+	// /version (Application.internalAPIGate); this assertion pins the
+	// shipped default so the feature ships opt-in.
 	if cfg.Dashboard.GateInternalAPI {
 		t.Error("shipped dashboard.gate_internal_api must be false to avoid " +
 			"breaking existing /internal/* monitoring on upgrade")

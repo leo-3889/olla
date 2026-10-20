@@ -7,6 +7,21 @@ import (
 	"github.com/thushan/olla/internal/core/constants"
 )
 
+// stickyStatsBlock returns the sticky-session statistics for embedding in
+// larger payloads (/internal/status). Same shape as GET /internal/stats/sticky:
+// callers always branch on "enabled", never on presence/absence.
+func (a *Application) stickyStatsBlock() any {
+	enabledShape := map[string]any{"enabled": false}
+	if a.stickyStatsFn == nil {
+		return enabledShape
+	}
+	stats := a.stickyStatsFn()
+	if stats == nil {
+		return enabledShape
+	}
+	return stats
+}
+
 func (a *Application) stickyStatsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 	w.WriteHeader(http.StatusOK)

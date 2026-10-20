@@ -181,8 +181,8 @@ func DefaultConfig() *Config {
 				// curl installer) serving on 0.0.0.0 must not 403 its own default.
 				AllowedHosts: []string{"localhost"},
 			},
-			// Inert for now: the GateInternalAPI wrapping is not implemented yet.
-			// The field ships now so a later change needs no config migration.
+			// Off by default: enabling opts /internal/* + /version into the
+			// dashboard AccessPolicy (see DashboardConfig.GateInternalAPI).
 			GateInternalAPI: false,
 		},
 		Translators: TranslatorsConfig{

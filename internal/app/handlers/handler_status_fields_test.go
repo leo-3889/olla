@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/thushan/olla/internal/adapter/balancer"
 	"github.com/thushan/olla/internal/config"
 	"github.com/thushan/olla/internal/core/domain"
 	"github.com/thushan/olla/internal/core/ports"
@@ -51,6 +52,7 @@ func TestEndpointsStatusHandler_AdditiveFields(t *testing.T) {
 				MinLatency:         30,
 				MaxLatency:         400,
 				AverageLatency:     150,
+				TotalBytes:         1536,
 			},
 		},
 		connectionStats: map[string]int64{
@@ -85,6 +87,7 @@ func TestEndpointsStatusHandler_AdditiveFields(t *testing.T) {
 	assert.Equal(t, int64(150), *busy.AvgLatencyMs)
 	assert.Equal(t, int64(2), busy.ActiveConnections)
 	assert.Equal(t, "http://localhost:11434", busy.URL)
+	assert.Equal(t, "1.50 KB", busy.Traffic, "traffic must surface the endpoint byte counter (in + out)")
 	assert.NotNil(t, busy.HealthCheckAt)
 	assert.NotNil(t, busy.NextCheckAt)
 
@@ -93,6 +96,9 @@ func TestEndpointsStatusHandler_AdditiveFields(t *testing.T) {
 	assert.Equal(t, int64(0), idle.MaxLatencyMs, "max_latency_ms zero-value for no traffic (A3 convention)")
 	assert.Nil(t, idle.AvgLatencyMs, "avg_latency_ms must be omitted for no traffic")
 	assert.Equal(t, int64(0), idle.ActiveConnections)
+	// No stats => the Go zero value, NOT a fabricated "0 B": the dashboard
+	// renders the dash from the empty string (|| convention).
+	assert.Equal(t, "", idle.Traffic, "no-stats endpoint must emit the empty traffic zero value")
 }
 
 // The sanitised URL field must not echo userinfo or query strings even when
@@ -364,4 +370,41 @@ func TestBuildUnifiedEndpoints_TieBreakerDeterministicOnCollidingDisplayURL(t *t
 			assert.Equal(t, firstWinner, winner, "the same endpoint must sort first regardless of input order (map-iteration order varies across polls)")
 		}
 	}
+}
+
+// system.sticky mirrors GET /internal/stats/sticky (same shape): the payload
+// always carries a branchable "enabled" flag - the stable enabled:false
+// shape when sticky sessions are off, the full stats snapshot when the
+// wrapper is wired. Callers branch on .enabled, never on presence.
+func TestStatusHandler_SystemStickyBlock(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/internal/status", nil)
+
+	off := buildSystemStatusApp(t, allHealthyEndpoints(), ports.ProxyStats{})
+	w := httptest.NewRecorder()
+	off.statusHandler(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var raw map[string]interface{}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&raw))
+	sys, _ := raw["system"].(map[string]interface{})
+	require.NotNil(t, sys)
+	sticky, ok := sys["sticky"].(map[string]interface{})
+	require.True(t, ok, "system.sticky must be present as an object")
+	assert.Equal(t, false, sticky["enabled"], "disabled sticky must render the enabled:false shape")
+
+	on := buildSystemStatusApp(t, allHealthyEndpoints(), ports.ProxyStats{})
+	on.stickyStatsFn = func() *balancer.StickyStats {
+		return &balancer.StickyStats{Enabled: true, ActiveSessions: 3, Hits: 9, Misses: 2}
+	}
+	w2 := httptest.NewRecorder()
+	on.statusHandler(w2, req)
+	require.Equal(t, http.StatusOK, w2.Code)
+	var raw2 map[string]interface{}
+	require.NoError(t, json.NewDecoder(w2.Body).Decode(&raw2))
+	sys2, _ := raw2["system"].(map[string]interface{})
+	sticky2, ok := sys2["sticky"].(map[string]interface{})
+	require.True(t, ok, "system.sticky must be present as an object")
+	assert.Equal(t, true, sticky2["enabled"])
+	assert.Equal(t, float64(3), sticky2["active_sessions"])
+	assert.Equal(t, float64(9), sticky2["hits"])
+	assert.Equal(t, float64(2), sticky2["misses"])
 }

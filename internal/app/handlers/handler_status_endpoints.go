@@ -13,6 +13,7 @@ import (
 	"github.com/thushan/olla/internal/core/ports"
 
 	"github.com/thushan/olla/internal/core/domain"
+	"github.com/thushan/olla/internal/util"
 	"github.com/thushan/olla/pkg/format"
 )
 
@@ -41,6 +42,7 @@ type EndpointSummary struct {
 	Priority     int    `json:"priority"`
 	ModelCount   int    `json:"model_count"`
 	RequestCount int64  `json:"request_count"`
+	Traffic      string `json:"traffic"`
 	// Additive dashboard fields, existing fields above are unchanged.
 	// min/max latency follow the same plain-zero convention as RequestCount
 	// for no-traffic endpoints; avg_latency_ms is a pointer so a no-traffic
@@ -171,6 +173,7 @@ func (a *Application) buildEndpointSummaryOptimised(endpoint *domain.Endpoint, s
 
 	if hasStats {
 		summary.RequestCount = stats.TotalRequests
+		summary.Traffic = format.Bytes(util.SafeUint64(stats.TotalBytes))
 		if stats.TotalRequests > 0 {
 			successRate := (float64(stats.SuccessfulRequests) * 100.0) / float64(stats.TotalRequests)
 			summary.SuccessRate = format.Percentage(successRate)

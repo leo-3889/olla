@@ -138,6 +138,14 @@
       title: 'Counts any streamed response, regardless of HTTP status',
     },
     { key: 'avg_latency_ms', label: 'Avg latency', sortable: true, num: true, align: 'right' },
+    {
+      key: 'traffic',
+      label: 'Traffic',
+      sortable: false,
+      num: true,
+      align: 'right',
+      title: 'Proxy bytes through this endpoint (in + out)',
+    },
   ];
 
   const glanceInitialSort: SortState = { key: 'status_rank', dir: 'asc' };
@@ -257,6 +265,13 @@
           value={fmtInt(sys.active_connections)}
           sub="in flight right now"
         />
+        {#if sys.sticky?.enabled}
+          <StatTile
+            label="Sticky sessions"
+            value={fmtInt(sys.sticky.active_sessions ?? 0)}
+            sub="{fmtInt(sys.sticky.hits ?? 0)} hits · {fmtInt(sys.sticky.misses ?? 0)} misses · {fmtInt(sys.sticky.evictions ?? 0)} evictions"
+          />
+        {/if}
         <StatTile
           label="Total requests"
           value={fmtInt(sys.total_requests)}
@@ -335,6 +350,7 @@
           <td class={cellClass('avg_latency_ms')}>
             {#if typeof e.avg_latency_ms === 'number' && e.request_count > 0}{fmtMs(e.avg_latency_ms)}{:else}<span class="dash">—</span>{/if}
           </td>
+          <td class={cellClass('traffic')}>{e.traffic || '—'}</td>
         {/snippet}
       </SortableTable>
     </div>

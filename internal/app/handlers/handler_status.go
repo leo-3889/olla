@@ -46,9 +46,12 @@ type SystemSummary struct {
 	SuccessRate  string    `json:"success_rate"`
 	AvgLatency   string    `json:"avg_latency"`
 	TotalTraffic string    `json:"total_traffic"`
-	UptimeHuman  string    `json:"uptime"`
-	Version      string    `json:"version"`
-	Commit       string    `json:"commit"`
+	// Sticky mirrors GET /internal/stats/sticky (same shape, branch on
+	// .enabled) so the dashboard sees pinning activity without a 6th poll.
+	Sticky      any    `json:"sticky"`
+	UptimeHuman string `json:"uptime"`
+	Version     string `json:"version"`
+	Commit      string `json:"commit"`
 	// HealthMode is the computation that produced Status: "host" (the endpoint
 	// fleet, the historical behaviour) or "model" (a configured list of
 	// models/aliases). Always present so clients can tell which verdict they are
@@ -323,6 +326,7 @@ func (a *Application) buildSystemSummary(ctx context.Context, all, healthy []*do
 		ActiveConnections:  totalConnections,
 		SecurityViolations: security.RateLimitViolations + security.SizeLimitViolations,
 		TotalTraffic:       format.Bytes(util.SafeUint64(totalTraffic)),
+		Sticky:             a.stickyStatsBlock(),
 		TotalRequests:      proxy.TotalRequests,
 		TotalFailures:      proxy.FailedRequests,
 		UptimeHuman:        format.Duration2(time.Since(a.StartTime)),

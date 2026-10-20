@@ -103,6 +103,14 @@
     })),
     { key: 'model_count', label: 'Models', sortable: true, num: true, align: 'right' },
     { key: 'request_count', label: 'Requests', sortable: true, num: true, align: 'right' },
+    {
+      key: 'traffic',
+      label: 'Traffic',
+      sortable: false,
+      num: true,
+      align: 'right',
+      title: 'Proxy bytes through this endpoint (in + out)',
+    },
     { key: 'active_connections', label: 'Conn', sortable: true, num: true, align: 'right' },
     { key: 'url', label: 'URL', sortable: false },
     { key: 'health_check_at', label: 'Last chk', sortable: false },
@@ -346,6 +354,7 @@
         {/each}
         <td class={cellClass("model_count")}>{#if e.model_count === 0}<span class="dash">0</span>{:else}{e.model_count}{/if}</td>
         <td class={cellClass('request_count')}>{e.request_count?.toLocaleString('en-AU') ?? 0}</td>
+        <td class={cellClass('traffic')}>{e.traffic || '—'}</td>
         <td class={cellClass('active_connections')}>{#if e.active_connections > 0}{e.active_connections}{:else}<span class="dash">0</span>{/if}</td>
         <td class="url-cell" title={e.url}>{e.url || '—'}</td>
         <td>{fmtAgo(e.health_check_at, now) || 'never'}</td>

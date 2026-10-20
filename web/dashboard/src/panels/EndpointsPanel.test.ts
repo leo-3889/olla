@@ -533,3 +533,47 @@ describe("EndpointsPanel runtime metrics", () => {
     expect(cell(0).text).toContain("avg 500ms · max 1.5s");
   });
 });
+
+// Surface test for the traffic column (the #3 surfacing): the backend
+// emits '' for endpoints with no stats - the cell must render a dash via
+// || (empty string is falsy), and a real byte counter passes through
+// pre-formatted.
+describe('EndpointsPanel traffic column', () => {
+  function trafficCell(rowIndex = 0): string | undefined {
+    const table = document.querySelector('table');
+    if (!table) return undefined;
+    const idx = [...table.querySelectorAll('th')].findIndex(
+      (th) => th.textContent?.trim() === 'Traffic'
+    );
+    if (idx < 0) return undefined;
+    return table
+      .querySelectorAll('tbody tr')[rowIndex]
+      ?.querySelectorAll('td')[idx]?.textContent?.trim();
+  }
+
+  it('renders the formatted byte counter for an endpoint with traffic', async () => {
+    component = mount(EndpointsPanel, { target: document.body });
+    flushSync();
+    await refreshWithEndpoints([
+      { name: 'busy', type: 'ollama', status: 'healthy', url: 'http://busy:11434', priority: 100, request_count: 40, model_count: 1, traffic: '2.00 MB' },
+      { name: 'idle', type: 'ollama', status: 'healthy', url: 'http://idle:11434', priority: 90, request_count: 0, model_count: 0, traffic: '' },
+    ]);
+    expect(trafficCell(0)).toBe('2.00 MB');
+    expect(trafficCell(1)).toBe('—');
+  });
+
+  it('renders a dash when the backend payload has no traffic key at all', async () => {
+    component = mount(EndpointsPanel, { target: document.body });
+    flushSync();
+    await refreshWithEndpoint({
+      name: 'legacy',
+      type: 'ollama',
+      status: 'healthy',
+      url: 'http://legacy:11434',
+      priority: 100,
+      request_count: 5,
+      model_count: 1,
+    });
+    expect(trafficCell(0)).toBe('—');
+  });
+});
