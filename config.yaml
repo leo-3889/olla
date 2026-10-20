@@ -60,6 +60,13 @@ proxy:
   # - "standard": Normal HTTP delivery without forced flushing, suitable for REST APIs
   profile: "auto" # Available: auto, streaming, standard
   load_balancer: "least-connections" # Available: round-robin, least-connections, priority
+  # Backend-error failover (opt-in): backend HTTP status codes that rotate the
+  # request to the next endpoint BEFORE the first byte reaches the client. A
+  # rotated-away refusal is never forwarded; tried endpoints are excluded,
+  # exactly like connection-error failover. Once any byte is flushed
+  # (streaming started) the response passes through untouched. Every entry
+  # must be a 4xx/5xx code - anything else is a boot error.
+  retry_on_status: [] # e.g. [429, 503]. [] = off (default): status codes reach the client exactly as the backend answered.
   # stream_buffer_size: 8192 # Buffer size per request - larger = fewer syscalls, more memory. Unset: the engine default applies (Olla 64KiB, Sherpa 8KiB).
   connection_timeout: 60s
   connection_keep_alive: 30s # TCP keep-alive interval for backend connections

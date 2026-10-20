@@ -239,20 +239,47 @@ type StickySessionConfig struct {
 
 // ProxyConfig holds proxy-specific configuration
 type ProxyConfig struct {
-	ProfileFilter         *domain.FilterConfig `yaml:"profile_filter,omitempty"`
-	Engine                string               `yaml:"engine"`
-	LoadBalancer          string               `yaml:"load_balancer"`
-	Profile               string               `yaml:"profile"`
-	StickySessions        StickySessionConfig  `yaml:"sticky_sessions"`
-	ConnectionTimeout     time.Duration        `yaml:"connection_timeout"`
-	ConnectionKeepAlive   time.Duration        `yaml:"connection_keep_alive"`
-	ResponseTimeout       time.Duration        `yaml:"response_timeout"`
-	ReadTimeout           time.Duration        `yaml:"read_timeout"`
-	ResponseHeaderTimeout time.Duration        `yaml:"response_header_timeout"`
-	TLSHandshakeTimeout   time.Duration        `yaml:"tls_handshake_timeout"`
-	RetryBackoff          time.Duration        `yaml:"retry_backoff"` // Deprecated: Use model_registry.routing_strategy instead. TODO: Removal: v0.1.0
-	StreamBufferSize      int                  `yaml:"stream_buffer_size"`
-	MaxRetries            int                  `yaml:"max_retries"` // Deprecated: Use model_registry.routing_strategy instead. TODO: Removal: v0.1.0
+	ProfileFilter  *domain.FilterConfig `yaml:"profile_filter,omitempty"`
+	Engine         string               `yaml:"engine"`
+	LoadBalancer   string               `yaml:"load_balancer"`
+	Profile        string               `yaml:"profile"`
+	StickySessions StickySessionConfig  `yaml:"sticky_sessions"`
+	// RetryOnStatus arms backend-error failover: backend HTTP status codes
+	// (4xx/5xx, e.g. [429, 503]) that rotate the request to the next endpoint
+	// BEFORE the first response byte reaches the client. A rotated-away refusal
+	// is never forwarded; tried endpoints are excluded exactly like the
+	// connection-error path. Suppressions are the same: once any byte is
+	// flushed (streaming started) the response passes through untouched.
+	// Empty (default) = byte-identical to a gateway without the feature:
+	// status codes reach the client as the backend answered. Boot-validated
+	// via ProxyConfig.Validate - entries must be 4xx/5xx.
+	RetryOnStatus         []int         `yaml:"retry_on_status"`
+	ConnectionTimeout     time.Duration `yaml:"connection_timeout"`
+	ConnectionKeepAlive   time.Duration `yaml:"connection_keep_alive"`
+	ResponseTimeout       time.Duration `yaml:"response_timeout"`
+	ReadTimeout           time.Duration `yaml:"read_timeout"`
+	ResponseHeaderTimeout time.Duration `yaml:"response_header_timeout"`
+	TLSHandshakeTimeout   time.Duration `yaml:"tls_handshake_timeout"`
+	RetryBackoff          time.Duration `yaml:"retry_backoff"` // Deprecated: Use model_registry.routing_strategy instead. TODO: Removal: v0.1.0
+	StreamBufferSize      int           `yaml:"stream_buffer_size"`
+	MaxRetries            int           `yaml:"max_retries"` // Deprecated: Use model_registry.routing_strategy instead. TODO: Removal: v0.1.0
+}
+
+// Validate rejects a retry_on_status entry that is not a 4xx/5xx code. The
+// failover this key arms exists for BACKEND REFUSALS (429 rate-limit, 503
+// unavailable): a 2xx/3xx entry describes nothing to recover from, and a 0,
+// negative, or 6xx+ entry is a typo that would silently match no response,
+// making the feature look broken in the field. A bad entry is therefore a
+// boot error, not a request-time no-op - same precedent as
+// StickySessions.Validate, where a misspelled key_source used to be skipped
+// silently and read as "sticky sessions do not work".
+func (p ProxyConfig) Validate() error {
+	for _, code := range p.RetryOnStatus {
+		if code < 400 || code > 599 {
+			return fmt.Errorf("retry_on_status: %d is not a 4xx/5xx status code (only backend refusal codes may trigger endpoint failover)", code)
+		}
+	}
+	return nil
 }
 
 // DiscoveryConfig holds service discovery configuration

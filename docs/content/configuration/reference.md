@@ -213,6 +213,10 @@ As of v0.0.16, the retry mechanism is automatic and built-in for connection fail
 
 **Note**: The fields `max_retries` and `retry_backoff` that may still appear in your `proxy:` section are deprecated struct stubs. The `retry:` block (with `enabled`, `on_connection_failure`, `max_attempts`) that appears in the shipped `config.yaml` as a comment template has no corresponding struct in the config schema and is silently ignored if set. Retry behaviour is automatic and built-in; none of these fields have any effect.
 
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `retry_on_status` | []int | `[]` (off) | Backend-error failover: HTTP status codes (4xx/5xx, e.g. `[429, 503]`) that rotate the request to the next endpoint BEFORE the first response byte reaches the client. A backend that refuses a request (rate-limit, overload) no longer pins the client to itself: the refusal is discarded, never forwarded, and the request is replayed on the next candidate with tried-endpoint exclusion, body restored, and the same attempt bound as connection-error failover. Suppressions are identical to the connection-error path: once any byte is flushed (streaming started) the response passes through untouched, and a non-idempotent request only rotates while its response has not started (an unstarted refusal consumed no side effect). When every candidate refuses, the last refusal passes through honestly. `[]` = byte-identical to a gateway without the feature. Entries outside 4xx/5xx are a startup error. |
+
 ### Streaming Settings
 
 | Field | Type | Default | Description |

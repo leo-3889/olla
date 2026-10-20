@@ -22,14 +22,49 @@ import (
 type RetryHandler struct {
 	logger           logger.StyledLogger
 	discoveryService ports.DiscoveryService
+	// retryOnStatus is the proxy.retry_on_status set (backend refusal codes
+	// that rotate the request to the next endpoint before the first byte
+	// reaches the client). Empty/nil = feature off: status responses are
+	// written through untouched, byte-identical to a handler without the
+	// option. See WithRetryOnStatus.
+	retryOnStatus map[int]struct{}
+}
+
+// RetryOption configures optional RetryHandler behaviour at construction
+// time. Options keep NewRetryHandler's signature stable for every existing
+// caller (both proxy engines and the package test harness) while new knobs
+// ride the same constructor.
+type RetryOption func(*RetryHandler)
+
+// WithRetryOnStatus arms backend-error failover: when a backend answers with
+// one of these status codes (4xx/5xx - boot-validated in
+// config.ProxyConfig.Validate) and no response byte has reached the client,
+// the request rotates to the next endpoint instead of forwarding the refusal.
+// An empty list (the default) leaves behaviour byte-identical to a handler
+// built without the option.
+func WithRetryOnStatus(statuses []int) RetryOption {
+	return func(h *RetryHandler) {
+		if len(statuses) == 0 {
+			return
+		}
+		set := make(map[int]struct{}, len(statuses))
+		for _, code := range statuses {
+			set[code] = struct{}{}
+		}
+		h.retryOnStatus = set
+	}
 }
 
 // NewRetryHandler creates a new retry handler
-func NewRetryHandler(discoveryService ports.DiscoveryService, logger logger.StyledLogger) *RetryHandler {
-	return &RetryHandler{
+func NewRetryHandler(discoveryService ports.DiscoveryService, logger logger.StyledLogger, opts ...RetryOption) *RetryHandler {
+	h := &RetryHandler{
 		discoveryService: discoveryService,
 		logger:           logger,
 	}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
 }
 
 // ProxyFunc defines the signature for endpoint proxy implementations
@@ -129,10 +164,134 @@ func isIdempotent(method string) bool {
 	}
 }
 
+// statusGateMaxBuffer bounds the buffered refusal body. Legitimate 429/503
+// bodies are small JSON error objects; a response larger than this is not
+// behaving like a refusal, so it is committed to the client unbuffered and
+// the rotation opportunity is forfeited. The cap bounds per-request memory.
+const statusGateMaxBuffer = 64 << 10
+
+// statusGateWriter sits above the ResponseStartedWriter for the duration of
+// ExecuteWithRetry and holds back responses whose status code is in the
+// configured retry_on_status set. While a response is held, NOTHING has
+// reached the wrapped writer, so the retry loop can discard it and rotate the
+// request to a different endpoint - the client never sees the refusal.
+//
+// Every other response passes through untouched: with an empty set the writer
+// is behaviourally invisible (no copying, no buffering, byte-identical to
+// handing the proxy func the tracker directly).
+//
+// A flush commits the held response immediately. Flushing is the stream-start
+// signal (SSE code flushes before/while streaming tokens), and the existing
+// responseStarted contract forbids retry once bytes are out - so holding
+// bytes back past a flush would only lie about the commit point.
+type statusGateWriter struct {
+	next    http.ResponseWriter
+	set     map[int]struct{}
+	pending bool
+	code    int
+	buf     bytes.Buffer
+}
+
+func newStatusGate(next http.ResponseWriter, set map[int]struct{}) *statusGateWriter {
+	return &statusGateWriter{next: next, set: set}
+}
+
+func (g *statusGateWriter) Header() http.Header { return g.next.Header() }
+
+func (g *statusGateWriter) WriteHeader(code int) {
+	if len(g.set) > 0 && !g.pending {
+		if _, ok := g.set[code]; ok {
+			g.pending = true
+			g.code = code
+			g.buf.Reset()
+			return
+		}
+	}
+	g.next.WriteHeader(code)
+}
+
+func (g *statusGateWriter) Write(b []byte) (int, error) {
+	if g.pending {
+		if g.buf.Len()+len(b) <= statusGateMaxBuffer {
+			return g.buf.Write(b)
+		}
+		// Oversized body: commit what was held and stop gating. A response
+		// streaming megabytes is not the refusal this gate exists to rotate.
+		g.commit()
+	}
+	return g.next.Write(b)
+}
+
+// deferred reports the status code of a response currently held by the gate.
+func (g *statusGateWriter) deferred() (int, bool) {
+	return g.code, g.pending
+}
+
+// commit releases a held response to the wrapped writer (status + buffered
+// body). A no-op when nothing is held, so success paths can commit
+// unconditionally.
+func (g *statusGateWriter) commit() {
+	if !g.pending {
+		return
+	}
+	g.pending = false
+	code := g.code
+	g.code = 0
+	g.next.WriteHeader(code)
+	if g.buf.Len() > 0 {
+		_, _ = g.next.Write(g.buf.Bytes())
+	}
+	g.buf.Reset()
+}
+
+// discard drops a held response without ever writing it: the rotation path
+// uses this so the rotated-away refusal never reaches the client.
+func (g *statusGateWriter) discard() {
+	g.pending = false
+	g.code = 0
+	g.buf.Reset()
+}
+
+// reset clears any held response between attempts: the previous attempt
+// failed (returned an error), so its partial response is dead data that must
+// not bleed into the next endpoint's writes.
+func (g *statusGateWriter) reset() {
+	g.discard()
+}
+
+// Flush commits any held response and forwards the flush. A flush is a
+// stream start: after this, rotation is off the table (responseStarted).
+func (g *statusGateWriter) Flush() {
+	g.commit()
+	_ = http.NewResponseController(g.next).Flush()
+}
+
+// FlushError mirrors Flush with observable errors, matching
+// ResponseStartedWriter's contract (http.ErrNotSupported when nothing in the
+// chain can flush - which committed nothing, so no bytes left the gate).
+func (g *statusGateWriter) FlushError() error {
+	g.commit()
+	// http.ResponseController.Flush surfaces the FlushError() error of the
+	// underlying chain (http.ErrNotSupported when nothing can flush).
+	return http.NewResponseController(g.next).Flush()
+}
+
+// Unwrap exposes the wrapped writer so http.NewResponseController reaches the
+// tracker's (and ultimately the real ResponseWriter's) Flush/Hijack/
+// SetDeadline - same reason ResponseStartedWriter needs it: hiding these
+// optional interfaces stalls SSE streams.
+func (g *statusGateWriter) Unwrap() http.ResponseWriter { return g.next }
+
 // ExecuteWithRetry attempts request delivery with automatic failover on connection errors.
 // For non-idempotent methods (POST, PATCH, DELETE), retry is suppressed once the
 // response has started. Resending to a different endpoint risks duplicate content
 // reaching the client or double-charging a metered API.
+//
+// Backend-error failover (proxy.retry_on_status, armed via WithRetryOnStatus):
+// a refusal status (e.g. 429/503) held by the status gate - i.e. no byte has
+// reached the client - rotates to the next endpoint under the SAME suppressions
+// as the connection-error path (responseStarted + IsIdempotent, tried-endpoint
+// exclusion). The rotated-away response is never written to the client.
 func (h *RetryHandler) ExecuteWithRetry(
 	ctx context.Context,
 	w http.ResponseWriter,
@@ -159,6 +318,11 @@ func (h *RetryHandler) ExecuteWithRetry(
 	// Wrap the writer so we can detect when bytes have been committed to the client.
 	tracker := NewResponseStartedWriter(w)
 
+	// The status gate holds back a retry_on_status refusal so the loop below
+	// can discard it and rotate BEFORE any byte reaches the tracker. With the
+	// set empty (default) it is a pure pass-through.
+	gate := newStatusGate(tracker, h.retryOnStatus)
+
 	var lastErr error
 	maxRetries := len(endpoints)
 	attemptCount := 0
@@ -175,15 +339,30 @@ func (h *RetryHandler) ExecuteWithRetry(
 
 		h.resetRequestBodyForRetry(r, bodyBytes, attemptCount)
 
+		// Drop any response the previous (failed) attempt left in the gate so
+		// this attempt's writes start from a clean buffer.
+		gate.reset()
+
 		endpoint, err := selector.Select(ctx, availableEndpoints)
 		if err != nil {
 			return fmt.Errorf("endpoint selection failed: %w", err)
 		}
 
 		attemptCount++
-		lastErr = h.executeProxyAttempt(ctx, tracker, r, endpoint, selector, stats, proxyFunc)
+		lastErr = h.executeProxyAttempt(ctx, gate, r, endpoint, selector, stats, proxyFunc)
 
 		if lastErr == nil {
+			// Backend-error failover (proxy.retry_on_status): a refusal held
+			// by the gate has NOT reached the client, so it can be discarded
+			// and rotated. statusRotationOutcome applies the same
+			// suppressions as the connection-error path.
+			if code, held := gate.deferred(); held &&
+				h.statusRotationOutcome(r, endpoint.Name, code, tracker.started, len(availableEndpoints), attemptCount) == statusRotate {
+				gate.discard()
+				availableEndpoints = h.removeFailedEndpoint(availableEndpoints, endpoint)
+				continue
+			}
+			gate.commit()
 			return nil
 		}
 
@@ -234,6 +413,49 @@ func (h *RetryHandler) ExecuteWithRetry(
 	}
 
 	return h.buildFinalError(availableEndpoints, maxRetries, lastErr, cbOpenCount, connErrCount)
+}
+
+// statusRotate asks ExecuteWithRetry's loop to discard the held refusal and
+// resend to the next endpoint. Every other outcome writes the held response
+// to the client (commit) and ends the attempt loop.
+const statusRotate = true
+
+// statusRotationOutcome decides what to do with a refusal status the gate is
+// holding (no byte has reached the tracker). It exists as a function purely
+// so the decision reads as one block; the loop stays responsible for the
+// side effects on its own locals (discard/commit are on the gate, candidate
+// removal is the loop's).
+func (h *RetryHandler) statusRotationOutcome(r *http.Request, endpointName string, code int, responseStarted bool, candidates, attemptCount int) bool {
+	// Existing responseStarted + IsIdempotent suppression, verbatim: once
+	// bytes are committed, resending a non-idempotent request risks duplicate
+	// content reaching the client or double-charging a metered API.
+	if responseStarted && !isIdempotent(r.Method) {
+		h.logger.Debug("skipping status retry: response already started for non-idempotent method",
+			"method", r.Method,
+			"endpoint", endpointName,
+			"status", code)
+		return !statusRotate
+	}
+	// responseStarted guard: a flush commits the gate, so a held status
+	// implies nothing has been flushed. >=1 other candidate remains: rotation
+	// excludes this endpoint via the same tried-endpoint removal the
+	// connection-error path uses.
+	if !responseStarted && candidates > 1 {
+		h.logger.Info("backend returned retryable status, failing over to next endpoint",
+			"endpoint", endpointName,
+			"status", code,
+			"attempt", attemptCount,
+			"remaining_endpoints", candidates-1)
+		return statusRotate
+	}
+	// Exhausted: every candidate refused (this one is the last), so the
+	// refusal passes through honestly - the client sees a real backend
+	// status, not a synthesized error.
+	h.logger.Debug("retryable status with no remaining candidates, passing response through",
+		"endpoint", endpointName,
+		"status", code,
+		"attempts", attemptCount)
+	return !statusRotate
 }
 
 // preserveRequestBody reads and preserves request body for potential retries

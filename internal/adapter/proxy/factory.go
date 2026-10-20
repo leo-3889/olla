@@ -55,6 +55,11 @@ func NewFactory(statsCollector ports.StatsCollector, metricsExtractor ports.Metr
 		if tls, ok := config.(interface{ GetTLSHandshakeTimeout() time.Duration }); ok {
 			sherpaConfig.TLSHandshakeTimeout = tls.GetTLSHandshakeTimeout()
 		}
+		// Backend-error failover lives in the shared retry handler, so the
+		// status set rides the same optional-getter pattern as the timeouts.
+		if ros, ok := config.(interface{ GetRetryOnStatus() []int }); ok {
+			sherpaConfig.RetryOnStatus = ros.GetRetryOnStatus()
+		}
 		return sherpa.NewService(discovery, selector, sherpaConfig, collector, metricsExtractor, logger)
 	})
 
@@ -93,6 +98,11 @@ func NewFactory(statsCollector ports.StatsCollector, metricsExtractor ports.Metr
 		}
 		if tls, ok := config.(interface{ GetTLSHandshakeTimeout() time.Duration }); ok {
 			ollaConfig.TLSHandshakeTimeout = tls.GetTLSHandshakeTimeout()
+		}
+		// Backend-error failover lives in the shared retry handler, so the
+		// status set rides the same optional-getter pattern as the timeouts.
+		if ros, ok := config.(interface{ GetRetryOnStatus() []int }); ok {
+			ollaConfig.RetryOnStatus = ros.GetRetryOnStatus()
 		}
 
 		return olla.NewService(discovery, selector, ollaConfig, collector, metricsExtractor, logger)
