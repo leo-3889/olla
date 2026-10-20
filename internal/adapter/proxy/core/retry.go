@@ -352,45 +352,15 @@ func (h *RetryHandler) ExecuteWithRetry(
 		lastErr = h.executeProxyAttempt(ctx, gate, r, endpoint, selector, stats, proxyFunc)
 
 		if lastErr == nil {
-			// Backend-error failover (proxy.retry_on_status): the gate is
-			// holding a refusal status that has NOT reached the client.
-			// Rotate to the next endpoint under the same suppressions as the
-			// connection-error path; the held response is DISCARDED and never
-			// forwarded.
-			if code, held := gate.deferred(); held {
-				// Existing responseStarted + IsIdempotent suppression,
-				// verbatim: once bytes are committed, resending a
-				// non-idempotent request risks duplicate content reaching the
-				// client or double-charging a metered API.
-				if tracker.started && !isIdempotent(r.Method) {
-					h.logger.Debug("skipping status retry: response already started for non-idempotent method",
-						"method", r.Method,
-						"endpoint", endpoint.Name,
-						"status", code)
-					gate.commit()
-					return nil
-				}
-				// responseStarted guard: a flush commits the gate, so a held
-				// status implies nothing has been flushed. >=1 other
-				// candidate remains: rotation excludes this endpoint via the
-				// same tried-endpoint removal the connection-error path uses.
-				if !tracker.started && len(availableEndpoints) > 1 {
-					h.logger.Info("backend returned retryable status, failing over to next endpoint",
-						"endpoint", endpoint.Name,
-						"status", code,
-						"attempt", attemptCount,
-						"remaining_endpoints", len(availableEndpoints)-1)
-					gate.discard()
-					availableEndpoints = h.removeFailedEndpoint(availableEndpoints, endpoint)
-					continue
-				}
-				// Exhausted: every candidate refused (this one is the last),
-				// so the refusal passes through honestly - the client sees a
-				// real backend status, not a synthesized error.
-				h.logger.Debug("retryable status with no remaining candidates, passing response through",
-					"endpoint", endpoint.Name,
-					"status", code,
-					"attempts", attemptCount)
+			// Backend-error failover (proxy.retry_on_status): a refusal held
+			// by the gate has NOT reached the client, so it can be discarded
+			// and rotated. statusRotationOutcome applies the same
+			// suppressions as the connection-error path.
+			if code, held := gate.deferred(); held &&
+				h.statusRotationOutcome(r, endpoint.Name, code, tracker.started, len(availableEndpoints), attemptCount) == statusRotate {
+				gate.discard()
+				availableEndpoints = h.removeFailedEndpoint(availableEndpoints, endpoint)
+				continue
 			}
 			gate.commit()
 			return nil
@@ -443,6 +413,49 @@ func (h *RetryHandler) ExecuteWithRetry(
 	}
 
 	return h.buildFinalError(availableEndpoints, maxRetries, lastErr, cbOpenCount, connErrCount)
+}
+
+// statusRotate asks ExecuteWithRetry's loop to discard the held refusal and
+// resend to the next endpoint. Every other outcome writes the held response
+// to the client (commit) and ends the attempt loop.
+const statusRotate = true
+
+// statusRotationOutcome decides what to do with a refusal status the gate is
+// holding (no byte has reached the tracker). It exists as a function purely
+// so the decision reads as one block; the loop stays responsible for the
+// side effects on its own locals (discard/commit are on the gate, candidate
+// removal is the loop's).
+func (h *RetryHandler) statusRotationOutcome(r *http.Request, endpointName string, code int, responseStarted bool, candidates, attemptCount int) bool {
+	// Existing responseStarted + IsIdempotent suppression, verbatim: once
+	// bytes are committed, resending a non-idempotent request risks duplicate
+	// content reaching the client or double-charging a metered API.
+	if responseStarted && !isIdempotent(r.Method) {
+		h.logger.Debug("skipping status retry: response already started for non-idempotent method",
+			"method", r.Method,
+			"endpoint", endpointName,
+			"status", code)
+		return !statusRotate
+	}
+	// responseStarted guard: a flush commits the gate, so a held status
+	// implies nothing has been flushed. >=1 other candidate remains: rotation
+	// excludes this endpoint via the same tried-endpoint removal the
+	// connection-error path uses.
+	if !responseStarted && candidates > 1 {
+		h.logger.Info("backend returned retryable status, failing over to next endpoint",
+			"endpoint", endpointName,
+			"status", code,
+			"attempt", attemptCount,
+			"remaining_endpoints", candidates-1)
+		return statusRotate
+	}
+	// Exhausted: every candidate refused (this one is the last), so the
+	// refusal passes through honestly - the client sees a real backend
+	// status, not a synthesized error.
+	h.logger.Debug("retryable status with no remaining candidates, passing response through",
+		"endpoint", endpointName,
+		"status", code,
+		"attempts", attemptCount)
+	return !statusRotate
 }
 
 // preserveRequestBody reads and preserves request body for potential retries
