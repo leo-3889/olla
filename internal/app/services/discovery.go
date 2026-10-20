@@ -31,6 +31,9 @@ type DiscoveryService struct {
 	modelDiscovery *discovery.ModelDiscoveryService
 	registry       domain.ModelRegistry
 	endpointRepo   domain.EndpointRepository
+	// modelCapabilities mirrors the top-level config model_capabilities map
+	// (operator per-model declarations); installed once at wiring time.
+	modelCapabilities map[string][]string
 	// purgeDeadFn, when set, is called with the current routable endpoint list
 	// whenever a backend transitions to unhealthy. Wired by the proxy layer so sticky
 	// session entries for dead backends are evicted promptly rather than waiting for TTL.
@@ -60,6 +63,13 @@ func (s *DiscoveryService) Name() string {
 }
 
 // Start initialises discovery components
+// SetModelCapabilities installs the operator per-model capability
+// declarations (top-level config model_capabilities) for discovery-time
+// augmentation. Call at wiring time, before Start.
+func (s *DiscoveryService) SetModelCapabilities(caps map[string][]string) {
+	s.modelCapabilities = caps
+}
+
 func (s *DiscoveryService) Start(ctx context.Context) error {
 	s.logger.Info("Initialising discovery service")
 
@@ -151,6 +161,8 @@ func (s *DiscoveryService) Start(ctx context.Context) error {
 			return fmt.Errorf("failed to create profile factory: %w", err)
 		}
 		client := discovery.NewHTTPModelDiscoveryClient(profileFactory, s.logger, httpClient)
+		client.SetModelCapabilities(s.modelCapabilities)
+		client.SetCapabilityProbe(true)
 		discoveryConfig := discovery.DiscoveryConfig{
 			Interval:          s.config.ModelDiscovery.Interval,
 			Timeout:           s.config.ModelDiscovery.Timeout,

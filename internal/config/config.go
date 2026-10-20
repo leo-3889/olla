@@ -218,6 +218,10 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("translators config invalid: %w", err)
 	}
 
+	if err := c.ValidateModelCapabilities(); err != nil {
+		return fmt.Errorf("model_capabilities config invalid: %w", err)
+	}
+
 	if err := c.Server.Cors.Validate(); err != nil {
 		return fmt.Errorf("server.cors config invalid: %w", err)
 	}
