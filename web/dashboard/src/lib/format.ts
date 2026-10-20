@@ -39,6 +39,25 @@ export function fmtInt(n: number | null | undefined): string {
 }
 
 /**
+ * Compact token count for the lifetime-tokens column. Tokens are a COUNT,
+ * so this uses decimal (SI) scales, not the 1024 ladder of fmtBytes:
+ * - < 10 000          -> thousands grouping, exact ("1,234")
+ * - < 1e6 / < 1e9     -> K/M with one decimal ("456.7K", "97.5M")
+ * - < 1e12 / above    -> B/T with two decimals ("2.19B")
+ * null/undefined/non-finite/negative -> "" so callers render a dash: the
+ * backend omits total_tokens when no lifetime source is wired, and a fake
+ * 0 would claim the endpoint produced nothing.
+ */
+export function fmtTokens(n: number | null | undefined): string {
+  if (n === null || n === undefined || !Number.isFinite(n) || n < 0) return '';
+  if (n < 10_000) return Math.floor(n).toLocaleString(INT_LOCALE);
+  if (n < 1e6) return `${(n / 1e3).toFixed(1)}K`;
+  if (n < 1e9) return `${(n / 1e6).toFixed(1)}M`;
+  if (n < 1e12) return `${(n / 1e9).toFixed(2)}B`;
+  return `${(n / 1e12).toFixed(2)}T`;
+}
+
+/**
  * Percentage with one decimal, mirroring pkg/format.Percentage for non-boundary
  * values. The Go variant special-cases 0 and 100 to skip the decimal; this JS
  * version does too so the dashboard doesn't show "0.0%" vs the API's "0%".

@@ -133,6 +133,13 @@ export interface EndpointSummary {
   // with no stats (the UI renders a dash via ||, not ??). Optional so
   // fixtures built against older payloads stay valid.
   traffic?: string;
+  // Lifetime token production from the cost rollups (sum of hourly
+  // llm_endpoint_cost_v3 total_tokens over metrics_source.influx.token_lookback).
+  // ABSENT when metrics_source is sampler, the lifetime query is failing,
+  // or the endpoint has no cost rows (unmetered node) - the panel renders a
+  // dash via fmtTokens, never a fabricated 0. Pre-rename rows under ghost
+  // endpoint ids are NOT credited to the current id.
+  total_tokens?: number | null;
   min_latency_ms: number;
   max_latency_ms: number;
   active_connections: number;
@@ -201,6 +208,10 @@ export interface UIConfig {
   poll_ms: { overview: number; endpoints: number; models: number; observe: number };
   sections: UIConfigSection[];
   runtime_metric_columns: UIConfigMetricColumn[];
+  // Columns outside the dialect union (not engine-reported): the lifetime-
+  // tokens column (cost rollups). Optional so manifests from older backends
+  // stay valid.
+  static_metric_columns?: UIConfigMetricColumn[];
 }
 
 // --- /internal/ui/observe.json (power / cost / gpu) --------------------

@@ -4,6 +4,7 @@ import {
   fmtPct,
   fmtMs,
   fmtInt,
+  fmtTokens,
   scalePct,
   fmtDuration,
   fmtAgo,
@@ -144,5 +145,32 @@ describe('fmtUptime', () => {
 
   it('returns empty when start_time missing', () => {
     expect(fmtUptime(null)).toBe('');
+  });
+});
+
+describe('fmtTokens', () => {
+  it('renders exact thousands grouping under 10k', () => {
+    expect(fmtTokens(0)).toBe('0');
+    expect(fmtTokens(999)).toBe('999');
+    expect(fmtTokens(1234)).toBe('1,234');
+    expect(fmtTokens(9999)).toBe('9,999');
+  });
+
+  it('renders K/M/B/T compact forms on decimal scales', () => {
+    expect(fmtTokens(10_000)).toBe('10.0K');
+    expect(fmtTokens(456_700)).toBe('456.7K');
+    expect(fmtTokens(999_999)).toBe('1000.0K');
+    expect(fmtTokens(97_467_683)).toBe('97.5M');
+    expect(fmtTokens(2_192_454_947)).toBe('2.19B');
+    expect(fmtTokens(3.5e11)).toBe('350.00B');
+    expect(fmtTokens(2.4e12)).toBe('2.40T');
+  });
+
+  it('returns empty for null/undefined/invalid so callers dash, never fake 0', () => {
+    expect(fmtTokens(null)).toBe('');
+    expect(fmtTokens(undefined)).toBe('');
+    expect(fmtTokens(NaN)).toBe('');
+    expect(fmtTokens(Infinity)).toBe('');
+    expect(fmtTokens(-1)).toBe('');
   });
 });

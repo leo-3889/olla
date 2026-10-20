@@ -928,6 +928,7 @@ metrics_source:
     bucket: llm/metrics            # runtime + power series (ollametrics)
     costs_bucket: llm/costs        # cost rollups (default: bucket)
     stale_after: 60s               # tile staleness threshold on sample age
+    token_lookback: 730d           # lifetime-tokens column window (default 730d = costs-bucket retention)
     power_attribution:             # olla endpoint -> power_target_id measuring its box
       halogen-395: shelly-ai-395
       radiance-qfn: shelly-ai-box
@@ -941,6 +942,7 @@ metrics_source:
 | `influx.power_attribution` | Maps endpoints to the meter measuring them; enables the dashboard Power section. Power is attributed per meter, never guessed from a device list. |
 | `influx.gpu_endpoints` | List of endpoint tags of the GPU device targets in Influx (one per GPU exporter node); empty disables the dashboard GPU section. Rows group by endpoint+device because device tags collide across boxes. |
 | `influx.stale_after` | Seconds after which tiles render stale when the newest point for an endpoint is older (samples older than 15 minutes disappear entirely). |
+| `influx.token_lookback` | Window of the Endpoints page's **Tokens (lifetime)** column: per endpoint, the sum of the hourly cost-rollup `total_tokens` (`llm/costs`, `llm_endpoint_cost_v3`, `period=hour`) over this window. Default `730d` = the costs bucket's retention, so the column is retention-bounded, not literally infinite. Each 5-min cost cycle rewrites the period row at its fixed period-start timestamp, so the sum is exact; the query runs at most once a minute. Deliberately NOT the engine runtime counters - `generation_tokens_total` resets on every engine restart. Rows are per endpoint id: an endpoint rename is not aliased (pre-rename rows stay under the old id and are not credited to the current one). Endpoints with no rows in the window (e.g. unmetered energy-only nodes) render a dash, never a fake 0. |
 
 In `influx` mode the in-process sampler is not started, the Cost and GPU
 dashboard sections become available (they only exist in that backend), and

@@ -38,13 +38,22 @@ type InfluxSourceConfig struct {
 	// StaleAfter marks tiles stale once the newest Influx point for an
 	// endpoint is older than this (default 60s).
 	StaleAfter time.Duration `yaml:"stale_after,omitempty"`
+	// TokenLookback bounds the lifetime-tokens window on the endpoints
+	// table: per endpoint, the SUM of the hourly cost-rollup total_tokens
+	// over this window (default 730d = the costs bucket's retention). It is
+	// deliberately NOT the engine runtime counter - those reset on every
+	// engine restart; the cost rollups are the rewrite-exact lifetime
+	// authority. Rows are per endpoint id: an endpoint rename is NOT
+	// aliased, pre-rename rows stay under the old id (honest split).
+	TokenLookback time.Duration `yaml:"token_lookback,omitempty"`
 }
 
 const (
 	MetricsSourceModeSampler = "sampler"
 	MetricsSourceModeInflux  = "influx"
 
-	defaultInfluxStaleAfter = 60 * time.Second
+	defaultInfluxStaleAfter    = 60 * time.Second
+	defaultInfluxTokenLookback = 730 * 24 * time.Hour
 )
 
 // InfluxEnabled reports whether metrics should be read from InfluxDB. A
@@ -86,6 +95,12 @@ func (m *MetricsSourceConfig) Validate() error {
 	}
 	if m.Influx.CostsBucket == "" {
 		m.Influx.CostsBucket = m.Influx.Bucket
+	}
+	if m.Influx.TokenLookback < 0 {
+		return fmt.Errorf("influx: token_lookback must be positive, got %s", m.Influx.TokenLookback)
+	}
+	if m.Influx.TokenLookback == 0 {
+		m.Influx.TokenLookback = defaultInfluxTokenLookback
 	}
 	return nil
 }

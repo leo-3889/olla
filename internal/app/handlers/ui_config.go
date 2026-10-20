@@ -43,11 +43,17 @@ type uiPollIntervals struct {
 // frontend falls back to an identical built-in default when this endpoint
 // cannot be reached, so both copies must stay byte-equivalent in meaning.
 type UIConfig struct {
-	MetricsSource        string           `json:"metrics_source"`
-	Sections             []uiSection      `json:"sections"`
+	MetricsSource string      `json:"metrics_source"`
+	Sections      []uiSection `json:"sections"`
+	// RuntimeMetricColumns is the per-ENGINE column union (dialect registry).
 	RuntimeMetricColumns []uiMetricColumn `json:"runtime_metric_columns"`
-	PollMS               uiPollIntervals  `json:"poll_ms"`
-	Schema               int              `json:"schema"`
+	// StaticMetricColumns are endpoints-table columns that exist OUTSIDE
+	// the dialect union because they are not engine-reported: the
+	// lifetime-tokens column comes from cost rollups, so no dialect owns
+	// it. Published so config.json is the complete column contract.
+	StaticMetricColumns []uiMetricColumn `json:"static_metric_columns"`
+	PollMS              uiPollIntervals  `json:"poll_ms"`
+	Schema              int              `json:"schema"`
 }
 
 // uiPollIntervalsFrom publishes the configured dashboard poll intervals in
@@ -100,6 +106,17 @@ func uiRuntimeColumnsFrom(cfg *config.Config) []uiMetricColumn {
 	return out
 }
 
+// uiStaticColumns is the static (non-dialect) column list. window=false:
+// the value is a lifetime sum over metrics_source.influx.token_lookback,
+// never a windowed average/maximum. The column renders in every mode -
+// sampler mode simply dashes every cell (LifetimeTokens is "not known"
+// there), which is the honest disclosure that no lifetime source is wired.
+func uiStaticColumns() []uiMetricColumn {
+	return []uiMetricColumn{
+		{Key: "total_tokens", Label: "Tokens (lifetime)", Unit: runtimeMetricUnitCount, Window: false},
+	}
+}
+
 func uiConfigFrom(cfg *config.Config, effectiveMode string) UIConfig {
 	// Effective mode wins: an influx intent that fell back at boot (missing
 	// token env) must not advertise influx sections the process cannot serve.
@@ -127,6 +144,7 @@ func uiConfigFrom(cfg *config.Config, effectiveMode string) UIConfig {
 			{ID: "gpu", Enabled: gpuEnabled, Reason: reasonIfDisabled(gpuEnabled, "requires metrics_source.mode=influx and metrics_source.influx.gpu_endpoints")},
 		},
 		RuntimeMetricColumns: uiRuntimeColumnsFrom(cfg),
+		StaticMetricColumns:  uiStaticColumns(),
 	}
 }
 

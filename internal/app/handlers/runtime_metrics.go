@@ -510,6 +510,14 @@ func (s *endpointRuntimeMetricsSampler) QueueDepthFor(endpoint *domain.Endpoint)
 	return *st.QueueDepth, true
 }
 
+// LifetimeTokens always reports "not known": the sampler's only token
+// source is the engine's own counters, which RESET on every engine restart
+// (observed: 1.7M on a box whose lifetime is 2.19B). "Ever" needs the
+// cost-rollup authority, which only the influx provider reads.
+func (s *endpointRuntimeMetricsSampler) LifetimeTokens(string) (int64, bool) {
+	return 0, false
+}
+
 func (s *endpointRuntimeMetricsSampler) Snapshot(endpoint *domain.Endpoint) *EndpointRuntimeMetrics {
 	if s == nil || endpoint == nil || !endpoint.RuntimeMetricsEnabled || runtimeMetricsKind(endpoint) == "" || !endpoint.Status.IsRoutable() {
 		return nil

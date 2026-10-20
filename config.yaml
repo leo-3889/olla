@@ -312,6 +312,10 @@ dashboard:
 #       bucket: llm/metrics
 #       costs_bucket: llm/costs
 #       stale_after: 60s
+#       token_lookback: 730d   # "Tokens (lifetime)" column window: per endpoint, the SUM
+#                              # of hourly cost-rollup total_tokens over this window
+#                              # (default 730d = costs-bucket retention). NOT the engine
+#                              # counters - those reset on every engine restart.
 #       power_attribution:
 #         halogen-395: shelly-ai-395
 #         radiance-9700-64: shelly-ai-box

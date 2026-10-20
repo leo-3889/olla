@@ -408,3 +408,70 @@ func TestStatusHandler_SystemStickyBlock(t *testing.T) {
 	assert.Equal(t, float64(9), sticky2["hits"])
 	assert.Equal(t, float64(2), sticky2["misses"])
 }
+
+// stubLifetimeProvider is the minimal runtimeMetricsProvider for the P8
+// payload contract: no runtime envelope, fixed lifetime totals.
+type stubLifetimeProvider struct {
+	totals map[string]int64
+}
+
+func (stubLifetimeProvider) Snapshot(*domain.Endpoint) *EndpointRuntimeMetrics { return nil }
+
+func (s stubLifetimeProvider) LifetimeTokens(name string) (int64, bool) {
+	v, ok := s.totals[name]
+	return v, ok
+}
+
+// P8 payload contract: total_tokens rides on the endpoint entry ONLY when the
+// provider knows a sum; sampler mode / query failure / no cost rows all leave
+// the JSON key ABSENT (omitempty) - never a fabricated 0.
+func TestEndpointsStatusHandler_LifetimeTokens(t *testing.T) {
+	endpoints := []*domain.Endpoint{
+		{Name: "metered", Type: "openai-compatible", URLString: "http://metered:8000", Status: domain.StatusHealthy, Priority: 1},
+		{Name: "unmetered", Type: "openai-compatible", URLString: "http://unmetered:8000", Status: domain.StatusHealthy, Priority: 1},
+	}
+	app := &Application{
+		repository:     &mockStatusEndpointRepository{endpoints: endpoints},
+		statsCollector: &mockStatusStatsCollector{},
+		modelRegistry:  &mockStatusModelRegistry{},
+		runtimeMetrics: stubLifetimeProvider{totals: map[string]int64{"metered": 2192454947}},
+	}
+	req := httptest.NewRequest(http.MethodGet, "/internal/status/endpoints", nil)
+	w := httptest.NewRecorder()
+	app.endpointsStatusHandler(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var raw struct {
+		Endpoints []map[string]interface{} `json:"endpoints"`
+	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&raw))
+	require.Len(t, raw.Endpoints, 2)
+	byName := map[string]map[string]interface{}{}
+	for _, e := range raw.Endpoints {
+		byName[e["name"].(string)] = e
+	}
+	assert.Equal(t, float64(2192454947), byName["metered"]["total_tokens"], "exact lifetime sum as a JSON number")
+	_, present := byName["unmetered"]["total_tokens"]
+	assert.False(t, present, "no cost rows => the key is absent (UI dash), never a fake 0")
+
+	// Sampler mode: the provider answers "not known" for every endpoint, so
+	// the payload carries NO total_tokens key anywhere.
+	samplerApp := &Application{
+		repository:     &mockStatusEndpointRepository{endpoints: endpoints},
+		statsCollector: &mockStatusStatsCollector{},
+		modelRegistry:  &mockStatusModelRegistry{},
+		runtimeMetrics: newEndpointRuntimeMetricsSampler(&mockStatusEndpointRepository{endpoints: endpoints}, nil),
+	}
+	w2 := httptest.NewRecorder()
+	samplerApp.endpointsStatusHandler(w2, req)
+	require.Equal(t, http.StatusOK, w2.Code)
+	var raw2 struct {
+		Endpoints []map[string]interface{} `json:"endpoints"`
+	}
+	require.NoError(t, json.NewDecoder(w2.Body).Decode(&raw2))
+	require.Len(t, raw2.Endpoints, 2)
+	for _, e := range raw2.Endpoints {
+		_, present := e["total_tokens"]
+		assert.False(t, present, "sampler mode must omit total_tokens entirely")
+	}
+}

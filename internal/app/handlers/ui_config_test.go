@@ -163,3 +163,26 @@ func TestUIConfigFromEffectiveModeOverride(t *testing.T) {
 		assert.False(t, enabled, id)
 	}
 }
+
+// The lifetime-tokens column is static: it is published on the manifest
+// outside the dialect union (cost rollups are not engine-reported), with
+// window=false (a lifetime sum, never a windowed avg/max).
+func TestUIConfig_StaticLifetimeTokensColumn(t *testing.T) {
+	for _, mode := range []string{"sampler", "influx"} {
+		ui := uiConfigFrom(&config.Config{MetricsSource: config.MetricsSourceConfig{Mode: mode}}, mode)
+		require.Len(t, ui.StaticMetricColumns, 1, mode)
+		col := ui.StaticMetricColumns[0]
+		assert.Equal(t, "total_tokens", col.Key, mode)
+		assert.Equal(t, "Tokens (lifetime)", col.Label, mode)
+		assert.Equal(t, "count", col.Unit, mode)
+		assert.False(t, col.Window, "lifetime is a sum, not a windowed stat", mode)
+	}
+	// NOT part of the dialect union: the union never grows a total_tokens
+	// key (a dialect adding one would be claiming engine-reported lifetime,
+	// which no engine can honestly provide).
+	cfg := &config.Config{}
+	cfg.Discovery.Static.Endpoints = []config.EndpointConfig{
+		{Name: "a", Type: "openai-compatible", RuntimeMetrics: optedKind("radiance")},
+	}
+	assert.NotContains(t, columnKeys(uiRuntimeColumnsFrom(cfg)), "total_tokens")
+}

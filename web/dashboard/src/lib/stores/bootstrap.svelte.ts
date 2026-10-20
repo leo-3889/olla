@@ -32,6 +32,11 @@ export const DEFAULT_UI_CONFIG: UIConfig = {
     { key: 'kv_cache_usage_percent', label: 'KV-cache utilisation', unit: 'percent', window: false },
     { key: 'queue_depth', label: 'Queue depth', unit: 'count', window: false },
   ],
+  // Must match the Go uiStaticColumns(): the lifetime-tokens column exists
+  // outside the dialect union (cost rollups, not engine-reported).
+  static_metric_columns: [
+    { key: 'total_tokens', label: 'Tokens (lifetime)', unit: 'count', window: false },
+  ],
 };
 
 class BootstrapStore {

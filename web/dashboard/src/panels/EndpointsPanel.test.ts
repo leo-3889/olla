@@ -577,3 +577,49 @@ describe('EndpointsPanel traffic column', () => {
     expect(trafficCell(0)).toBe('—');
   });
 });
+
+// Surface tests for the P8 lifetime-tokens column (mirrors the traffic
+// column template): a real rollup sum renders compact, null renders a dash,
+// and a payload without the key at all (sampler mode / query failure / no
+// cost rows) renders a dash - never a fabricated 0.
+describe('EndpointsPanel lifetime-tokens column', () => {
+  function tokensCell(rowIndex = 0): string | undefined {
+    const table = document.querySelector('table');
+    if (!table) return undefined;
+    const idx = [...table.querySelectorAll('th')].findIndex(
+      (th) => th.textContent?.trim() === 'Tokens (lifetime)'
+    );
+    if (idx < 0) return undefined;
+    return table
+      .querySelectorAll('tbody tr')[rowIndex]
+      ?.querySelectorAll('td')[idx]?.textContent?.trim();
+  }
+
+  it('renders compact token sums for endpoints with cost rollups', async () => {
+    component = mount(EndpointsPanel, { target: document.body });
+    flushSync();
+    await refreshWithEndpoints([
+      { name: 'big', type: 'openai-compatible', status: 'healthy', url: 'http://big:8000', priority: 100, request_count: 900, model_count: 1, total_tokens: 2192454947 },
+      { name: 'small', type: 'llamacpp', status: 'healthy', url: 'http://small:8731', priority: 90, request_count: 12, model_count: 1, total_tokens: 97467683 },
+      { name: 'unmetered', type: 'openai-compatible', status: 'healthy', url: 'http://un:8001', priority: 90, request_count: 3, model_count: 1, total_tokens: null },
+    ]);
+    expect(tokensCell(0)).toBe('2.19B');
+    expect(tokensCell(1)).toBe('97.5M');
+    expect(tokensCell(2)).toBe('—');
+  });
+
+  it('renders a dash when the backend payload has no total_tokens key at all', async () => {
+    component = mount(EndpointsPanel, { target: document.body });
+    flushSync();
+    await refreshWithEndpoint({
+      name: 'legacy',
+      type: 'ollama',
+      status: 'healthy',
+      url: 'http://legacy:11434',
+      priority: 100,
+      request_count: 5,
+      model_count: 1,
+    });
+    expect(tokensCell(0)).toBe('—');
+  });
+});
