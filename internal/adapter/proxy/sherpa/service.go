@@ -127,7 +127,7 @@ func NewService(
 		transport:           transport,
 		configuration:       configuration,
 		bufferPool:          bufferPool,
-		retryHandler:        core.NewRetryHandler(discoveryService, logger),
+		retryHandler:        core.NewRetryHandler(discoveryService, logger, core.WithRetryOnStatus(configuration.RetryOnStatus)),
 	}, nil
 }
 

@@ -207,6 +207,7 @@ func (s *ProxyServiceWrapper) createProxyConfiguration() *proxy.Configuration {
 		ResponseHeaderTimeout: s.config.ResponseHeaderTimeout,
 		TLSHandshakeTimeout:   s.config.TLSHandshakeTimeout,
 		StreamBufferSize:      s.config.StreamBufferSize,
+		RetryOnStatus:         s.config.RetryOnStatus,
 	}
 }
 

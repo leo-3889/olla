@@ -99,6 +99,10 @@ func DefaultConfig() *Config {
 			ReadTimeout:       10 * time.Minute,
 			MaxRetries:        3,
 			RetryBackoff:      500 * time.Millisecond,
+			// Empty = backend status codes pass through to the client
+			// untouched. Set e.g. [429, 503] to rotate endpoints on
+			// refusals before the first byte is written.
+			RetryOnStatus: []int{},
 			StickySessions: StickySessionConfig{
 				Enabled:        false,
 				IdleTTLSeconds: 600,
@@ -253,6 +257,10 @@ func (c *Config) Validate() error {
 
 	if err := c.Proxy.StickySessions.Validate(); err != nil {
 		return fmt.Errorf("proxy.sticky_sessions config invalid: %w", err)
+	}
+
+	if err := c.Proxy.Validate(); err != nil {
+		return fmt.Errorf("proxy config invalid: %w", err)
 	}
 
 	if err := c.ValidateModelCapabilities(); err != nil {
