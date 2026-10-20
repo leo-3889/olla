@@ -255,6 +255,10 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("proxy.sticky_sessions config invalid: %w", err)
 	}
 
+	if err := c.ValidateModelCapabilities(); err != nil {
+		return fmt.Errorf("model_capabilities config invalid: %w", err)
+	}
+
 	if err := c.MetricsSource.Validate(); err != nil {
 		return fmt.Errorf("metrics_source config invalid: %w", err)
 	}

@@ -27,8 +27,17 @@ type Config struct {
 	//       - gpt-oss-120b-MLX
 	//       - gguf_gpt_oss_120b.gguf
 	ModelAliases map[string][]string `yaml:"model_aliases,omitempty"`
-	Logging      LoggingConfig       `yaml:"logging"`
-	Filename     string              `yaml:"-"`
+
+	// ModelCapabilities declares capabilities for specific model ids -
+	// operator truth for engines that advertise nothing (halogen-flash-server
+	// exposes vision only in /health). Applied at discovery to EXACTLY
+	// MATCHING, CURRENTLY LIVE models: an id for an absent model is inert
+	// until that model is resident, and nothing is ever stamped on a model
+	// that is not in the endpoint's live list.
+	// Valid names: vision, audio-transcription, audio-speech.
+	ModelCapabilities map[string][]string `yaml:"model_capabilities,omitempty"`
+	Logging           LoggingConfig       `yaml:"logging"`
+	Filename          string              `yaml:"-"`
 	// MetricsSource selects the dashboard runtime-metric backend
 	// (sampler | influx reading the ollametrics InfluxDB).
 	MetricsSource MetricsSourceConfig `yaml:"metrics_source,omitempty"`
@@ -763,5 +772,27 @@ func (c *HealthConfig) Validate() error {
 		return fmt.Errorf("health.success_rate.critical_below (%g) must not exceed degraded_below (%g)", critical, degraded)
 	}
 
+	return nil
+}
+
+// ValidateModelCapabilities boot-validates model_capabilities declarations:
+// a typo must not silently ship a blind endpoint (precedent:
+// StickySessions.Validate). The valid-name set must stay in lockstep with
+// discovery.canonicalCapabilityFlags (pinned by a unit test).
+func (c *Config) ValidateModelCapabilities() error {
+	valid := map[string]bool{"vision": true, "audio-transcription": true, "audio-speech": true}
+	for modelID, caps := range c.ModelCapabilities {
+		if modelID == "" {
+			return errors.New("model_capabilities: empty model id")
+		}
+		if len(caps) == 0 {
+			return fmt.Errorf("model_capabilities %q: empty capability list", modelID)
+		}
+		for _, capName := range caps {
+			if !valid[capName] {
+				return fmt.Errorf("model_capabilities %q: unknown capability %q (valid: vision, audio-transcription, audio-speech)", modelID, capName)
+			}
+		}
+	}
 	return nil
 }

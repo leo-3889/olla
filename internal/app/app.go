@@ -62,6 +62,7 @@ func registerServices(manager *services.ServiceManager, cfg *config.Config, logg
 		nil,
 		logger,
 	)
+	discoveryService.SetModelCapabilities(cfg.ModelCapabilities)
 	if err := manager.Register(discoveryService); err != nil {
 		return fmt.Errorf("failed to register discovery service: %w", err)
 	}
