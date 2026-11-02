@@ -18,6 +18,11 @@ import (
 // them apart except through the payload's source fields.
 type runtimeMetricsProvider interface {
 	Snapshot(endpoint *domain.Endpoint) *EndpointRuntimeMetrics
+	// LifetimeTokens answers the endpoints-table "Tokens (lifetime)" column.
+	// Only the influx provider can: the sampler reads engine counters that
+	// reset on restart, so it truthfully answers "not known" (payload key
+	// absent, UI dash) in sampler mode.
+	LifetimeTokens(name string) (int64, bool)
 }
 
 // newRuntimeMetricsSource resolves the configured metrics backend once at

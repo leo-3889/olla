@@ -15,22 +15,33 @@ import (
 
 type stubFluxQuerier struct {
 	calls           int
+	queries         []string // every flux script, in call order
 	lastRows        []map[string]any
 	gaugeMeanRows   []map[string]any
 	gaugeMaxRows    []map[string]any
 	counterMeanRows []map[string]any
 	counterMaxRows  []map[string]any
-	err             error
-	legErrs         map[string]error // fail ONE leg: "last","gaugeMean","gaugeMax","counterMean","counterMax"
+	// Lifetime-tokens leg (costs bucket, measurement llm_endpoint_cost_v3),
+	// dispatched by measurement like the observe stub harness.
+	tokenRows []map[string]any
+	tokenErr  error
+	err       error
+	legErrs   map[string]error // fail ONE leg: "last","gaugeMean","gaugeMax","counterMean","counterMax"
 }
 
 func (s *stubFluxQuerier) query(_ context.Context, flux string) ([]map[string]any, error) {
 	s.calls++
+	s.queries = append(s.queries, flux)
 	if s.err != nil {
 		return nil, s.err
 	}
 	legError := func(leg string) error { return s.legErrs[leg] }
 	switch {
+	case strings.Contains(flux, "llm_endpoint_cost_v3"):
+		if s.tokenErr != nil {
+			return nil, s.tokenErr
+		}
+		return s.tokenRows, nil
 	case strings.Contains(flux, "|> last()"):
 		if e := legError("last"); e != nil {
 			return nil, e
@@ -65,14 +76,17 @@ func influxRow(endpoint, field string, value any, at time.Time) map[string]any {
 
 func newProviderForTest(stub *stubFluxQuerier, endpoints []*domain.Endpoint, now func() time.Time) *influxMetricsProvider {
 	return &influxMetricsProvider{
-		repository: &mockStatusEndpointRepository{endpoints: endpoints},
-		client:     stub,
-		bucket:     "llm/metrics",
-		staleAfter: 60 * time.Second,
-		now:        now,
-		states:     map[string]*influxEndpointState{},
-		firstSee:   map[string]time.Time{},
-		legFailing: map[string]bool{},
+		repository:  &mockStatusEndpointRepository{endpoints: endpoints},
+		client:      stub,
+		bucket:      "llm/metrics",
+		costsBucket: "llm/costs",
+		tokenRange:  "-730d",
+		tokenTTL:    lifetimeTokensTTL,
+		staleAfter:  60 * time.Second,
+		now:         now,
+		states:      map[string]*influxEndpointState{},
+		firstSee:    map[string]time.Time{},
+		legFailing:  map[string]bool{},
 	}
 }
 
@@ -188,7 +202,18 @@ func TestInfluxProviderNoTrackedEndpointsRunsNoQueries(t *testing.T) {
 	stub := &stubFluxQuerier{}
 	p := newProviderForTest(stub, []*domain.Endpoint{off}, time.Now)
 	p.refresh(context.Background())
-	assert.Equal(t, 0, stub.calls)
+	// The five RUNTIME legs must not fire for a fully opted-out fleet. The
+	// lifetime-tokens leg is a separate, TTL-gated leg: cost rollups exist
+	// for opted-out endpoints too (the endpoint still served traffic; only
+	// the runtime tiles opted out), so it runs on the configured set.
+	runtime := 0
+	for _, q := range stub.queries {
+		if !strings.Contains(q, "llm_endpoint_cost_v3") {
+			runtime++
+		}
+	}
+	assert.Equal(t, 0, runtime, "no runtime queries for an opted-out fleet")
+	assert.NotEmpty(t, stub.queries, "the lifetime leg runs for configured endpoints")
 }
 
 func TestInfluxProviderOptOutInvalidatesState(t *testing.T) {
@@ -325,4 +350,149 @@ func TestInfluxProviderPartialLegLoggedOnTransition(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, recoveries)
+}
+
+// tokenRow renders one summed row of the lifetime-tokens flux (the
+// group(columns:["endpoint"]) |> sum() output: endpoint + _value per table).
+func tokenRow(endpoint string, value any) map[string]any {
+	return map[string]any{"endpoint": endpoint, "_value": value}
+}
+
+// P8 core: the lifetime-tokens leg surfaces the EXACT rollup sum per
+// configured endpoint, ignores ghost ids, ships the contract flux, and is
+// TTL-gated (the 10s refresh must not re-fan the costs query per cycle).
+func TestInfluxProviderLifetimeTokensExactSumGhostsIgnoredTTL(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	r64 := &domain.Endpoint{Name: "radiance-9700-64", URLString: "http://r64", Type: "openai-compatible", RuntimeMetricsKind: "radiance", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true}
+	h395 := &domain.Endpoint{Name: "halogen-395", URLString: "http://h", Type: "llamacpp", RuntimeMetricsKind: "llamacpp", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true}
+	// radiance-9700-128: configured, ZERO cost rows (unmetered energy-only).
+	r128 := &domain.Endpoint{Name: "radiance-9700-128", URLString: "http://r128", Type: "openai-compatible", RuntimeMetricsKind: "radiance", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true}
+	stub := &stubFluxQuerier{tokenRows: []map[string]any{
+		tokenRow("radiance-9700-64", "2192454947"),
+		tokenRow("halogen-395", "97467683"),
+		// Ghost ids from the live data: the -64 pre-rename id and a retired
+		// endpoint. The stub models influx passing them through (a server
+		// that ignored contains()); the Go-side set guard must drop them.
+		tokenRow("radiance-qfn", "1414912324"),
+		tokenRow("vllm-qwen38", "104651862"),
+	}}
+	clock := now
+	p := newProviderForTest(stub, []*domain.Endpoint{r64, h395, r128}, func() time.Time { return clock })
+	p.refresh(context.Background())
+
+	v, ok := p.LifetimeTokens("radiance-9700-64")
+	require.True(t, ok)
+	assert.Equal(t, int64(2192454947), v, "exact rollup sum, string-parsed")
+	v, ok = p.LifetimeTokens("halogen-395")
+	require.True(t, ok)
+	assert.Equal(t, int64(97467683), v)
+	_, ok = p.LifetimeTokens("radiance-9700-128")
+	assert.False(t, ok, "no rows => not known (dash), never a fake 0")
+	_, ok = p.LifetimeTokens("radiance-qfn")
+	assert.False(t, ok, "ghost ids are never credited to a current endpoint")
+	_, ok = p.LifetimeTokens("vllm-qwen38")
+	assert.False(t, ok, "retired endpoint rows are dropped")
+
+	var costQuery string
+	for _, q := range stub.queries {
+		if strings.Contains(q, "llm_endpoint_cost_v3") {
+			costQuery = q
+		}
+	}
+	require.NotEmpty(t, costQuery)
+	assert.Contains(t, costQuery, `from(bucket:"llm/costs")`, "costs bucket, not the runtime bucket")
+	assert.Contains(t, costQuery, "range(start:-730d)", "configured lookback rendered as a Flux duration")
+	assert.Contains(t, costQuery, `r._measurement=="llm_endpoint_cost_v3"`)
+	assert.Contains(t, costQuery, `r._field=="total_tokens"`)
+	assert.Contains(t, costQuery, `r.period=="hour"`)
+	assert.Contains(t, costQuery, `contains(set:["radiance-9700-64","halogen-395","radiance-9700-128"], value:r.endpoint)`)
+	assert.Contains(t, costQuery, `group(columns:["endpoint"]) |> sum()`)
+
+	// TTL gate: the 10s refresh cycle must reuse the cache; a second call
+	// inside tokenTTL adds NO costs query.
+	before := 0
+	for _, q := range stub.queries {
+		if strings.Contains(q, "llm_endpoint_cost_v3") {
+			before++
+		}
+	}
+	p.refresh(context.Background())
+	after := 0
+	for _, q := range stub.queries {
+		if strings.Contains(q, "llm_endpoint_cost_v3") {
+			after++
+		}
+	}
+	assert.Equal(t, before, after, "the lifetime query is TTL-gated, not per-cycle")
+
+	// Past the TTL it re-queries and the newer sum wins.
+	stub.tokenRows = []map[string]any{tokenRow("radiance-9700-64", "2192455000")}
+	clock = clock.Add(lifetimeTokensTTL + time.Second)
+	p.refresh(context.Background())
+	v, ok = p.LifetimeTokens("radiance-9700-64")
+	require.True(t, ok)
+	assert.Equal(t, int64(2192455000), v, "TTL expiry re-queries and refreshes the map")
+}
+
+// A failing lifetime query must CLEAR the cache (the column dashes; no stale
+// pre-outage numbers) and must not touch the runtime states (partial-failure
+// disclosure: one leg dying never blanks the other tiles).
+func TestInfluxProviderLifetimeTokensFailureClearsAndIsIsolated(t *testing.T) {
+	newest := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	ep := &domain.Endpoint{Name: "ep", URLString: "http://ep", Type: "vllm", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true}
+	stub := &stubFluxQuerier{
+		lastRows:  []map[string]any{influxRow("ep", "decode_tokens_per_second", 40.0, newest)},
+		tokenRows: []map[string]any{tokenRow("ep", "123")},
+	}
+	clock := newest
+	p := newProviderForTest(stub, []*domain.Endpoint{ep}, func() time.Time { return clock })
+	p.refresh(context.Background())
+	require.True(t, func() bool { _, ok := p.LifetimeTokens("ep"); return ok }())
+	require.NotNil(t, p.Snapshot(ep))
+
+	stub.tokenErr = errors.New("costs bucket on fire")
+	clock = clock.Add(lifetimeTokensTTL + time.Second)
+	p.refresh(context.Background())
+	_, ok := p.LifetimeTokens("ep")
+	assert.False(t, ok, "a failed lifetime query must not keep serving the pre-outage sum")
+	assert.NotNil(t, p.Snapshot(ep), "the runtime legs are unaffected by the costs leg failing")
+
+	// Recovery re-populates without a restart.
+	stub.tokenErr = nil
+	clock = clock.Add(lifetimeTokensTTL + time.Second)
+	p.refresh(context.Background())
+	v, ok := p.LifetimeTokens("ep")
+	assert.True(t, ok)
+	assert.Equal(t, int64(123), v)
+}
+
+// The empty-set guard: a fleet with no endpoints never sends an empty
+// contains(set:[]) filter (Flux compile hazard) and reports nothing.
+func TestInfluxProviderLifetimeTokensEmptySetGuard(t *testing.T) {
+	p := newProviderForTest(&stubFluxQuerier{}, nil, time.Now)
+	p.refreshLifetimeTokens(context.Background())
+	assert.Empty(t, p.tokens, "empty fleet yields an empty map, not a crash")
+	for _, q := range p.client.(*stubFluxQuerier).queries {
+		assert.NotContains(t, q, "contains(set:[],")
+	}
+}
+
+func TestFluxDurationRange(t *testing.T) {
+	assert.Equal(t, "-730d", fluxDurationRange(730*24*time.Hour))
+	assert.Equal(t, "-1d", fluxDurationRange(24*time.Hour))
+	assert.Equal(t, "-36h", fluxDurationRange(36*time.Hour))
+	assert.Equal(t, "-90m", fluxDurationRange(90*time.Minute))
+	assert.Equal(t, "-45s", fluxDurationRange(45*time.Second))
+	assert.Equal(t, "-730d", fluxDurationRange(0), "non-positive falls back to the retention default")
+	assert.Equal(t, "-730d", fluxDurationRange(-time.Hour))
+}
+
+// The sampler has NO honest lifetime source (engine counters reset on
+// restart), so it must answer "not known" - the payload then omits the key
+// and the UI dashes it.
+func TestSamplerHasNoLifetimeSource(t *testing.T) {
+	s := newEndpointRuntimeMetricsSampler(&mockStatusEndpointRepository{}, nil)
+	v, ok := s.LifetimeTokens("anything")
+	assert.False(t, ok)
+	assert.Equal(t, int64(0), v)
 }

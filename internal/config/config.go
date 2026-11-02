@@ -101,6 +101,10 @@ func DefaultConfig() *Config {
 			// non-zero default would make "operator set it" undetectable for the
 			// startup warning.
 			Retry: RetryConfig{Enabled: true, NonIdempotent: true},
+			// Empty = backend status codes pass through to the client
+			// untouched. Set e.g. [429, 503] to rotate endpoints on
+			// refusals before the first byte is written.
+			RetryOnStatus: []int{},
 			StickySessions: StickySessionConfig{
 				Enabled:        false,
 				IdleTTLSeconds: 600,
@@ -179,8 +183,8 @@ func DefaultConfig() *Config {
 				// curl installer) serving on 0.0.0.0 must not 403 its own default.
 				AllowedHosts: []string{"localhost"},
 			},
-			// Inert for now: the GateInternalAPI wrapping is not implemented yet.
-			// The field ships now so a later change needs no config migration.
+			// Off by default: enabling opts /internal/* + /version into the
+			// dashboard AccessPolicy (see DashboardConfig.GateInternalAPI).
 			GateInternalAPI: false,
 		},
 		Translators: TranslatorsConfig{
@@ -262,6 +266,10 @@ func (c *Config) Validate() error {
 
 	if err := c.Proxy.StickySessions.Validate(); err != nil {
 		return fmt.Errorf("proxy.sticky_sessions config invalid: %w", err)
+	}
+
+	if err := c.Proxy.Validate(); err != nil {
+		return fmt.Errorf("proxy config invalid: %w", err)
 	}
 
 	if err := c.ValidateModelCapabilities(); err != nil {

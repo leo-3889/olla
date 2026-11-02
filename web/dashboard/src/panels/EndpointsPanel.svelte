@@ -9,7 +9,7 @@
   import HerdFilter from '../components/HerdFilter.svelte';
   import { filterEndpoints, isFiltering, issueList } from '../lib/herd';
   import { endpointFilter } from '../lib/stores/endpoint-filter.svelte';
-  import { fmtAgo, fmtMs, fmtPct, fmtUntil } from '../lib/format';
+  import { fmtAgo, fmtMs, fmtPct, fmtTokens, fmtUntil } from '../lib/format';
   import { bootstrap, DEFAULT_UI_CONFIG } from '../lib/stores/bootstrap.svelte';
   import { stableId } from '../lib/dom-id';
   import EndpointTrend from '../components/EndpointTrend.svelte';
@@ -109,6 +109,27 @@
     })),
     { key: 'model_count', label: 'Models', sortable: true, num: true, align: 'right' },
     { key: 'request_count', label: 'Requests', sortable: true, num: true, align: 'right' },
+    {
+      key: 'traffic',
+      label: 'Traffic',
+      sortable: false,
+      num: true,
+      align: 'right',
+      title: 'Proxy bytes through this endpoint (in + out)',
+    },
+    {
+      // Static (non-dialect) column: cost rollups, not engine-reported -
+      // mirrors config.json static_metric_columns. Lifetime = sum of the
+      // hourly cost-rollup token totals over metrics_source.influx.token_lookback
+      // (730d retention); NOT the engine counter (resets on restart).
+      key: 'total_tokens',
+      label: 'Tokens (lifetime)',
+      sortable: false,
+      num: true,
+      align: 'right',
+      title:
+        'Tokens produced, summed from the hourly cost rollups (730d retention window). Endpoint renames are not aliased: pre-rename rows stay under the old id. Dash = no lifetime data (sampler mode, no cost rows, or the rollup query is failing) - never a fake 0.',
+    },
     { key: 'active_connections', label: 'Conn', sortable: true, num: true, align: 'right' },
     { key: 'url', label: 'URL', sortable: false },
     { key: 'health_check_at', label: 'Last chk', sortable: false },
@@ -345,6 +366,8 @@
         {/each}
         <td class={cellClass("model_count")}>{#if e.model_count === 0}<span class="dash">0</span>{:else}{e.model_count}{/if}</td>
         <td class={cellClass('request_count')}>{e.request_count?.toLocaleString('en-AU') ?? 0}</td>
+        <td class={cellClass('traffic')}>{e.traffic || '—'}</td>
+        <td class={cellClass('total_tokens')}>{fmtTokens(e.total_tokens) || '—'}</td>
         <td class={cellClass('active_connections')}>{#if e.active_connections > 0}{e.active_connections}{:else}<span class="dash">0</span>{/if}</td>
         <td class="url-cell" title={e.url}>{e.url || '—'}</td>
         <td>{fmtAgo(e.health_check_at, now) || 'never'}</td>

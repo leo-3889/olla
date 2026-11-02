@@ -67,6 +67,13 @@ proxy:
   # lowering: on a loaded fleet queue_depth >= 8 is routine, and grading at 1-3
   # spends the healthy tier's weight budget on saturated nodes.
   busy_queue_depth: 0
+  # Backend-error failover (opt-in): backend HTTP status codes that rotate the
+  # request to the next endpoint BEFORE the first byte reaches the client. A
+  # rotated-away refusal is never forwarded; tried endpoints are excluded,
+  # exactly like connection-error failover. Once any byte is flushed
+  # (streaming started) the response passes through untouched. Every entry
+  # must be a 4xx/5xx code - anything else is a boot error.
+  retry_on_status: [] # e.g. [429, 503]. [] = off (default): status codes reach the client exactly as the backend answered.
   # stream_buffer_size: 8192 # Buffer size per request - larger = fewer syscalls, more memory. Unset: the engine default applies (Olla 64KiB, Sherpa 8KiB).
   connection_timeout: 60s
   connection_keep_alive: 30s # TCP keep-alive interval for backend connections
@@ -238,10 +245,14 @@ dashboard:
       - "::1/128"
     allowed_hosts:
       - "localhost"
-  # gate_internal_api is reserved for a future release and is inert today:
-  # setting it true has no effect (Olla logs a warning at startup if set).
-  # Once wired, it will extend the same access_policy to the rest of
-  # /internal/* and /version.
+  # gate_internal_api extends the SAME access_policy above to the rest of
+  # the operational API - /internal/status (and its /endpoints, /models
+  # sub-paths), /internal/metrics, /internal/stats/*, /internal/process -
+  # and /version, behind the identical CIDR/Host gate that guards
+  # /internal/ui*. /internal/health stays exempt (load-balancer probes).
+  # Off by default: enabling it 403s scrapes and polls from hosts the
+  # policy rejects, so point monitoring at an allowlisted address first.
+  # The boot log states the effective state when the knob is set.
   gate_internal_api: false
 
 # Model aliases allow mapping a single virtual model name to multiple actual model names
@@ -287,6 +298,10 @@ dashboard:
 #       bucket: llm/metrics
 #       costs_bucket: llm/costs
 #       stale_after: 60s
+#       token_lookback: 730d   # "Tokens (lifetime)" column window: per endpoint, the SUM
+#                              # of hourly cost-rollup total_tokens over this window
+#                              # (default 730d = costs-bucket retention). NOT the engine
+#                              # counters - those reset on every engine restart.
 #       power_attribution:
 #         halogen-395: plug-395
 #         radiance-9700-64: plug-box

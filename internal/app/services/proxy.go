@@ -213,6 +213,7 @@ func (s *ProxyServiceWrapper) createProxyConfiguration() *proxy.Configuration {
 			MaxAttempts:     s.config.Retry.MaxAttempts,
 			NoNonIdempotent: !s.config.Retry.NonIdempotent,
 		},
+		RetryOnStatus: s.config.RetryOnStatus,
 	}
 }
 

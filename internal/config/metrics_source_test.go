@@ -10,12 +10,13 @@ import (
 
 func TestMetricsSourceValidate(t *testing.T) {
 	tests := []struct {
-		name      string
-		input     MetricsSourceConfig
-		wantErr   string
-		wantMode  string
-		wantStale time.Duration
-		wantCosts string
+		name         string
+		input        MetricsSourceConfig
+		wantErr      string
+		wantMode     string
+		wantStale    time.Duration
+		wantCosts    string
+		wantLookback time.Duration
 	}{
 		{name: "empty is sampler", input: MetricsSourceConfig{}, wantMode: "sampler"},
 		{name: "explicit sampler", input: MetricsSourceConfig{Mode: "sampler"}, wantMode: "sampler"},
@@ -27,6 +28,14 @@ func TestMetricsSourceValidate(t *testing.T) {
 				PowerAttribution: map[string]string{"ep": "plug"},
 			}},
 			wantMode: "influx", wantStale: 60 * time.Second, wantCosts: "llm/metrics",
+			wantLookback: 730 * 24 * time.Hour,
+		},
+		{
+			name: "negative token_lookback rejected",
+			input: MetricsSourceConfig{Mode: "influx", Influx: InfluxSourceConfig{
+				URL: "u", Org: "o", TokenEnv: "T", Bucket: "b", TokenLookback: -time.Hour,
+			}},
+			wantErr: "token_lookback must be positive",
 		},
 		{name: "influx missing url", input: MetricsSourceConfig{Mode: "influx", Influx: InfluxSourceConfig{Org: "o", TokenEnv: "T", Bucket: "b"}}, wantErr: "influx: url is required"},
 		{name: "influx missing org", input: MetricsSourceConfig{Mode: "influx", Influx: InfluxSourceConfig{URL: "u", TokenEnv: "T", Bucket: "b"}}, wantErr: "influx: org is required"},
@@ -34,8 +43,8 @@ func TestMetricsSourceValidate(t *testing.T) {
 		{name: "influx missing bucket", input: MetricsSourceConfig{Mode: "influx", Influx: InfluxSourceConfig{URL: "u", Org: "o", TokenEnv: "T"}}, wantErr: "influx: bucket is required"},
 		{
 			name:     "explicit costs bucket and stale kept",
-			input:    MetricsSourceConfig{Mode: "influx", Influx: InfluxSourceConfig{URL: "u", Org: "o", TokenEnv: "T", Bucket: "b", CostsBucket: "costs", StaleAfter: 90 * time.Second}},
-			wantMode: "influx", wantStale: 90 * time.Second, wantCosts: "costs",
+			input:    MetricsSourceConfig{Mode: "influx", Influx: InfluxSourceConfig{URL: "u", Org: "o", TokenEnv: "T", Bucket: "b", CostsBucket: "costs", StaleAfter: 90 * time.Second, TokenLookback: 24 * time.Hour}},
+			wantMode: "influx", wantStale: 90 * time.Second, wantCosts: "costs", wantLookback: 24 * time.Hour,
 		},
 	}
 	for _, tc := range tests {
@@ -52,6 +61,7 @@ func TestMetricsSourceValidate(t *testing.T) {
 			if tc.wantMode == "influx" {
 				assert.Equal(t, tc.wantStale, cfg.Influx.StaleAfter)
 				assert.Equal(t, tc.wantCosts, cfg.Influx.CostsBucket)
+				assert.Equal(t, tc.wantLookback, cfg.Influx.TokenLookback)
 			}
 		})
 	}

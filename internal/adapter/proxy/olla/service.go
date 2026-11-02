@@ -154,11 +154,13 @@ func NewService(
 		BaseProxyComponents: base,
 		bufferPool:          bufferPool,
 		transport:           transport,
-		retryHandler:        core.NewRetryHandler(discoveryService, logger, core.WithRetryPolicy(configuration.GetRetryPolicy())),
-		circuitBreakers:     *xsync.NewMap[string, *circuitBreaker](),
-		endpointPools:       *xsync.NewMap[string, *connectionPool](),
-		cleanupTicker:       time.NewTicker(5 * time.Minute),
-		cleanupStop:         make(chan struct{}),
+		retryHandler: core.NewRetryHandler(discoveryService, logger,
+			core.WithRetryPolicy(configuration.GetRetryPolicy()),
+			core.WithRetryOnStatus(configuration.RetryOnStatus)),
+		circuitBreakers: *xsync.NewMap[string, *circuitBreaker](),
+		endpointPools:   *xsync.NewMap[string, *connectionPool](),
+		cleanupTicker:   time.NewTicker(5 * time.Minute),
+		cleanupStop:     make(chan struct{}),
 	}
 	service.configuration.Store(configuration)
 

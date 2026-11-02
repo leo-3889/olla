@@ -3,6 +3,7 @@ package anthropic
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -294,7 +295,7 @@ func (t *Translator) convertUserMessage(blocks []interface{}) (map[string]interf
 func imagePart(block map[string]interface{}) (map[string]interface{}, error) {
 	source, _ := block["source"].(map[string]interface{})
 	if source == nil {
-		return nil, fmt.Errorf("invalid content type: image block without source")
+		return nil, errors.New("invalid content type: image block without source")
 	}
 	sourceType, _ := source["type"].(string)
 	if sourceType != "base64" {
@@ -305,7 +306,7 @@ func imagePart(block map[string]interface{}) (map[string]interface{}, error) {
 	mediaType, _ := source["media_type"].(string)
 	data, _ := source["data"].(string)
 	if mediaType == "" || data == "" {
-		return nil, fmt.Errorf("invalid content type: base64 image block missing media_type or data")
+		return nil, errors.New("invalid content type: base64 image block missing media_type or data")
 	}
 	return map[string]interface{}{
 		"type":      "image_url",

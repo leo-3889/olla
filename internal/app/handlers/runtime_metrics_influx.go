@@ -28,6 +28,17 @@ const influxMetricsInterval = 10 * time.Second
 // decides what still EXISTS.
 const influxQueryRange = "-11m"
 
+// lifetimeTokensTTL gates the lifetime-tokens query: the cost rollups land
+// every 5 minutes, so the 10s refresh cycle must NOT re-fan this query on
+// every cycle (let alone per 5s dashboard poll). One query per TTL to the
+// costs bucket, served from cache in between.
+const lifetimeTokensTTL = 60 * time.Second
+
+// influxDefaultTokenLookback mirrors config.defaultInfluxTokenLookback for
+// providers constructed without a validated config (tests, direct wiring):
+// the costs bucket's retention, so the window is "every rollup row we keep".
+const influxDefaultTokenLookback = 730 * 24 * time.Hour
+
 // influxFieldQueueDepth is the llm_runtime field carrying the engine queue
 // depth - the signal load-aware Busy grading steers on, so its freshness is
 // tracked per field, not per endpoint (see QueueDepthFor).
@@ -67,24 +78,46 @@ type influxMetricsProvider struct {
 	// cycle failure (one window leg dies while last() lives) is logged on
 	// transition: the all-fail warn only covers the total case, and silently
 	// blanked avg/max columns were indistinguishable from an idle engine.
-	legFailing map[string]bool
-	bucket     string
+	legFailing  map[string]bool
+	bucket      string
+	costsBucket string
+	// tokenRange renders the configured token_lookback as a Flux duration
+	// literal ("-730d"); tokenTTL bounds the lifetime-query cadence.
+	tokenRange string
+	tokenTTL   time.Duration
 	staleAfter time.Duration
+	// tokens is the endpoint -> lifetime token sum map, refreshed by
+	// refreshLifetimeTokens at most once per tokenTTL. nil means "nothing
+	// trustworthy right now": a failed query CLEARS it (the column dashes,
+	// it never keeps serving numbers from before the outage).
+	tokens   map[string]int64
+	tokensAt time.Time
 
 	mu sync.RWMutex
 }
 
 func newInfluxMetricsProvider(influx config.InfluxSourceConfig, token string, repository domain.EndpointRepository, log logger.StyledLogger) *influxMetricsProvider {
+	lookback := influx.TokenLookback
+	if lookback <= 0 {
+		lookback = influxDefaultTokenLookback
+	}
+	costsBucket := influx.CostsBucket
+	if costsBucket == "" {
+		costsBucket = influx.Bucket
+	}
 	return &influxMetricsProvider{
-		repository: repository,
-		logger:     log,
-		client:     newFluxClient(influx.URL, influx.Org, token),
-		bucket:     influx.Bucket,
-		staleAfter: influx.StaleAfter,
-		now:        time.Now,
-		states:     map[string]*influxEndpointState{},
-		legFailing: map[string]bool{},
-		firstSee:   map[string]time.Time{},
+		repository:  repository,
+		logger:      log,
+		client:      newFluxClient(influx.URL, influx.Org, token),
+		bucket:      influx.Bucket,
+		costsBucket: costsBucket,
+		tokenRange:  fluxDurationRange(lookback),
+		tokenTTL:    lifetimeTokensTTL,
+		staleAfter:  influx.StaleAfter,
+		now:         time.Now,
+		states:      map[string]*influxEndpointState{},
+		legFailing:  map[string]bool{},
+		firstSee:    map[string]time.Time{},
 	}
 }
 
@@ -160,6 +193,7 @@ func (p *influxMetricsProvider) refresh(ctx context.Context) {
 	p.mu.Lock()
 	p.pruneLocked(live)
 	p.mu.Unlock()
+	p.refreshLifetimeTokens(ctx)
 	if len(names) == 0 {
 		return
 	}
@@ -240,6 +274,137 @@ func (p *influxMetricsProvider) refresh(ctx context.Context) {
 		p.states[name] = state
 	}
 	p.mu.Unlock()
+}
+
+// refreshLifetimeTokens runs the ONE lifetime-tokens query (per tokenTTL,
+// not per cycle): sum of the hourly cost-rollup total_tokens per endpoint
+// over tokenRange. The authority is llm_endpoint_cost_v3 (bucket
+// costs_bucket), NOT the engine counters - llm_runtime generation_tokens_total
+// resets on every engine restart, so it can never answer "ever". Each 5-min
+// cycle rewrites the period row at the fixed period-start timestamp, so
+// exactly one stored point exists per period and sum() is exact.
+//
+// Honesty rules:
+//   - the endpoint set is the CURRENT configured repository names; ghost ids
+//     in the data (a rename's pre-rename rows, retired endpoints) are
+//     filtered by contains() server-side AND by a set guard client-side.
+//     Renames are deliberately NOT aliased: -64's number excludes the
+//     radiance-qfn rows. Aliasing would need a metrics.yaml mapping, which
+//     is ollametrics scope.
+//   - a failed query CLEARS the cache (LifetimeTokens then reports "not
+//     known" -> the payload omits the key -> the UI dashes it). Serving the
+//     pre-outage sums as "lifetime" would be a stale lie; the next cycle
+//     retries without waiting out the TTL.
+//   - the leg logs warn/recover on transitions via noteLeg, and its failure
+//     never touches the runtime-metrics states: one leg dying must not
+//     blank the throughput tiles (partial-failure disclosure, the observe
+//     pattern).
+func (p *influxMetricsProvider) refreshLifetimeTokens(ctx context.Context) {
+	if p.costsBucket == "" {
+		return
+	}
+	p.mu.RLock()
+	ttl := p.tokenTTL
+	due := p.tokensAt.IsZero() || !p.now().Before(p.tokensAt.Add(ttl))
+	p.mu.RUnlock()
+	if !due {
+		return
+	}
+	endpoints, err := p.repository.GetAll(ctx)
+	if err != nil {
+		p.noteLeg("lifetimeTokens", err)
+		p.mu.Lock()
+		p.tokens = nil
+		p.mu.Unlock()
+		return
+	}
+	names := make([]string, 0, len(endpoints))
+	set := make(map[string]struct{}, len(endpoints))
+	for _, endpoint := range endpoints {
+		if endpoint == nil || endpoint.Name == "" {
+			continue
+		}
+		if _, dup := set[endpoint.Name]; dup {
+			continue
+		}
+		names = append(names, endpoint.Name)
+		set[endpoint.Name] = struct{}{}
+	}
+	if len(names) == 0 {
+		// Empty-set guard: an empty contains(set:[]) set is a Flux compile
+		// hazard, and there is nothing to render anyway.
+		p.noteLeg("lifetimeTokens", nil)
+		p.mu.Lock()
+		p.tokens = map[string]int64{}
+		p.tokensAt = p.now()
+		p.mu.Unlock()
+		return
+	}
+	flux := fmt.Sprintf(`from(bucket:%q) |> range(start:%s) |> filter(fn:(r)=>r._measurement=="llm_endpoint_cost_v3") |> filter(fn:(r)=>r._field=="total_tokens") |> filter(fn:(r)=>r.period=="hour") |> filter(fn:(r)=>contains(set:[%s], value:r.endpoint)) |> group(columns:["endpoint"]) |> sum()`,
+		p.costsBucket, p.tokenRange, fluxStringSet(names))
+	qctx, cancel := context.WithTimeout(ctx, fluxClientTimeout)
+	rows, err := p.client.query(qctx, flux)
+	cancel()
+	p.noteLeg("lifetimeTokens", err)
+	if err != nil {
+		p.mu.Lock()
+		p.tokens = nil
+		p.mu.Unlock()
+		return
+	}
+	totals := make(map[string]int64, len(rows))
+	for _, row := range rows {
+		name, _ := row["endpoint"].(string)
+		if _, configured := set[name]; !configured {
+			// Ghost-id row (rename boundary, retired endpoint): never
+			// credited to a current endpoint, never surfaced.
+			continue
+		}
+		value, ok := influxFloat(row["_value"])
+		if !ok {
+			continue
+		}
+		totals[name] = int64(value)
+	}
+	p.mu.Lock()
+	p.tokens = totals
+	p.tokensAt = p.now()
+	p.mu.Unlock()
+}
+
+// LifetimeTokens implements the lifetime-token read surface consumed by the
+// endpoints status payload: the summed hourly cost-rollup token totals for
+// the endpoint name (the Influx endpoint tag equals the olla endpoint Name).
+// ok=false (payload: key absent, UI dash) in sampler mode, while the
+// lifetime query is failing, and for endpoints with no rows in the window
+// (e.g. an unmetered energy-only endpoint) - a fabricated 0 would claim the
+// endpoint produced nothing, which the data cannot support.
+func (p *influxMetricsProvider) LifetimeTokens(name string) (int64, bool) {
+	if p == nil {
+		return 0, false
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	v, ok := p.tokens[name]
+	return v, ok
+}
+
+// fluxDurationRange renders a positive Go duration as the widest exact Flux
+// duration literal (d/h/m/s). A lookback that is a whole number of days -
+// every realistic one - renders as "-730d".
+func fluxDurationRange(d time.Duration) string {
+	switch {
+	case d <= 0:
+		return fluxDurationRange(influxDefaultTokenLookback)
+	case d%(24*time.Hour) == 0:
+		return fmt.Sprintf("-%dd", int64(d/(24*time.Hour)))
+	case d%time.Hour == 0:
+		return fmt.Sprintf("-%dh", int64(d/time.Hour))
+	case d%time.Minute == 0:
+		return fmt.Sprintf("-%dm", int64(d/time.Minute))
+	default:
+		return fmt.Sprintf("-%ds", int64(d/time.Second))
+	}
 }
 
 // Snapshot applies the same gates as the sampler: opted-in, routable, known

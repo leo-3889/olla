@@ -345,6 +345,13 @@
           value={fmtInt(sys.active_connections)}
           sub="in flight right now"
         />
+        {#if sys.sticky?.enabled}
+          <StatTile
+            label="Sticky sessions"
+            value={fmtInt(sys.sticky.active_sessions ?? 0)}
+            sub="{fmtInt(sys.sticky.hits ?? 0)} hits · {fmtInt(sys.sticky.misses ?? 0)} misses · {fmtInt(sys.sticky.evictions ?? 0)} evictions"
+          />
+        {/if}
         <StatTile
           label="Total requests"
           value={fmtInt(sys.total_requests)}

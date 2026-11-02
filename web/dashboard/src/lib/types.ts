@@ -54,6 +54,9 @@ export interface SystemSummary {
   // The computation that produced status: "host" (the endpoint fleet, the
   // default) or "model" (a configured list of models/aliases). Always emitted.
   health_mode: string;
+  // Sticky-session statistics, mirrored from GET /internal/stats/sticky
+  // (same shape). Branch on .enabled, never on presence.
+  sticky?: StickyStats;
   // Per-model breakdown, present only in model mode.
   models?: ModelHealthEntry[];
 }
@@ -125,6 +128,18 @@ export interface EndpointSummary {
   priority: number;
   model_count: number;
   request_count: number;
+  // Proxy bytes through this endpoint (in + out), pre-formatted. Emitted by
+  // the backend since the traffic column landed; empty string for endpoints
+  // with no stats (the UI renders a dash via ||, not ??). Optional so
+  // fixtures built against older payloads stay valid.
+  traffic?: string;
+  // Lifetime token production from the cost rollups (sum of hourly
+  // llm_endpoint_cost_v3 total_tokens over metrics_source.influx.token_lookback).
+  // ABSENT when metrics_source is sampler, the lifetime query is failing,
+  // or the endpoint has no cost rows (unmetered node) - the panel renders a
+  // dash via fmtTokens, never a fabricated 0. Pre-rename rows under ghost
+  // endpoint ids are NOT credited to the current id.
+  total_tokens?: number | null;
   min_latency_ms: number;
   max_latency_ms: number;
   active_connections: number;
@@ -193,9 +208,30 @@ export interface UIConfig {
   poll_ms: { overview: number; endpoints: number; models: number; observe: number };
   sections: UIConfigSection[];
   runtime_metric_columns: UIConfigMetricColumn[];
+  // Columns outside the dialect union (not engine-reported): the lifetime-
+  // tokens column (cost rollups). Optional so manifests from older backends
+  // stay valid.
+  static_metric_columns?: UIConfigMetricColumn[];
 }
 
 // --- /internal/ui/observe.json (power / cost / gpu) --------------------
+
+export interface StickyStats {
+  enabled: boolean;
+  active_sessions?: number;
+  insertions?: number;
+  hits?: number;
+  misses?: number;
+  evictions?: number;
+  max_sessions?: number;
+  idle_ttl_seconds?: number;
+  // Select outcomes by label (hit/miss/bypass/no_key) and pin-producing key
+  // sources, both since boot; sessions_by_endpoint is the point-in-time
+  // pinned-backend distribution.
+  results?: Record<string, number>;
+  key_sources?: Record<string, number>;
+  sessions_by_endpoint?: Record<string, number>;
+}
 
 export interface ObservePowerRow {
   target: string;

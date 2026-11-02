@@ -250,6 +250,10 @@ With sticky sessions on, a failover moves the session's pin to the endpoint that
 
 **Deprecated:** `proxy.max_retries` and `proxy.retry_backoff` are still parsed but do nothing, and Olla logs a warning at startup when either is set to a non-zero value (an explicit `0` cannot be told from unset). They are not mapped onto `proxy.retry`; set that block instead. They will be removed in v0.1.0.
 
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `retry_on_status` | []int | `[]` (off) | Backend-error failover: HTTP status codes (4xx/5xx, e.g. `[429, 503]`) that rotate the request to the next endpoint BEFORE the first response byte reaches the client. A backend that refuses a request (rate-limit, overload) no longer pins the client to itself: the refusal is discarded, never forwarded, and the request is replayed on the next candidate with tried-endpoint exclusion, body restored, and the same attempt bound as connection-error failover. Suppressions are identical to the connection-error path: once any byte is flushed (streaming started) the response passes through untouched, and a non-idempotent request only rotates while its response has not started (an unstarted refusal consumed no side effect). When every candidate refuses, the last refusal passes through honestly. `[]` = byte-identical to a gateway without the feature. Entries outside 4xx/5xx are a startup error. |
+
 ### Streaming Settings
 
 | Field | Type | Default | Description |
@@ -928,6 +932,33 @@ When enabled, displays:
 - Goroutine counts
 - Runtime information
 
+## Dashboard Access Control
+
+The embedded dashboard (`/internal/ui/`) is gated by a network-layer policy:
+every request must come from an allowlisted source IP **and** carry an
+allowlisted Host header. IP-literal Hosts are accepted unconditionally.
+
+```yaml
+dashboard:
+  enabled: true
+  gate_internal_api: false
+  access_policy:
+    allowed_cidrs:
+      - "127.0.0.0/8"
+    allowed_hosts:
+      - "localhost"
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `dashboard.enabled` | `true` | Registers the `/internal/ui/*` subtree at all. When false the routes do not exist (404), they are not 403'd. |
+| `dashboard.access_policy.allowed_cidrs` | loopback | Source-IP allowlist for the dashboard. An unparseable/absent list is deny-all (fail closed). |
+| `dashboard.access_policy.allowed_hosts` | `["localhost"]` | Host-header allowlist for non-IP Hosts; IP-literal Hosts are auto-accepted. |
+| `dashboard.gate_internal_api` | `false` | **Wired:** extends the *same* policy over the operational API - `/internal/status` (incl. `/endpoints` and `/models`), `/internal/metrics`, `/internal/stats/*`, `/internal/process` and `/version` - so the dashboard, its data endpoints, Prometheus scrapes and the status API share one perimeter. `/internal/health` is deliberately exempt: load balancers and container probes answer from addresses no operator maintains in an allowlist. Off by default because enabling it 403s monitoring scrapes and status polls from hosts the policy rejects; set it only after allowlisting those sources. The startup log names the effective state when the knob is set. |
+
+`/olla/*` proxy routes are never affected - the policy protects the
+operational surface, not inference traffic.
+
 ## Dashboard Metric Source
 
 The admin dashboard's engine-runtime tiles (throughput, cache hit rate, KV
@@ -945,6 +976,7 @@ metrics_source:
     bucket: llm/metrics            # runtime + power series (ollametrics)
     costs_bucket: llm/costs        # cost rollups (default: bucket)
     stale_after: 60s               # tile staleness threshold on sample age
+    token_lookback: 730d           # lifetime-tokens column window (default 730d = costs-bucket retention)
     power_attribution:             # olla endpoint -> power_target_id measuring its box
       halogen-395: plug-395
       radiance-qfn: plug-box
@@ -958,6 +990,7 @@ metrics_source:
 | `influx.power_attribution` | Maps endpoints to the meter measuring them; enables the dashboard Power section. Power is attributed per meter, never guessed from a device list. |
 | `influx.gpu_endpoints` | List of endpoint tags of the GPU device targets in Influx (one per GPU exporter node); empty disables the dashboard GPU section. Rows group by endpoint+device because device tags collide across boxes. |
 | `influx.stale_after` | Seconds after which tiles render stale when the newest point for an endpoint is older (samples older than 15 minutes disappear entirely). |
+| `influx.token_lookback` | Window of the Endpoints page's **Tokens (lifetime)** column: per endpoint, the sum of the hourly cost-rollup `total_tokens` (`llm/costs`, `llm_endpoint_cost_v3`, `period=hour`) over this window. Default `730d` = the costs bucket's retention, so the column is retention-bounded, not literally infinite. Each 5-min cost cycle rewrites the period row at its fixed period-start timestamp, so the sum is exact; the query runs at most once a minute. Deliberately NOT the engine runtime counters - `generation_tokens_total` resets on every engine restart. Rows are per endpoint id: an endpoint rename is not aliased (pre-rename rows stay under the old id and are not credited to the current one). Endpoints with no rows in the window (e.g. unmetered energy-only nodes) render a dash, never a fake 0. |
 
 In `influx` mode the in-process sampler is not started, the Cost and GPU
 dashboard sections become available (they only exist in that backend), and

@@ -134,3 +134,115 @@ func TestSlashlessDashboardRoute_CollisionSkipsMount(t *testing.T) {
 		t.Errorf("collision on slashless route must also prevent %s from mounting", dashboard.DashboardRoute)
 	}
 }
+
+// TestInternalAPIGate is the wiring behind dashboard.gate_internal_api
+// (upstream issue #214): enabled, the operational API answers through the
+// SAME AccessPolicy as /internal/ui/*; disabled (the default), handlers
+// pass through untouched so existing monitoring scrapes from unlisted
+// hosts keep working.
+func TestInternalAPIGate(t *testing.T) {
+	newApp := func(gate bool) *Application {
+		d := config.DashboardConfig{
+			Enabled:         true,
+			GateInternalAPI: gate,
+			AccessPolicy:    config.AccessPolicyConfig{AllowedCIDRs: []string{"10.0.0.0/8"}},
+		}
+		// Validate parses the CIDRs into the cache ParsedCIDRs reads;
+		// un-parsed policy is deny-all by design (fail closed).
+		if err := d.Validate(); err != nil {
+			t.Fatalf("validate: %v", err)
+		}
+		return &Application{Config: &config.Config{Dashboard: d}}
+	}
+	hello := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+
+	req := httptest.NewRequest(http.MethodGet, "/internal/status", nil)
+	req.RemoteAddr = "10.1.2.3:1234"
+	req.Host = "127.0.0.1:40114"
+	blocked := httptest.NewRequest(http.MethodGet, "/internal/status", nil)
+	blocked.RemoteAddr = "192.0.2.7:1234"
+	blocked.Host = "127.0.0.1:40114"
+
+	off := newApp(false).internalAPIGate()(hello)
+	for _, r := range []*http.Request{req, blocked} {
+		rec := httptest.NewRecorder()
+		off.ServeHTTP(rec, r)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("gate off: %s got %d, want 200 (default must not break scrapes)", r.RemoteAddr, rec.Code)
+		}
+	}
+
+	on := newApp(true).internalAPIGate()(hello)
+	rec := httptest.NewRecorder()
+	on.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("gate on: allowed ip got %d, want 200", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	on.ServeHTTP(rec, blocked)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("gate on: unlisted ip got %d, want 403", rec.Code)
+	}
+}
+
+// TestInternalAPIGate_RouteWiring proves the gate is applied at the routing
+// table, not just in isolation: with the knob on, gated operational routes
+// answer 403 from a CIDR the policy rejects, /internal/health (the LB
+// probe) stays exempt, an allowed source still reaches its handler, and
+// with the knob off (shipped default) the same disallowed source is not
+// rejected anywhere - byte-identical to the pre-gate behaviour.
+//
+// Only handlers that answer from a bare Application are probed here
+// (sticky stats, process, version); the gate runs before any handler, so
+// one probe per gated family proves the wrapper position.
+func TestInternalAPIGate_RouteWiring(t *testing.T) {
+	newMux := func(t *testing.T, gate bool) http.Handler {
+		t.Helper()
+		d := config.DashboardConfig{
+			Enabled:         true,
+			GateInternalAPI: gate,
+			AccessPolicy:    config.AccessPolicyConfig{AllowedCIDRs: []string{"127.0.0.0/8", "::1/128"}},
+		}
+		if err := d.Validate(); err != nil {
+			t.Fatalf("validate: %v", err)
+		}
+		reg := router.NewRouteRegistry(&mockStyledLogger{})
+		app := &Application{
+			Config:        &config.Config{Dashboard: d},
+			logger:        &mockStyledLogger{},
+			routeRegistry: reg,
+		}
+		app.registerRoutes()
+		mux := http.NewServeMux()
+		reg.WireUp(mux)
+		return mux
+	}
+	get := func(h http.Handler, path, ip string) int {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.RemoteAddr = ip + ":33333"
+		req.Host = "127.0.0.1:40114"
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	on := newMux(t, true)
+	for _, path := range []string{"/internal/stats/sticky", "/internal/process", "/version"} {
+		if code := get(on, path, "192.0.2.7"); code != http.StatusForbidden {
+			t.Errorf("gate on: %s from unlisted ip got %d, want 403", path, code)
+		}
+	}
+	if code := get(on, "/internal/health", "192.0.2.7"); code != http.StatusOK {
+		t.Errorf("gate on: /internal/health from unlisted ip got %d, want 200 (LB probes must stay exempt)", code)
+	}
+	if code := get(on, "/internal/stats/sticky", "127.0.0.1"); code != http.StatusOK {
+		t.Errorf("gate on: /internal/stats/sticky from allowed ip got %d, want 200", code)
+	}
+
+	off := newMux(t, false)
+	for _, path := range []string{"/internal/stats/sticky", "/internal/process", "/version", "/internal/health"} {
+		if code := get(off, path, "192.0.2.7"); code == http.StatusForbidden {
+			t.Errorf("gate off: %s from unlisted ip got 403, want ungated passthrough (shipped default)", path)
+		}
+	}
+}

@@ -83,6 +83,17 @@ type BaseProxyConfig struct {
 	TLSHandshakeTimeout   time.Duration
 	Retry                 RetryPolicy
 	StreamBufferSize      int
+
+	// RetryOnStatus carries proxy.retry_on_status to the shared retry handler:
+	// backend status codes (4xx/5xx) that rotate the request to the next
+	// endpoint before the first byte reaches the client. Empty = off.
+	RetryOnStatus []int
+}
+
+// GetRetryOnStatus returns the backend status codes that trigger endpoint
+// failover (proxy.retry_on_status). Empty/nil = feature off.
+func (c *BaseProxyConfig) GetRetryOnStatus() []int {
+	return c.RetryOnStatus
 }
 
 // GetRetryPolicy returns the failover policy applied to each proxied request.

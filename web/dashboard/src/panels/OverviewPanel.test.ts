@@ -3,6 +3,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { overview } from '../lib/stores/overview.svelte';
 import { endpoints } from '../lib/stores/endpoints.svelte';
 import OverviewPanel from './OverviewPanel.svelte';
+import { COLUMNS_STORAGE_KEY } from '../lib/herd';
 import { bootstrap, DEFAULT_UI_CONFIG } from '../lib/stores/bootstrap.svelte';
 import { createPollStore } from '../lib/stores/poll-store.svelte';
 import type { ObserveResponse } from '../lib/types';
@@ -703,5 +704,90 @@ describe('degraded observe with no payload', () => {
     observe.stop();
     bootstrap.observe = null;
     bootstrap.config = DEFAULT_UI_CONFIG;
+  });
+});
+
+// Surface tests for the sticky tile and the glance traffic column (the
+// #3 surfacing): the tile is gated on sticky ENABLED (absent payload and
+// enabled:false both hide it - a feature that is off must not occupy an
+// ops tile), and the traffic column renders the Go zero value ('') as a
+// dash via ||, not ?? (an absent key in older fixtures is also a dash).
+describe('OverviewPanel sticky tile and glance traffic column', () => {
+  function cellUnderHeader(scope: ParentNode, label: string, row = 0): string | undefined {
+    const ths = [...scope.querySelectorAll('th')];
+    // Sortable headers carry a ↕/▲▼ marker; strip it before matching.
+    const idx = ths.findIndex((th) => th.textContent?.replace(/[\u2195\u25b2\u25bc]/g, '').trim() === label);
+    if (idx < 0) return undefined;
+    const tr = scope.querySelectorAll('tbody tr')[row];
+    if (!tr) return undefined;
+    return tr.querySelectorAll('td')[idx]?.textContent?.trim();
+  }
+
+  it('shows the sticky tile with live counters when sticky sessions are enabled', async () => {
+    component = mount(OverviewPanel, { target: document.body });
+    flushSync();
+    // status 'degraded' (not the 'healthy' the earlier tests leave in the
+    // overview store): refreshTyped gates on the status string, so an
+    // identical value would resolve on the previous test's stale payload.
+    await refreshTyped(
+      buildStatus({
+        system: {
+          status: 'degraded',
+          sticky: { enabled: true, active_sessions: 5, hits: 77, misses: 3, evictions: 1 },
+        },
+      }),
+      [buildEndpoint({ name: 'sticky-on-a', id: 'a-1' })]
+    );
+    const tile = tileByLabel('Sticky sessions');
+    expect(tile).toBeDefined();
+    expect(tile!.querySelector('.value')?.textContent?.trim()).toBe('5');
+    const sub = tile!.querySelector('.sub')?.textContent ?? '';
+    expect(sub).toContain('77 hits');
+    expect(sub).toContain('3 misses');
+    expect(sub).toContain('1 evictions');
+  });
+
+  it('hides the sticky tile when the feature is disabled', async () => {
+    component = mount(OverviewPanel, { target: document.body });
+    flushSync();
+    await refreshTyped(buildStatus({ system: { sticky: { enabled: false } } }), [
+      buildEndpoint({ name: 'sticky-off-a', id: 'a-2' }),
+    ]);
+    expect(tileByLabel('Sticky sessions')).toBeUndefined();
+  });
+
+  it('hides the sticky tile when the payload has no sticky block (older backend)', async () => {
+    component = mount(OverviewPanel, { target: document.body });
+    flushSync();
+    await refreshTyped(buildStatus({ system: { status: 'healthy' } }), [
+      buildEndpoint({ name: 'sticky-absent-a', id: 'a-3' }),
+    ]);
+    expect(tileByLabel('Sticky sessions')).toBeUndefined();
+  });
+
+  it('renders per-endpoint traffic in the glance table and a dash for the empty zero value', async () => {
+    // Upstream renders the same /internal/status traffic string through the
+    // optional numeric traffic_bytes column; the fork's string column was the
+    // same data with the same dash-for-zero contract, so the contract is
+    // pinned here on the origin-line column.
+    localStorage.setItem(COLUMNS_STORAGE_KEY, JSON.stringify(['traffic_bytes']));
+    component = mount(OverviewPanel, { target: document.body });
+    flushSync();
+    const status = buildStatus();
+    // The glance row joins /internal/status/endpoints (rows) with the
+    // /internal/status endpoint payload (traffic source) on id; the traffic
+    // string is the only field this contract reads.
+    status.endpoints = [
+      { id: 'busy-1', name: 'busy', traffic: '1.50 KB' },
+      { id: 'idle-1', name: 'idle', traffic: '' },
+    ] as StatusResponse['endpoints'];
+    await refreshTyped(status, [
+      buildEndpoint({ name: 'busy', id: 'busy-1' }),
+      buildEndpoint({ name: 'idle', id: 'idle-1' }),
+    ]);
+    const table = document.querySelector('.glance table') ?? document.querySelector('table');
+    expect(table).not.toBeNull();
+    expect(cellUnderHeader(table!, 'Traffic', 0)).toBe('1.50 KB');
+    expect(cellUnderHeader(table!, 'Traffic', 1)).toBe('—');
   });
 });

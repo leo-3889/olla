@@ -144,8 +144,8 @@ type AccessPolicyConfig struct {
 // the existing HTTP listener at /internal/ui/.
 type DashboardConfig struct {
 	// AccessPolicy gates /internal/ui/* unconditionally whenever Enabled is
-	// true. GateInternalAPI exists for forward compatibility but is inert on
-	// this branch (see GateInternalAPI).
+	// true, and - with GateInternalAPI enabled - the operational API too
+	// (see GateInternalAPI).
 	AccessPolicy AccessPolicyConfig `yaml:"access_policy"`
 
 	// Enabled controls whether /internal/ui/* routes are registered at all.
@@ -153,12 +153,14 @@ type DashboardConfig struct {
 	// governs whether they are ever served.
 	Enabled bool `yaml:"enabled"`
 
-	// GateInternalAPI is reserved for a later change that opts the rest of
-	// /internal/* (and /version) into the same AccessPolicy. It is INERT for
-	// now: setting it true has no effect. Defaults to false because
-	// defaulting it on would silently break existing deployments that scrape
-	// /internal/metrics or poll /internal/health from hosts the policy would
-	// reject. The field ships now so that later change needs no config migration.
+	// GateInternalAPI opts the rest of the operational API - /internal/*
+	// (except the /internal/health probe) and /version - into the same
+	// AccessPolicy that guards /internal/ui/*. Defaults to false: enabling
+	// it would silently break deployments that scrape /internal/metrics or
+	// poll the status endpoints from hosts the policy rejects. The
+	// dashboard served from this process keeps working when enabled: its
+	// requests originate from the operator's browser through the same
+	// address classes the policy admits.
 	GateInternalAPI bool `yaml:"gate_internal_api"`
 
 	// Polling overrides the embedded dashboard's client poll intervals. Zero
@@ -194,17 +196,17 @@ func (c *DashboardConfig) ParsedCIDRs() []*net.IPNet {
 // to. No-op when the dashboard is disabled, so an explicit off switch validates
 // clean without forcing the operator to also populate the allowlists.
 //
-// GateInternalAPI is deliberately inert for now (the wrapping that would
-// extend AccessPolicy to the rest of /internal/* isn't implemented yet), so a
-// startup slog.Warn fires when it is set true. Without the warning an operator
-// who sets the flag sees silent acceptance, assumes the gate is active, and
-// is surprised when /internal/* stays open. The field itself is kept so that
-// later change needs no config migration.
+// GateInternalAPI is enforced by the route wiring (Application.internalAPIGate),
+// so a startup slog.Warn fires when it is set true, naming the effective
+// state: enabling the gate moves /internal/* (health probe exempt) and
+// /version behind the access policy, and scrapes from unlisted hosts will
+// start receiving 403. The default (false) stays silent - the shipped
+// behaviour is ungated by design.
 func (c *DashboardConfig) Validate() error {
 	if c.GateInternalAPI {
-		slog.Warn("dashboard.gate_internal_api is set but inert on this build; /internal/* is NOT gated by the dashboard access policy",
+		slog.Warn("dashboard.gate_internal_api is enabled; the dashboard access policy now gates /internal/* (except /internal/health) and /version",
 			"gate_internal_api", true,
-			"reason", "wrapping is not yet wired; treating the flag as a no-op to preserve existing monitoring scrapes")
+			"reason", "requests from hosts outside dashboard.access_policy are refused with 403; point monitoring scrapes at an allowlisted host")
 	}
 	if !c.Enabled {
 		return nil
@@ -338,7 +340,17 @@ type ProxyConfig struct {
 	// metrics_source influx (influxRuntimeMetricsProvider.QueueDepthFor), so
 	// grading is armed in BOTH metrics modes. It stays inert when the queue
 	// signal is absent, zero, or older than 90s.
-	BusyQueueDepth        int           `yaml:"busy_queue_depth"`
+	BusyQueueDepth int `yaml:"busy_queue_depth"`
+	// RetryOnStatus arms backend-error failover: backend HTTP status codes
+	// (4xx/5xx, e.g. [429, 503]) that rotate the request to the next endpoint
+	// BEFORE the first response byte reaches the client. A rotated-away refusal
+	// is never forwarded; tried endpoints are excluded exactly like the
+	// connection-error path. Suppressions are the same: once any byte is
+	// flushed (streaming started) the response passes through untouched.
+	// Empty (default) = byte-identical to a gateway without the feature:
+	// status codes reach the client as the backend answered. Boot-validated
+	// via ProxyConfig.Validate - entries must be 4xx/5xx.
+	RetryOnStatus         []int         `yaml:"retry_on_status"`
 	ConnectionTimeout     time.Duration `yaml:"connection_timeout"`
 	ConnectionKeepAlive   time.Duration `yaml:"connection_keep_alive"`
 	ResponseTimeout       time.Duration `yaml:"response_timeout"`
@@ -357,6 +369,23 @@ type RetryConfig struct {
 	MaxAttempts   int  `yaml:"max_attempts"`   // 0 = every eligible endpoint once
 	Enabled       bool `yaml:"enabled"`        // false = one attempt, no failover
 	NonIdempotent bool `yaml:"non_idempotent"` // allow POST/PATCH/DELETE to fail over after a connection failure
+}
+
+// Validate rejects a retry_on_status entry that is not a 4xx/5xx code. The
+// failover this key arms exists for BACKEND REFUSALS (429 rate-limit, 503
+// unavailable): a 2xx/3xx entry describes nothing to recover from, and a 0,
+// negative, or 6xx+ entry is a typo that would silently match no response,
+// making the feature look broken in the field. A bad entry is therefore a
+// boot error, not a request-time no-op - same precedent as
+// StickySessions.Validate, where a misspelled key_source used to be skipped
+// silently and read as "sticky sessions do not work".
+func (p ProxyConfig) Validate() error {
+	for _, code := range p.RetryOnStatus {
+		if code < 400 || code > 599 {
+			return fmt.Errorf("retry_on_status: %d is not a 4xx/5xx status code (only backend refusal codes may trigger endpoint failover)", code)
+		}
+	}
+	return nil
 }
 
 // DiscoveryConfig holds service discovery configuration

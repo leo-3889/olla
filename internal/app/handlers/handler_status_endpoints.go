@@ -13,6 +13,7 @@ import (
 	"github.com/thushan/olla/internal/core/ports"
 
 	"github.com/thushan/olla/internal/core/domain"
+	"github.com/thushan/olla/internal/util"
 	"github.com/thushan/olla/pkg/format"
 )
 
@@ -41,6 +42,7 @@ type EndpointSummary struct {
 	Priority     int    `json:"priority"`
 	ModelCount   int    `json:"model_count"`
 	RequestCount int64  `json:"request_count"`
+	Traffic      string `json:"traffic"`
 	// Additive dashboard fields, existing fields above are unchanged.
 	// min/max latency follow the same plain-zero convention as RequestCount
 	// for no-traffic endpoints; avg_latency_ms is a pointer so a no-traffic
@@ -48,6 +50,14 @@ type EndpointSummary struct {
 	MinLatencyMs      int64 `json:"min_latency_ms"`
 	MaxLatencyMs      int64 `json:"max_latency_ms"`
 	ActiveConnections int64 `json:"active_connections"`
+	// TotalTokens is the endpoint's lifetime token production: the SUM of
+	// hourly cost-rollup total_tokens over metrics_source.influx.token_lookback
+	// (730d retention). Pointer + omitempty: nil (key ABSENT) in sampler
+	// mode, while the lifetime query is failing, and for endpoints with no
+	// cost rows - the UI renders a dash, never a fabricated 0. Engine
+	// counters are NOT the source (they reset on restart); pre-rename rows
+	// under ghost endpoint ids are NOT credited to the current id.
+	TotalTokens *int64 `json:"total_tokens,omitempty"`
 }
 
 type EndpointStatusResponse struct {
@@ -171,6 +181,7 @@ func (a *Application) buildEndpointSummaryOptimised(endpoint *domain.Endpoint, s
 
 	if hasStats {
 		summary.RequestCount = stats.TotalRequests
+		summary.Traffic = format.Bytes(util.SafeUint64(stats.TotalBytes))
 		if stats.TotalRequests > 0 {
 			successRate := (float64(stats.SuccessfulRequests) * 100.0) / float64(stats.TotalRequests)
 			summary.SuccessRate = format.Percentage(successRate)
@@ -191,6 +202,12 @@ func (a *Application) buildEndpointSummaryOptimised(endpoint *domain.Endpoint, s
 	summary.Issues = a.getEndpointIssuesSummaryOptimised(endpoint, stats, hasStats)
 	if a.runtimeMetrics != nil {
 		summary.RuntimeMetrics = a.runtimeMetrics.Snapshot(endpoint)
+		// Lifetime tokens by endpoint NAME (the Influx endpoint tag equals
+		// the olla endpoint Name): a configured endpoint with no rows, an
+		// errored lifetime query, or sampler mode all leave the key absent.
+		if total, ok := a.runtimeMetrics.LifetimeTokens(endpoint.Name); ok {
+			summary.TotalTokens = &total
+		}
 	}
 
 	return summary
@@ -372,6 +389,10 @@ func hashEndpointSummary(h hash.Hash, s *EndpointSummary) {
 	hashEtagInt64(h, s.ActiveConnections)
 	hashEndpointRuntimeMetrics(h, s.RuntimeMetrics)
 	hashEtagInt64Ptr(h, s.AvgLatencyMs)
+	// The lifetime sum moves once per cost cycle (5 min), so hashing it
+	// costs at most one extra 200 per endpoint per cycle - and NOT hashing
+	// it would freeze the column on a 304 while the number grew.
+	hashEtagInt64Ptr(h, s.TotalTokens)
 	hashMinuteBucket(h, s.NextCheckAt)
 	hashMinuteBucket(h, s.HealthCheckAt)
 	hashMinuteBucket(h, s.LastModelSyncAt)
