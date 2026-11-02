@@ -35,9 +35,9 @@ type PrioritySelector struct {
 	// equal weights produce an exact rotation and unequal weights a
 	// proportional one that interleaves the light nodes instead of bursting
 	// them (1.0/0.3/0.1 -> healthy, healthy, busy, healthy, warming, ...).
-	// Entries for endpoints that leave the fleet are never read again; the map
-	// is bounded by the number of distinct endpoints the process has routed to,
-	// which is config-sized, so it is not pruned.
+	// Entries for endpoints that leave the fleet are never read again, so a
+	// long-lived process accumulates one dead entry per rename/retirement;
+	// pruneStaleWeightsLocked bounds that drift.
 	currentWeight map[string]float64
 
 	// swrrMu guards the rotation state. Select is the per-request hot path;
@@ -141,16 +141,56 @@ func (p *PrioritySelector) weightedRoundRobin(endpoints []*domain.Endpoint) *dom
 		p.currentWeight = make(map[string]float64)
 	}
 
-	best := endpoints[0]
 	for i, endpoint := range endpoints {
 		p.currentWeight[endpoint.URLString] += weights[i]
-		if p.currentWeight[endpoint.URLString] > p.currentWeight[best.URLString] {
+	}
+
+	// Winner = highest credit; ties break on the LOWEST URLString, not on slice
+	// position. Callers build the candidate slice from a map (the registry), so
+	// slice order is not stable across requests: a positional tie-break made the
+	// first request after a fleet change (all credits equal) a coin flip between
+	// the tied endpoints, which is exactly the non-determinism the rotation was
+	// introduced to remove.
+	best := endpoints[0]
+	for _, endpoint := range endpoints {
+		cand, cur := p.currentWeight[endpoint.URLString], p.currentWeight[best.URLString]
+		if cand > cur || (cand == cur && endpoint.URLString < best.URLString) {
 			best = endpoint
 		}
 	}
 	p.currentWeight[best.URLString] -= total
 
+	// Credit bookkeeping is per endpoint URL. Renames and retirements leave
+	// entries that are never read again: bounded in practice (config-sized), so
+	// the normal path pays nothing for them - see the drift guard in
+	// pruneStaleWeights.
+	p.pruneStaleWeightsLocked(endpoints)
+
 	return best
+}
+
+// pruneStaleWeightsLocked drops credits for endpoints outside the current tier,
+// but only once the map has clearly drifted (more than 4x the tier size plus 8
+// entries). A per-request prune would be churn with a cost: Select sees the
+// MODEL-SCOPED candidate list, so an endpoint that is live on the fleet but
+// absent from this request's tier would lose the credits it earned on other
+// aliases. The threshold trades a few hundred bytes of stale credits for
+// keeping every live endpoint's rotation state intact.
+//
+// Callers hold swrrMu.
+func (p *PrioritySelector) pruneStaleWeightsLocked(endpoints []*domain.Endpoint) {
+	if len(p.currentWeight) <= 4*len(endpoints)+8 {
+		return
+	}
+	live := make(map[string]struct{}, len(endpoints))
+	for _, endpoint := range endpoints {
+		live[endpoint.URLString] = struct{}{}
+	}
+	for key := range p.currentWeight {
+		if _, ok := live[key]; !ok {
+			delete(p.currentWeight, key)
+		}
+	}
 }
 
 // IncrementConnections increments the connection count for an endpoint

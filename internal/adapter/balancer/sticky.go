@@ -145,6 +145,15 @@ func (s *StickySessionWrapper) Select(ctx context.Context, endpoints []*domain.E
 
 	chosen, err := s.inner.Select(ctx, endpoints)
 	if err != nil {
+		// Record before returning: an inner selector failure pins nothing, so
+		// it IS a miss, and these balancer-side failures (selector errors, an
+		// empty routable tier under a full outage) are exactly what the sticky
+		// counters - the F1/F4 acceptance probe - were blind to.
+		s.recordOutcome("miss", source)
+		if outcome != nil {
+			outcome.Result = "miss"
+			outcome.Source = source
+		}
 		return nil, err
 	}
 
@@ -182,18 +191,28 @@ func (s *StickySessionWrapper) Select(ctx context.Context, endpoints []*domain.E
 // combined with Select's pin-overwrite on repin - turned a 46s blip into a
 // fleet-wide KV cold start. Blips are now ridden out by Select (bypass).
 // Pins to a permanently dead node age out through the idle TTL.
-func (s *StickySessionWrapper) PurgeDeadEndpoints(routable []*domain.Endpoint) {
-	alive := make(map[string]struct{}, len(routable))
-	for _, ep := range routable {
+func (s *StickySessionWrapper) PurgeDeadEndpoints(registered []*domain.Endpoint) {
+	alive := make(map[string]struct{}, len(registered))
+	for _, ep := range registered {
 		alive[ep.URLString] = struct{}{}
 	}
 
+	// Collect first, delete after: ttlcache's Range walks the LRU list with
+	// `item = item.Next()` and stdlib container/list.Remove nils the removed
+	// element's next/prev, so deleting INSIDE the callback ends the walk at the
+	// first eviction (Range's own doc: "mutating the cache while ranging is not
+	// supported"). One pin per call is exactly the defect that left every pin of
+	// a retired endpoint alive for the whole idle TTL.
+	var dead []string
 	s.store.Range(func(item *ttlcache.Item[string, string]) bool {
 		if _, ok := alive[item.Value()]; !ok {
-			s.store.Delete(item.Key())
+			dead = append(dead, item.Key())
 		}
 		return true
 	})
+	for _, k := range dead {
+		s.store.Delete(k)
+	}
 }
 
 // ComputeStickyKey derives an affinity key for this request using the configured
@@ -205,19 +224,48 @@ func (s *StickySessionWrapper) PurgeDeadEndpoints(routable []*domain.Endpoint) {
 //
 // Returns ("", "") when no source produces a usable key.
 // Exported so handlers can compute the key before invoking the balancer.
-func ComputeStickyKey(r *http.Request, modelName string, cfg config.StickySessionConfig, body []byte) (key, source string) {
+//
+// bodyTruncated reports that `body` is a scan SNAPSHOT cut short by
+// proxy.sticky_sessions.key_scan_bytes, i.e. the conversation's first turn is
+// not present. In that state the body-scanning sources are worse than useless:
+// first_user_message yields nothing, and prefix_hash falls back to hashing the
+// shared system-prompt prefix - the exact whole-agent flock this source was
+// built to replace. Both are skipped, and the cascade then STOPS: the
+// identity-wide sources (auth_header hashes the shared Authorization value, ip
+// the shared client address) would pin every conversation of one credential to
+// one node, silently and far coarser than prefix_hash. Returning no_key keeps
+// the request routable (bypass: plain balancer selection) and visible in the
+// sticky_source=no_key counter, which is how an operator learns the scan budget
+// is too small.
+func ComputeStickyKey(r *http.Request, modelName string, cfg config.StickySessionConfig, body []byte, bodyTruncated bool) (key, source string) {
+	bodyScanTruncated := false
+
 	for _, src := range cfg.KeySources {
 		var k, s string
 		switch src {
 		case "session_header":
 			k, s = stickyKeyFromSessionHeader(r, modelName)
 		case "prefix_hash":
+			if bodyTruncated {
+				bodyScanTruncated = true
+				continue
+			}
 			k, s = stickyKeyFromPrefixHash(body, modelName, cfg.PrefixHashBytes)
 		case "first_user_message":
+			if bodyTruncated {
+				bodyScanTruncated = true
+				continue
+			}
 			k, s = stickyKeyFromFirstTurn(body, modelName)
 		case "auth_header":
+			if bodyScanTruncated {
+				continue
+			}
 			k, s = stickyKeyFromAuthHeader(r, modelName)
 		case "ip":
+			if bodyScanTruncated {
+				continue
+			}
 			k, s = stickyKeyFromIP(r, modelName)
 		}
 		if k != "" {
@@ -312,6 +360,35 @@ func stickyKeyFromFirstTurn(body []byte, modelName string) (string, string) {
 			return false
 		})
 	}
+	if system == "" {
+		// Anthropic-format bodies carry the system prompt as a TOP-LEVEL field
+		// (a plain string, or an array of {type:"text",text:...} blocks). The
+		// Anthropic->OpenAI translator folds it into messages[0].system, but the
+		// sticky key is computed from the RAW body before translation
+		// (handler_translation), so without this fold the fingerprint omits the
+		// system prompt entirely: conversations that open with the same text
+		// under DIFFERENT system prompts - several agents behind one gateway -
+		// collide onto one pin. Match the translator's flattening
+		// (request.go: joined text blocks).
+		if sysTop := gjson.GetBytes(body, "system"); sysTop.Exists() {
+			if sysTop.IsArray() {
+				var parts []string
+				sysTop.ForEach(func(_, block gjson.Result) bool {
+					if text := block.Get("text").String(); text != "" {
+						parts = append(parts, text)
+					}
+					return true
+				})
+				system = strings.Join(parts, "\n")
+			} else {
+				// String() not Raw: the block form yields unquoted text, and the
+				// two Anthropic system shapes must fingerprint identically (the
+				// JSON quotes of Raw would split one prompt across two pins).
+				system = sysTop.String()
+			}
+		}
+	}
+
 	if first == "" {
 		// Completions-style body (/v1/completions and passthroughs): the prompt
 		// itself is the conversation's opening turn.

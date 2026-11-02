@@ -550,7 +550,10 @@ func (a *Application) translationHandler(trans translator.RequestTranslator) htt
 		// extraction above, so pass it directly to avoid a second read/restore cycle.
 		// The outcome pointer is stored in context; sub-handlers read it before WriteHeader.
 		if a.Config.Proxy.StickySessions.Enabled {
-			ctx, r, _ = a.injectStickyKeyWithBody(ctx, r, a.canonicalModelName(pr.model), bodyBytes)
+			// bodyBytes is the COMPLETE body: oversized requests are 413-rejected
+			// above, so nothing was cut short and the body-scanning key sources
+			// see the whole conversation.
+			ctx, r, _ = a.injectStickyKeyWithBody(ctx, r, a.canonicalModelName(pr.model), bodyBytes, false)
 		}
 
 		// Get compatible endpoints for this request

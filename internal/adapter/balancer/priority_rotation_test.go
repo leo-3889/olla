@@ -2,6 +2,7 @@ package balancer
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -179,4 +180,74 @@ func TestPrioritySelector_ConcurrentRotationIsFair(t *testing.T) {
 		delta = -delta
 	}
 	assert.LessOrEqual(t, delta, 2, "interleaved rotation must stay even")
+}
+
+// The candidate slice is built from a map by the callers, so its order is not
+// stable. A positional tie-break made the first request after a fleet change -
+// every credit equal - a coin flip between the tied endpoints.
+func TestPrioritySelector_EqualCreditTieBreakIsOrderIndependent(t *testing.T) {
+	t.Parallel()
+
+	low := createPriorityEndpoint("low", 11434, domain.StatusHealthy, 100)
+	high := createPriorityEndpoint("high", 11900, domain.StatusHealthy, 100)
+	require.Less(t, low.URLString, high.URLString, "fixture: URL order defines the tie-break")
+	ctx := context.Background()
+
+	forward := NewPrioritySelector(NewTestStatsCollector())
+	reverse := NewPrioritySelector(NewTestStatsCollector())
+
+	firstForward, err := forward.Select(ctx, []*domain.Endpoint{low, high})
+	require.NoError(t, err)
+	firstReverse, err := reverse.Select(ctx, []*domain.Endpoint{high, low})
+	require.NoError(t, err)
+
+	assert.Equal(t, firstForward.URLString, firstReverse.URLString,
+		"equal credits must pick the same endpoint regardless of candidate order")
+	assert.Equal(t, low.URLString, firstForward.URLString, "tie-break is the lowest URLString")
+
+	// Rotation stays exact from both orders.
+	seqForward := make([]string, 4)
+	seqReverse := make([]string, 4)
+	for i := range seqForward {
+		ep, err := forward.Select(ctx, []*domain.Endpoint{low, high})
+		require.NoError(t, err)
+		seqForward[i] = ep.Name
+		ep, err = reverse.Select(ctx, []*domain.Endpoint{high, low})
+		require.NoError(t, err)
+		seqReverse[i] = ep.Name
+	}
+	assert.Equal(t, seqForward, seqReverse)
+}
+
+// Renames and retirements leave credit entries that are never read again; the
+// drift guard bounds them without touching live endpoints' rotation state.
+func TestPrioritySelector_CreditMapDriftIsBounded(t *testing.T) {
+	t.Parallel()
+
+	selector := NewPrioritySelector(NewTestStatsCollector())
+	ctx := context.Background()
+	live := []*domain.Endpoint{
+		createPriorityEndpoint("a", 11434, domain.StatusHealthy, 100),
+		createPriorityEndpoint("b", 11435, domain.StatusHealthy, 100),
+	}
+
+	for i := range 40 {
+		selector.currentWeight[fmt.Sprintf("http://retired-%d:11434", i)] = 1.0
+	}
+	_, err := selector.Select(ctx, live)
+	require.NoError(t, err)
+
+	selector.swrrMu.Lock()
+	size := len(selector.currentWeight)
+	selector.swrrMu.Unlock()
+	assert.LessOrEqual(t, size, 4*len(live)+8, "stale credits must be pruned once the map drifts")
+
+	// Live endpoints keep rotating exactly (their credits survived the prune).
+	_, err = selector.Select(ctx, live)
+	require.NoError(t, err)
+	selector.swrrMu.Lock()
+	_, aOK := selector.currentWeight[live[0].URLString]
+	_, bOK := selector.currentWeight[live[1].URLString]
+	selector.swrrMu.Unlock()
+	assert.True(t, aOK && bOK, "live endpoints keep their rotation state")
 }

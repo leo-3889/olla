@@ -17,13 +17,24 @@ import (
 // budget and the ETag semantics are tuned to it.
 const influxMetricsInterval = 10 * time.Second
 
-// influxLastRange bounds the last-value probe; ollametrics writes on a
-// 10s scrape, so anything older than this is a gap, not a slow cycle.
-const influxLastRange = "-5m"
+// influxLastRange bounds the last-value probe. It MUST stay >= the load
+// reader's freshness gate (loadReaderMaxSampleAge = 90s) with margin: a last()
+// window narrower than the gate can drop a whole endpoint state (no rows in
+// range) while the 1m-window queries still have data, so an exporter gap
+// deleted the runtime keys between 5 and 11 minutes instead of serving them
+// with the stale flag. The envelope's own staleness gate (stale_after, 60s in
+// production) decides what is "fresh"; this bound only decides what still
+// EXISTS, and it now matches influxWindowRange.
+const influxLastRange = "-11m"
 
 // influxWindowRange bounds the avg/max window queries (1m windows over the
 // same reporting window the sampler uses, plus headroom for the window).
 const influxWindowRange = "-11m"
+
+// influxFieldQueueDepth is the llm_runtime field carrying the engine queue
+// depth - the signal load-aware Busy grading steers on, so its freshness is
+// tracked per field, not per endpoint (see QueueDepthFor).
+const influxFieldQueueDepth = "queue_depth"
 
 // fluxQuerier is the seam the provider queries through (httptest stubs in
 // unit tests replace the HTTP client).
@@ -35,6 +46,12 @@ type influxEndpointState struct {
 	newest         time.Time
 	availableSince time.Time
 	metrics        []RuntimeMetric
+	// queueAt is lastAt["queue_depth"] captured at assembly: the queue
+	// gauge's OWN sample time. newest is the freshest point of ANY field, and
+	// on a live engine the throughput fields update every scrape while
+	// queue_depth moves only when the queue moves - gating on newest judged a
+	// days-old queue reading as fresh.
+	queueAt time.Time
 }
 
 // influxMetricsProvider reads engine runtime metrics from the ollametrics
@@ -208,7 +225,7 @@ func (p *influxMetricsProvider) refresh(ctx context.Context) {
 			p.firstSee[name] = since
 		}
 		p.mu.Unlock()
-		next[name] = &influxEndpointState{metrics: metrics, newest: s.newest, availableSince: since}
+		next[name] = &influxEndpointState{metrics: metrics, newest: s.newest, availableSince: since, queueAt: s.at(influxFieldQueueDepth)}
 	}
 	p.mu.Lock()
 	for name, state := range next {
@@ -303,6 +320,10 @@ func newInfluxSeries() *influxSeries {
 // absorb folds one result row into the series. The bucket names the query
 // that produced it because last() rows and aggregateWindow rows are
 // structurally identical column-wise.
+// at returns the freshest sample time recorded for one field (zero when the
+// field never arrived).
+func (s *influxSeries) at(field string) time.Time { return s.lastAt[field] }
+
 func (s *influxSeries) absorb(row map[string]any, bucket string) {
 	field, _ := row["_field"].(string)
 	value, ok := influxFloat(row["_value"])
@@ -374,7 +395,7 @@ func (s *influxSeries) envelope() []RuntimeMetric {
 	if v, ok := s.last["kv_cache_usage_ratio"]; ok {
 		out = append(out, RuntimeMetric{Key: runtimeMetricKeyKvCacheUsagePercent, Unit: runtimeMetricUnitPercent, Current: floatPtr(100 * v)})
 	}
-	if v, ok := s.last["queue_depth"]; ok {
+	if v, ok := s.last[influxFieldQueueDepth]; ok {
 		out = append(out, RuntimeMetric{Key: runtimeMetricKeyQueueDepth, Unit: runtimeMetricUnitCount, Current: floatPtr(v)})
 	}
 	if v, ok := s.last["requests_running"]; ok {
@@ -399,9 +420,10 @@ const loadReaderMaxSampleAge = 90 * time.Second
 // QueueDepthFor implements health.LoadReader for load-aware Busy grading
 // under metrics_source influx mode: the freshest sampled queue_depth gauge
 // for the endpoint. States are keyed by endpoint Name (the Influx endpoint
-// tag), deleted when an endpoint leaves the tracked set, and "not known"
-// for absent, zero-time, >90s-old, or queue-less samples - the probe
-// verdict stays ungraded rather than steering on old data.
+// tag), deleted when an endpoint leaves the tracked set, and "not known" for
+// absent, zero-time, queue-less, or >90s-old QUEUE samples (the queue field's
+// own timestamp, not the endpoint's newest point) - the probe verdict stays
+// ungraded rather than steering on old data.
 func (p *influxMetricsProvider) QueueDepthFor(endpoint *domain.Endpoint) (float64, bool) {
 	if p == nil || endpoint == nil {
 		return 0, false
@@ -409,10 +431,14 @@ func (p *influxMetricsProvider) QueueDepthFor(endpoint *domain.Endpoint) (float6
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	st := p.states[endpoint.Name]
-	if st == nil || st.newest.IsZero() {
+	if st == nil || st.queueAt.IsZero() {
 		return 0, false
 	}
-	if p.now().Sub(st.newest) > loadReaderMaxSampleAge {
+	// The QUEUE's own sample time, not the endpoint's newest point: a live
+	// engine refreshes throughput every scrape, so gating on `newest` let a
+	// queue reading from the last time the queue moved steer Busy forever -
+	// the reader's whole purpose is a fresh sample.
+	if p.now().Sub(st.queueAt) > loadReaderMaxSampleAge {
 		return 0, false
 	}
 	for _, m := range st.metrics {

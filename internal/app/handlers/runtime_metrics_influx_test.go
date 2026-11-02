@@ -201,21 +201,42 @@ func TestInfluxProviderQueueDepthFor(t *testing.T) {
 	ep := &domain.Endpoint{Name: "ep1", URLString: "http://ep1:8000", Type: "openai-compatible", RuntimeMetricsKind: "radiance", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true}
 	provider := newProviderForTest(&stubFluxQuerier{}, []*domain.Endpoint{ep}, func() time.Time { return now })
 
-	// Fresh sample with a queue gauge: known.
+	// Fresh queue sample: known.
 	provider.states["ep1"] = &influxEndpointState{
 		metrics: []RuntimeMetric{{Key: runtimeMetricKeyQueueDepth, Current: floatPtr(4)}},
 		newest:  now.Add(-30 * time.Second),
+		queueAt: now.Add(-30 * time.Second),
 	}
 	q, ok := provider.QueueDepthFor(ep)
 	assert.True(t, ok)
 	assert.InDelta(t, 4.0, q, 1e-9)
 
-	// Older than the load-reader bound: not known (no steering on old data).
-	provider.states["ep1"].newest = now.Add(-91 * time.Second)
+	// Queue sample older than the load-reader bound: not known (no steering
+	// on old data) - even though the ENDPOINT's newest point is fresh, which
+	// is exactly the case `newest`-gating let through: throughput refreshes
+	// every scrape while the queue reading sits at its last change.
+	provider.states["ep1"] = &influxEndpointState{
+		metrics: []RuntimeMetric{{Key: runtimeMetricKeyQueueDepth, Current: floatPtr(4)}},
+		newest:  now,
+		queueAt: now.Add(-91 * time.Second),
+	}
 	_, ok = provider.QueueDepthFor(ep)
-	assert.False(t, ok, "sample older than 90s must not steer routing")
+	assert.False(t, ok, "a queue reading older than 90s must not steer routing")
 
-	// Tracked but engine exports no queue gauge (halogen-style gap): not known.
+	// The mirror case: the queue gauge is fresh while the endpoint's newest
+	// aggregate is older (1m-window rows land behind a last() point) - the
+	// queue is current, so it steers.
+	provider.states["ep1"] = &influxEndpointState{
+		metrics: []RuntimeMetric{{Key: runtimeMetricKeyQueueDepth, Current: floatPtr(2)}},
+		newest:  now.Add(-120 * time.Second),
+		queueAt: now.Add(-10 * time.Second),
+	}
+	q, ok = provider.QueueDepthFor(ep)
+	assert.True(t, ok, "a fresh queue reading steers even when other fields are older")
+	assert.InDelta(t, 2.0, q, 1e-9)
+
+	// Queue field never arrived: not known (pre-fix the zero-time newest gate
+	// was the only defence; queueAt zero is the direct statement).
 	provider.states["ep1"] = &influxEndpointState{
 		metrics: []RuntimeMetric{{Key: runtimeMetricKeyKvCacheUsagePercent, Current: floatPtr(33)}},
 		newest:  now,
