@@ -59,6 +59,7 @@ linters:
         - G304  # file inclusion via variable — expected for config/profile loaders
         - G703  # path traversal via taint — expected for config/profile loaders
         - G704  # SSRF via taint — expected for a proxy that forwards requests by design
+        - G101  # "token" in a const NAME — the tokenDayLayout date layout is not a credential
     govet:
       enable:
         - shadow

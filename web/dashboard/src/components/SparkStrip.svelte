@@ -1,17 +1,18 @@
 <script module lang="ts">
   // Pure helper exported so the pointer-to-index mapping is unit-testable
   // without a DOM. Maps a 0..1 fraction (pointer x relative to chart width)
-  // to the index of the nearest sample in an n-element series.
+  // to the index of the bar slot containing the pointer in an n-slot bar chart.
   export function nearestSampleIndex(fraction: number, n: number): number {
     if (n <= 0) return -1;
     if (n === 1) return 0;
     const clamped = Math.max(0, Math.min(1, fraction));
-    return Math.round(clamped * (n - 1));
+    return Math.min(n - 1, Math.floor(clamped * n));
   }
 </script>
 
 <script lang="ts">
-  // Hand-rolled inline-SVG sparkline with a req/s y-axis scale, a pointer
+  // Hand-rolled inline-SVG bar strip (paired req/s + connections bars, one
+  // slot per sample - bars, never lines) with a req/s y-axis scale, a pointer
   // hover reading, and outage bands (a muted-red wash per run of failed-poll
   // ticks, with a thin red edge at the drop and recovery points). No chart
   // library (hard rule).
@@ -23,6 +24,10 @@
 
   import { history, type Sample } from '../lib/stores/history.svelte';
   import { fmtInt, fmtDuration } from '../lib/format';
+
+  // "1 conns" is not English: singularise the connection count where it is
+  // spoken (readout + tooltip); the aria sentence uses its own wording.
+  const connWord = (n: number): string => `${fmtInt(n)} conn${n === 1 ? '' : 's'}`;
 
   interface Props {
     // Injectable for tests; production reads the singleton store.
@@ -45,72 +50,35 @@
   // Ceiling label for the req/s axis: one decimal under 10, integer above.
   const maxReqLabel = $derived(maxReq < 10 ? maxReq.toFixed(1) : Math.round(maxReq).toString());
 
-  // Area wash: one closed sub-path per run of consecutive non-error samples.
-  // Error samples produce a visual gap (the run is closed at the boundary)
-  // rather than bridging the outage with fabricated data.
-  function buildArea(list: Sample[], maxR: number): string {
-    const n = list.length;
-    if (n < 2) return '';
-    const s = W / (n - 1);
-    let d = '';
-    let runStartX = 0;
-    let lastX = 0;
-    let inRun = false;
-    for (let i = 0; i < n; i++) {
-      const sample = list[i];
-      if (sample.error) {
-        if (inRun) {
-          d += ` L ${lastX} ${H} L ${runStartX} ${H} Z`;
-          inRun = false;
-        }
-        continue;
-      }
-      const x = i * s;
-      const y = H - (sample.reqPerSec / maxR) * H;
-      if (!inRun) {
-        d += ` M ${x} ${y}`;
-        runStartX = x;
-        inRun = true;
-      } else {
-        d += ` L ${x} ${y}`;
-      }
-      lastX = x;
-    }
-    if (inRun) {
-      d += ` L ${lastX} ${H} L ${runStartX} ${H} Z`;
-    }
-    return d.trim();
+  // One paired slot per sample: req/s bar on the left, connections bar on the
+  // right, each scaled to its own series max (bars, never a line - the user
+  // standard; the same form the Grafana boards use). Error samples render NO
+  // bar: the slot gap plus the outage band is the honest signal. A zero value
+  // draws a minimal stub so "0 req/s" stays visible (bar absence reads gap).
+  interface BarRect {
+    x: number;
+    w: number;
+    y: number;
+    h: number;
   }
-
-  // Stroke path (edge line or connections): open sub-paths per run of
-  // non-error samples. A lone M from a single-point run draws nothing.
-  function buildLine(list: Sample[], pick: (s: Sample) => number, max: number): string {
-    const n = list.length;
-    if (n < 2) return '';
-    const s = W / (n - 1);
-    let d = '';
-    let inRun = false;
+  const bars = $derived.by<{ req: BarRect[]; conn: BarRect[] }>(() => {
+    const req: BarRect[] = [];
+    const conn: BarRect[] = [];
+    const n = view.length;
+    if (n === 0) return { req, conn };
+    const slot = W / n;
+    const pad = slot * 0.08;
+    const bw = slot / 2 - 2 * pad;
     for (let i = 0; i < n; i++) {
-      const sample = list[i];
-      if (sample.error) {
-        inRun = false;
-        continue;
-      }
-      const x = i * s;
-      const y = H - (pick(sample) / max) * H;
-      if (!inRun) {
-        d += ` M ${x} ${y}`;
-        inRun = true;
-      } else {
-        d += ` L ${x} ${y}`;
-      }
+      const s = view[i];
+      if (s.error) continue;
+      const rh = Math.max((s.reqPerSec / maxReq) * H, 0.6);
+      const ch = Math.max((s.activeConnections / maxConn) * H, 0.6);
+      req.push({ x: i * slot + pad, w: bw, y: H - rh, h: rh });
+      conn.push({ x: i * slot + slot / 2 + pad, w: bw, y: H - ch, h: ch });
     }
-    return d.trim();
-  }
-
-  const reqAreaD = $derived(buildArea(view, maxReq));
-  const reqEdgeD = $derived(buildLine(view, (s) => s.reqPerSec, maxReq));
-  const connLineD = $derived(buildLine(view, (s) => s.activeConnections, maxConn));
+    return { req, conn };
+  });
   const errorIndices = $derived(
     view.length >= 2
       ? view.map((s, i) => (s.error ? i : -1)).filter((i) => i >= 0)
@@ -191,7 +159,7 @@
     latest
       ? latest.error
         ? `connection lost${outageSummary}`
-        : `${latest.reqPerSec.toFixed(1)} requests per second, ${fmtInt(latest.activeConnections)} active connections${outageSummary}`
+        : `${latest.reqPerSec.toFixed(1)} requests per second, ${fmtInt(latest.activeConnections)} active connection${latest.activeConnections === 1 ? '' : 's'}${outageSummary}`
       : 'gathering telemetry',
   );
 
@@ -201,7 +169,7 @@
 
   const hoverSample = $derived(hoverIndex !== null ? view[hoverIndex] ?? null : null);
   const guidePct = $derived(
-    hoverIndex !== null && view.length >= 2 ? (hoverIndex / (view.length - 1)) * 100 : 0,
+    hoverIndex !== null && view.length >= 2 ? ((hoverIndex + 0.5) / view.length) * 100 : 0,
   );
   const tooltipPct = $derived(Math.max(15, Math.min(85, guidePct)));
 
@@ -232,9 +200,12 @@
         {#each outages as o}
           <rect class="spark-outage" x={o.x} y="0" width={o.width} height={H} />
         {/each}
-        <path class="spark-area" d={reqAreaD} />
-        <path class="spark-edge" d={reqEdgeD} />
-        <path class="spark-line" d={connLineD} />
+        {#each bars.req as b}
+          <rect class="spark-bar spark-bar-req" x={b.x} y={b.y} width={b.w} height={b.h} />
+        {/each}
+        {#each bars.conn as b}
+          <rect class="spark-bar spark-bar-conn" x={b.x} y={b.y} width={b.w} height={b.h} />
+        {/each}
         {#each outages as o}
           <line class="spark-outage-edge" x1={o.downX} y1="0" x2={o.downX} y2={H} />
           {#if o.recovered}
@@ -253,7 +224,7 @@
         {#if hoverSample.error}
           connection lost · {fmtDuration(Date.now() - hoverSample.t)} ago
         {:else}
-          {hoverSample.reqPerSec.toFixed(1)} req/s · {fmtInt(hoverSample.activeConnections)} conns · {fmtDuration(Date.now() - hoverSample.t)} ago
+          {hoverSample.reqPerSec.toFixed(1)} req/s · {connWord(hoverSample.activeConnections)} · {fmtDuration(Date.now() - hoverSample.t)} ago
         {/if}
       </div>
     {/if}
@@ -275,7 +246,7 @@
       {#if latest.error}
         connection lost
       {:else}
-        {latest.reqPerSec.toFixed(1)} req/s · {fmtInt(latest.activeConnections)} conns
+        {latest.reqPerSec.toFixed(1)} req/s · {connWord(latest.activeConnections)}
       {/if}
     {:else}
       &mdash;
@@ -303,22 +274,12 @@
     display: block;
     overflow: visible;
   }
-  .spark-area {
+  .spark-bar-req {
     fill: var(--accent);
-    fill-opacity: 0.2;
-    stroke: none;
   }
-  .spark-edge {
-    fill: none;
-    stroke: var(--accent);
-    stroke-width: 1.5;
-    vector-effect: non-scaling-stroke;
-  }
-  .spark-line {
-    fill: none;
-    stroke: var(--blue);
-    stroke-width: 1.5;
-    vector-effect: non-scaling-stroke;
+  .spark-bar-conn {
+    fill: var(--blue);
+    fill-opacity: 0.55;
   }
   .spark-outage {
     fill: var(--red);

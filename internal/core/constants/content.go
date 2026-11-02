@@ -88,8 +88,8 @@ const (
 	// Custom/API Headers
 	HeaderXRequestID         = "X-Request-ID"
 	HeaderXModel             = "X-Model"
-	HeaderXAPIKey            = "X-Api-Key"    //nolint:gosec // We're just using the header name, not a credential
-	HeaderXAuthToken         = "X-Auth-Token" //nolint:gosec // We're just using the header name, not a credential
+	HeaderXAPIKey            = "X-Api-Key"
+	HeaderXAuthToken         = "X-Auth-Token"
 	HeaderXServedBy          = "X-Served-By"
 	HeaderProxyAuthorization = "Proxy-Authorization"
 

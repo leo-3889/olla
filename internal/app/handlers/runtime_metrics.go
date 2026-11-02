@@ -85,17 +85,33 @@ type runtimeMetricsState struct {
 	RequestsRunning *float64
 	generation      throughputAggregate
 	prefill         throughputAggregate
-	cache           ratioAggregate
-	specAccept      ratioAggregate
-	failures        int
-	available       bool
-	stale           bool
-	hasLast         bool
+	// running window-aggregates the requests_running GAUGE through the same
+	// appendWindowed/trimWindowed machinery as the rate signals, so the
+	// Running headline (window MAX) means the same thing on both sources.
+	running throughputAggregate
+	// paired is the {at, running, queue} ring feeding the Waiting headline:
+	// the queue gauge value AT the timestamp of the window max of running
+	// (engines write both fields per scrape at identical timestamps).
+	paired     []pairedGaugeSample
+	cache      ratioAggregate
+	specAccept ratioAggregate
+	failures   int
+	available  bool
+	stale      bool
+	hasLast    bool
 }
 
 type runtimeSample struct {
 	at    time.Time
 	value float64
+}
+
+// pairedGaugeSample is one scrape's saturation pair: the running and queue
+// gauge readings at one timestamp (either may be nil: an engine publishes
+// what it publishes). A nil pair is skipped by the argmax, never zeroed.
+type pairedGaugeSample struct {
+	at             time.Time
+	running, queue *float64
 }
 
 type throughputAggregate struct {
@@ -461,6 +477,22 @@ func (s *endpointRuntimeMetricsSampler) record(key string, at time.Time, next ru
 	recordGaugeRatio(&state.specAccept, at, next.SpecAcceptPercent)
 	state.last, state.hasLast = next, true
 	state.KVUsage, state.QueueDepth, state.RequestsRunning = next.KVUsage, next.QueueDepth, next.RequestsRunning
+	// The running gauge enters the window aggregate (the Running headline is
+	// the window MAX); a scrape that stops publishing it clears the current
+	// and decays the window, exactly like the rate gauges.
+	if next.RequestsRunning != nil {
+		recordGaugeThroughput(&state.running, at, next.RequestsRunning)
+	} else {
+		clearThroughputCurrent(&state.running, at)
+	}
+	state.paired = append(state.paired, pairedGaugeSample{at: at, running: copyFloat(next.RequestsRunning), queue: copyFloat(next.QueueDepth)})
+	if cutoff := at.Add(-runtimeMetricsWindow); len(state.paired) > 0 && state.paired[0].at.Before(cutoff) {
+		i := 0
+		for i < len(state.paired) && state.paired[i].at.Before(cutoff) {
+			i++
+		}
+		state.paired = state.paired[i:]
+	}
 }
 
 // recordGaugeThroughput folds a backend-computed rate gauge into the same
@@ -510,13 +542,34 @@ func (s *endpointRuntimeMetricsSampler) QueueDepthFor(endpoint *domain.Endpoint)
 	return *st.QueueDepth, true
 }
 
-// LifetimeTokens always reports "not known": the sampler's only token
-// source is the engine's own counters, which RESET on every engine restart
-// (observed: 1.7M on a box whose lifetime is 2.19B). "Ever" needs the
-// cost-rollup authority, which only the influx provider reads.
-func (s *endpointRuntimeMetricsSampler) LifetimeTokens(string) (int64, bool) {
+// The three endpoints-table lifetime/reuse reads always report "not known":
+// the sampler's only token source is the engine's own RAW counters, which
+// RESET on every engine restart (observed: 1.7M on a box whose lifetime is
+// 2.19B). "Ever" needs a per-window integral of those counters - which only
+// the influx provider computes (the day-part cache over llm_runtime); a live
+// sample cannot carry it. The cost rollups are not the authority either (a
+// lossy downstream derivation), and a KV-reuse reading needs either a gauge
+// history the sampler does not keep or the same integral for its numerator
+// and denominator. The payload keys stay absent, so the UI dashes all three.
+func (s *endpointRuntimeMetricsSampler) LifetimeGeneration(string) (int64, bool) {
 	return 0, false
 }
+
+func (s *endpointRuntimeMetricsSampler) LifetimePrefill(string) (int64, bool) {
+	return 0, false
+}
+
+func (s *endpointRuntimeMetricsSampler) KVCacheReusePercent(string) (float64, bool) {
+	return 0, false
+}
+
+func (s *endpointRuntimeMetricsSampler) KVCacheReuseBasis(string) string {
+	return ""
+}
+
+// LifetimeTokensPartial is truthful false for the sampler: it serves no
+// token sums at all, so there is no lower bound to disclose.
+func (s *endpointRuntimeMetricsSampler) LifetimeTokensPartial() bool { return false }
 
 func (s *endpointRuntimeMetricsSampler) Snapshot(endpoint *domain.Endpoint) *EndpointRuntimeMetrics {
 	if s == nil || endpoint == nil || !endpoint.RuntimeMetricsEnabled || runtimeMetricsKind(endpoint) == "" || !endpoint.Status.IsRoutable() {
@@ -785,6 +838,9 @@ func hashEndpointRuntimeMetrics(h hash.Hash, m *EndpointRuntimeMetrics) {
 		hashEtagString(h, metric.Scope)
 		hashEtagString(h, metric.AttachTo)
 		hashEtagString(h, metric.Note)
+		hashEtagString(h, metric.PairedOf)
+		hashEtagString(h, metric.PairedAt)
+		hashRuntimeFloat(h, metric.PairedValue)
 	}
 }
 
@@ -834,9 +890,11 @@ func writeEndpointRuntimePrometheusMetrics(b *strings.Builder, endpoints []*doma
 }
 
 // QueueDepthFor bridges health.LoadReader to the runtime-metrics provider for
-// app wiring. The influx provider carries no sampler state, so the type
-// assertion fails and grading stays inert under metrics_source: influx (the
-// engine queue lives in Influx on that path, not in the sampler).
+// app wiring. Both providers implement it: the sampler answers from live
+// scrape state, the influx provider from the queue_depth series it already
+// fetches (runtime_metrics_influx.go QueueDepthFor, 90s freshness). Busy
+// grading is LIVE under metrics_source: influx - armed at app Start() and
+// proven by the boot line "Load-aware Busy grading armed".
 func (a *Application) QueueDepthFor(endpoint *domain.Endpoint) (float64, bool) {
 	p, ok := a.runtimeMetrics.(interface {
 		QueueDepthFor(endpoint *domain.Endpoint) (float64, bool)

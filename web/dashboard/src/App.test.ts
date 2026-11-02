@@ -60,7 +60,8 @@ let CONFIG_BODY: Record<string, unknown> = {
     { key: 'prefill_tps', label: 'Prefill', unit: 'tok_s', window: true },
     { key: 'cache_hit_percent', label: 'Prompt-cache hit rate', unit: 'percent', window: true },
     { key: 'kv_cache_usage_percent', label: 'KV-cache utilisation', unit: 'percent', window: false },
-    { key: 'queue_depth', label: 'Queue depth', unit: 'count', window: false },
+    { key: 'requests_running', label: 'Running', unit: 'count', window: false },
+    { key: 'queue_depth', label: 'Waiting', unit: 'count', window: false },
   ],
 };
 let OBSERVE_BODY: Record<string, unknown> = {

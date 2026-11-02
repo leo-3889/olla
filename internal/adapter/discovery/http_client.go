@@ -32,19 +32,19 @@ const (
 
 // HTTPModelDiscoveryClient implements ModelDiscoveryClient using HTTP requests
 type HTTPModelDiscoveryClient struct {
+	logger         logger.StyledLogger
 	httpClient     *http.Client
 	profileFactory *profile.Factory
 	// modelCaps are the operator per-model capability declarations
 	// (config model_capabilities), installed once at start via
 	// SetModelCapabilities and read-only during discovery cycles.
 	modelCaps map[string][]string
+	metrics   DiscoveryMetrics
+	mu        sync.RWMutex
 	// capabilityProbe enables the W1 health-probe augmentation; installed
 	// explicitly by the discovery service so bare clients (tests, embedders)
 	// see zero extra requests.
 	capabilityProbe bool
-	logger          logger.StyledLogger
-	metrics         DiscoveryMetrics
-	mu              sync.RWMutex
 }
 
 // NewHTTPModelDiscoveryClient uses httpClient verbatim. Discovery sends the

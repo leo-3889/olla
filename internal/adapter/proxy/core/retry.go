@@ -222,9 +222,9 @@ const statusGateMaxBuffer = 64 << 10
 type statusGateWriter struct {
 	next    http.ResponseWriter
 	set     map[int]struct{}
-	pending bool
-	code    int
 	buf     bytes.Buffer
+	code    int
+	pending bool
 }
 
 func newStatusGate(next http.ResponseWriter, set map[int]struct{}) *statusGateWriter {

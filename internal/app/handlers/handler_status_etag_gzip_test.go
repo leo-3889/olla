@@ -66,6 +66,12 @@ func TestEndpointsStatusETag_GzipRequestReturnsBare304(t *testing.T) {
 	t.Parallel()
 
 	app := seedWireShapeApp(t)
+	// Warm the requests-window ring (see handler_status_etag_test): the
+	// compared pair must both see the windowed payload shape.
+	{
+		warm := httptest.NewRequest(http.MethodGet, "/internal/status/endpoints", nil)
+		app.endpointsStatusHandler(httptest.NewRecorder(), warm)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/internal/status/endpoints", middleware.GzipFunc(app.endpointsStatusHandler))
 

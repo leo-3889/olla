@@ -6,6 +6,7 @@
 
 import type { PollStatus } from '../types';
 import { pollScheduler, STALE_MULTIPLIER, BACKGROUND_BACKOFF } from '../poll-scheduler';
+import { setServerSkew } from '../clock.svelte';
 
 // Hard ceiling on a single tick. The scheduler only re-arms after tick()
 // resolves, so a fetch that hangs forever (server alive but wedged) would
@@ -158,7 +159,14 @@ export function createPollStore<T>(opts: PollStoreOptions<T>): PollStore<T> {
   // Shared by the 200 and 304 branches. A null body (304 path) leaves the
   // cached data untouched but still advances the success clock.
   function onSuccess(body: T | null): void {
-    if (body !== null) data = body;
+    if (body !== null) {
+      data = body;
+      // Clock alignment: every status payload carries a server top-level
+      // `timestamp`; measure the browser offset so "Xs ago" / "in Xs" /
+      // uptime are server-truth. 304 (null body) keeps the last skew.
+      const ts = (body as { timestamp?: unknown }).timestamp;
+      if (typeof ts === 'string') setServerSkew(ts);
+    }
     error = null;
     status = 'ok';
     lastUpdated = new Date();

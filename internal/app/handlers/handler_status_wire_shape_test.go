@@ -146,6 +146,11 @@ func TestWireShape_StatusResponse(t *testing.T) {
 
 func TestWireShape_EndpointsStatusResponse(t *testing.T) {
 	app := seedWireShapeApp(t)
+	// Warm the requests-window ring: the column is the DELTA between two
+	// status cycles (the ~10s dashboard poll is the sampling cycle), so the
+	// first call seeds {at, totalRequests} and the captured call below
+	// carries the window.
+	doStatus(t, app, "/internal/status/endpoints")
 	shape := jsonShape(t, doStatus(t, app, "/internal/status/endpoints"))
 
 	assertKeysTyped(t, shape, map[string]string{
@@ -175,17 +180,19 @@ func TestWireShape_EndpointsStatusResponse(t *testing.T) {
 	}
 	require.NotNil(t, withTraffic, "no endpoint found")
 	assertKeysTyped(t, withTraffic, map[string]string{
-		"name":            "string",
-		"type":            "string",
-		"status":          "string",
-		"priority":        "number",
-		"model_count":     "number",
-		"request_count":   "number",
-		"success_rate":    "string",
-		"last_model_sync": "string",
-		"health_check":    "string",
-		"response_time":   "string",
-		"issues":          "string",
+		"name":               "string",
+		"type":               "string",
+		"status":             "string",
+		"priority":           "number",
+		"model_count":        "number",
+		"request_count":      "number",
+		"requests_window":    "number",
+		"requests_window_ms": "number",
+		"success_rate":       "string",
+		"last_model_sync":    "string",
+		"health_check":       "string",
+		"response_time":      "string",
+		"issues":             "string",
 	})
 }
 

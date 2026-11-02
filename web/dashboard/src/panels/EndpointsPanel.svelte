@@ -15,7 +15,7 @@
   import EndpointTrend from '../components/EndpointTrend.svelte';
   import { endpointHistory, envCurrent } from '../lib/stores/endpoint-history.svelte';
   import { getNow as liveNow } from '../lib/clock.svelte';
-  import type { EndpointRuntimeMetrics, EndpointSummary } from '../lib/types';
+  import type { EndpointRuntimeMetrics, EndpointSummary, UIConfigMetricColumn } from '../lib/types';
 
   // View-model row: the contract row plus the numeric variants the table sorts
   // and the bars scale on. success_rate arrives pre-formatted ("98.5%") so a
@@ -85,6 +85,10 @@
   // whole even when the manifest fetch failed. Row fields are flattened to
   // `${key}_current` so sorting keeps working on plain numbers.
   const runtimeCols = $derived(bootstrap.config.runtime_metric_columns?.length ? bootstrap.config.runtime_metric_columns : DEFAULT_UI_CONFIG.runtime_metric_columns);
+  // Static (non-dialect) columns come from the manifest the same way; the
+  // built-in defaults keep the token/reuse columns present when the
+  // manifest fetch failed (same contract as runtimeCols above).
+  const staticCols = $derived(bootstrap.config.static_metric_columns?.length ? bootstrap.config.static_metric_columns : DEFAULT_UI_CONFIG.static_metric_columns ?? []);
 
   const columns: Column[] = $derived([
     { key: 'name', label: 'Endpoint', sortable: true, sticky: true },
@@ -105,7 +109,7 @@
       sortable: true,
       num: true,
       align: 'right' as const,
-      title: 'Backend-reported metric envelope: current' + (c.window ? ', then average and maximum over the reporting window' : ''),
+      title: c.help ?? 'Backend-reported metric envelope: current' + (c.window ? ', then average and maximum over the reporting window' : ''),
     })),
     { key: 'model_count', label: 'Models', sortable: true, num: true, align: 'right' },
     { key: 'request_count', label: 'Requests', sortable: true, num: true, align: 'right' },
@@ -117,19 +121,18 @@
       align: 'right',
       title: 'Proxy bytes through this endpoint (in + out)',
     },
-    {
-      // Static (non-dialect) column: cost rollups, not engine-reported -
-      // mirrors config.json static_metric_columns. Lifetime = sum of the
-      // hourly cost-rollup token totals over metrics_source.influx.token_lookback
-      // (730d retention); NOT the engine counter (resets on restart).
-      key: 'total_tokens',
-      label: 'Tokens (lifetime)',
+    // Static (non-dialect) columns, rendered straight from the manifest:
+    // lifetime token production split by phase plus KV-cache reuse. Each
+    // cell reads the payload key named by the column (see staticCell), so
+    // the table follows the backend contract without a code change.
+    ...staticCols.map((c) => ({
+      key: c.key,
+      label: c.label,
       sortable: false,
       num: true,
-      align: 'right',
-      title:
-        'Tokens produced, summed from the hourly cost rollups (730d retention window). Endpoint renames are not aliased: pre-rename rows stay under the old id. Dash = no lifetime data (sampler mode, no cost rows, or the rollup query is failing) - never a fake 0.',
-    },
+      align: 'right' as const,
+      title: staticTitle(c),
+    })),
     { key: 'active_connections', label: 'Conn', sortable: true, num: true, align: 'right' },
     { key: 'url', label: 'URL', sortable: false },
     { key: 'health_check_at', label: 'Last chk', sortable: false },
@@ -283,6 +286,60 @@
     }
     return title;
   }
+  // Per-column provenance for the static columns. Tokens are 180d
+  // integrals of the engine's per-day flux (NOT the live counters, which
+  // reset on every engine restart); KV-cache reuse basis is per-engine:
+  // radiance reports its engine prefix-cache gauge (since-boot, resets on
+  // restart), halogen the 180-day ratio of cached to prompt tokens.
+  const STATIC_TITLES: Record<string, string> = {
+    generation_tokens:
+      'Generation tokens produced, integrated per day over the lookback window (180d). Endpoint renames are not aliased: pre-rename history stays under the old id. Dash = no data (sampler mode, engine exports no generation counter, or the day query is failing) - never a fake 0.',
+    prefill_tokens:
+      'Prompt (prefill) tokens processed, integrated per day over the lookback window (180d). Endpoint renames are not aliased. Dash = no data - never a fake 0.',
+    kv_cache_reuse_percent:
+      'KV-cache reuse, 0-100%. Basis is per-engine: radiance reports its engine prefix-cache gauge (since-boot, resets on restart); halogen reports the 180-day ratio of cached to prompt tokens. Dash = the engine exposes no cache-reuse signal.',
+  };
+  function staticTitle(col: UIConfigMetricColumn): string {
+    // Manifest help (published verbatim by the backend) wins; the built-in
+    // mirror below only serves the manifest-less default.
+    return col.help ?? STATIC_TITLES[col.key] ?? 'Backend-reported lifetime metric (not window-sampled). Dash = not known.';
+  }
+
+  // Per-row cell title: the column provenance plus THIS row's KV-reuse basis
+  // (the two per-engine bases are not comparable, and the gauge basis means
+  // the cell repeats the prompt-cache-hit tile).
+  function staticCellTitle(row: EndpointRow, col: UIConfigMetricColumn): string {
+    let base = staticTitle(col);
+    if (col.key === 'kv_cache_reuse_percent' && row.kv_cache_reuse_basis) {
+      base += ' · this endpoint: ' + row.kv_cache_reuse_basis;
+    }
+    const partial = col.key === 'generation_tokens' ? row.generation_tokens_partial : col.key === 'prefill_tokens' ? row.prefill_tokens_partial : false;
+    if (partial) base += ' · LOWER BOUND: at least one day is missing from the sum';
+    return base;
+  }
+
+  // The Requests column headlines the gateway counter DELTA over the
+  // reporting window; the lifetime counter rides in the tooltip. Without a
+  // window (first poll after boot, across a counter reset, older backend)
+  // the cell falls back to the lifetime counter - the honest number the
+  // column always showed, never 0.
+  function requestsTitle(e: EndpointRow): string {
+    const lifetime = (e.request_count ?? 0).toLocaleString('en-AU');
+    if (e.requests_window == null) return 'Lifetime requests served (no window sample yet)';
+    const span = e.requests_window_ms != null ? ' over ' + (e.requests_window_ms / 1000).toFixed(1) + 's' : '';
+    return 'Requests in the reporting window' + span + ': ' + e.requests_window.toLocaleString('en-AU') + ' · lifetime: ' + lifetime;
+  }
+
+  // Static cell: compact tokens for count columns, one-decimal percent for
+  // percent columns. A missing key, null, or non-finite number renders a
+  // dash - absence must never be presented as a measured zero.
+  function staticCell(row: EndpointRow, col: UIConfigMetricColumn): string {
+    const value = (row as unknown as Record<string, unknown>)[col.key];
+    if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
+    if (col.unit === 'percent') return fmtPct(value);
+    if (col.unit === 'count') return fmtTokens(value) || '—';
+    return fmtByUnit(value, col.unit);
+  }
 </script>
 
 <div
@@ -357,17 +414,17 @@
                 <span class="runtime-current">{fmtByUnit(current, metric?.unit ?? col.unit)}</span>
                 {#if col.window}
                   <span class="runtime-summary">{summaryText(e.runtime_metrics, col)}</span>
-                {:else if col.key === 'queue_depth'}
-                  <span class="runtime-summary">{#if e.requests_running_current !== null}{fmtNum(e.requests_running_current)}{:else}—{/if} running</span>
                 {/if}
               {:else}<span class="dash">—</span>{/if}
             </div>
           </td>
         {/each}
-        <td class={cellClass("model_count")}>{#if e.model_count === 0}<span class="dash">0</span>{:else}{e.model_count}{/if}</td>
-        <td class={cellClass('request_count')}>{e.request_count?.toLocaleString('en-AU') ?? 0}</td>
+        <td class={cellClass("model_count")}>{#if e.model_count === 0}<span class="dash">{['offline', 'unhealthy', 'critical'].includes(e.status) ? '—' : '0'}</span>{:else}{e.model_count}{/if}</td>
+        <td class={cellClass('request_count')} title={requestsTitle(e)}>{e.requests_window != null ? e.requests_window.toLocaleString('en-AU') : (e.request_count?.toLocaleString('en-AU') ?? 0)}</td>
         <td class={cellClass('traffic')}>{e.traffic || '—'}</td>
-        <td class={cellClass('total_tokens')}>{fmtTokens(e.total_tokens) || '—'}</td>
+        {#each staticCols as col (col.key)}
+          <td class={cellClass(col.key)} title={staticCellTitle(e, col)}>{staticCell(e, col)}</td>
+        {/each}
         <td class={cellClass('active_connections')}>{#if e.active_connections > 0}{e.active_connections}{:else}<span class="dash">0</span>{/if}</td>
         <td class="url-cell" title={e.url}>{e.url || '—'}</td>
         <td>{fmtAgo(e.health_check_at, now) || 'never'}</td>

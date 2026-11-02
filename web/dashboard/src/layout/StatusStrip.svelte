@@ -83,8 +83,9 @@
   </div>
   <div class="status-cell">
     <dt>Resp. rate</dt>
-    <dd title="Backend 5xx responses count as failures; 4xx do not">{#if sys}{#if hasTraffic}{sys.success_rate}{:else}<span class="dash">—</span>{/if}{:else}—{/if}</dd>
-  </div>
+    <dd title={sys?.health_mode === 'model'
+      ? 'Configured models only. Backend `5xx` responses count as failures; `4xx` do not'
+      : 'All proxied traffic. Backend `5xx` responses count as failures; `4xx` do not'}>{#if sys}{#if hasTraffic}{sys.success_rate}{:else}<span class="dash">—</span>{/if}{:else}—{/if}</dd>  </div>
   <div class="status-cell">
     <dt>Avg latency</dt>
     <dd>{#if sys && hasTraffic}{sys.avg_latency}{:else}<span class="dash">—</span>{/if}</dd>

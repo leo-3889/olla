@@ -83,7 +83,7 @@ function endpoint(name: string, status: string): EndpointResponse {
 
 async function pollSystem(sys: SystemSummary, endpointList: EndpointResponse[] = []): Promise<void> {
   global.fetch = vi.fn(async () =>
-    jsonResponse({ timestamp: '2026-10-05T09:00:00Z', system: sys, endpoints: endpointList })
+    jsonResponse({ timestamp: new Date(Date.now()).toISOString(), system: sys, endpoints: endpointList })
   );
   overview.refresh();
   await vi.waitFor(() => expect(overview.data?.system.version).toBe(sys.version));

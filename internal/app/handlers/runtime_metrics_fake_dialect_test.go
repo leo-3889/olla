@@ -33,11 +33,13 @@ func init() {
 			return runtime_dialect.Counters{
 				GenerationTokens:  pick("fake:out_tokens_total"),
 				GenerationSeconds: pick("fake:out_seconds_total"),
+				RequestsRunning:   pick("fake:active_requests"),
 				QueueDepth:        pick("fake:waiting_requests"),
 			}
 		},
 		Columns: []runtime_dialect.Column{
 			{Key: runtime_dialect.KeyGenerationTPS, Label: "Fake throughput", Unit: runtime_dialect.UnitTokS, Windowed: true},
+			{Key: runtime_dialect.KeyRequestsRunning, Label: "Fake running", Unit: runtime_dialect.UnitCount},
 			{Key: runtime_dialect.KeyQueueDepth, Label: "Fake queue", Unit: runtime_dialect.UnitCount},
 		},
 	})
@@ -48,10 +50,10 @@ func TestFakeDialectFlowsThroughSamplerEnvelopeManifestAndPayload(t *testing.T) 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls++
 		if calls == 1 {
-			_, _ = w.Write([]byte("fake:out_tokens_total 0\nfake:out_seconds_total 0\nfake:waiting_requests 4\n"))
+			_, _ = w.Write([]byte("fake:out_tokens_total 0\nfake:out_seconds_total 0\nfake:active_requests 2\nfake:waiting_requests 4\n"))
 			return
 		}
-		_, _ = w.Write([]byte("fake:out_tokens_total 30\nfake:out_seconds_total 1\nfake:waiting_requests 4\n"))
+		_, _ = w.Write([]byte("fake:out_tokens_total 30\nfake:out_seconds_total 1\nfake:active_requests 2\nfake:waiting_requests 4\n"))
 	}))
 	defer server.Close()
 
@@ -75,6 +77,8 @@ func TestFakeDialectFlowsThroughSamplerEnvelopeManifestAndPayload(t *testing.T) 
 	assert.Contains(t, gen.Note, runtimeMetricNoteSamplerWindow)
 	require.NotNil(t, envNum(t, got, runtimeMetricKeyQueueDepth, runtimeMetricPartCurrent))
 	assert.InDelta(t, 4, *envNum(t, got, runtimeMetricKeyQueueDepth, runtimeMetricPartCurrent), 0.001)
+	require.NotNil(t, envNum(t, got, runtimeMetricKeyRequestsRunning, runtimeMetricPartCurrent))
+	assert.InDelta(t, 2, *envNum(t, got, runtimeMetricKeyRequestsRunning, runtimeMetricPartCurrent), 0.001)
 	// Signals the fake backend does not publish stay absent, not zero.
 	assert.Nil(t, envMetric(t, got, runtimeMetricKeyPrefillTPS))
 
@@ -87,7 +91,11 @@ func TestFakeDialectFlowsThroughSamplerEnvelopeManifestAndPayload(t *testing.T) 
 	}
 	require.NoError(t, json.Unmarshal(body, &decoded))
 	assert.Equal(t, "fakedialect", decoded.Kind)
-	require.Len(t, decoded.Metrics, 2)
+	require.Len(t, decoded.Metrics, 3)
+	// The envelope emits in dashboard column order: Running before Waiting.
+	assert.Equal(t, runtimeMetricKeyGenerationTPS, decoded.Metrics[0].Key)
+	assert.Equal(t, runtimeMetricKeyRequestsRunning, decoded.Metrics[1].Key)
+	assert.Equal(t, runtimeMetricKeyQueueDepth, decoded.Metrics[2].Key)
 
 	// Manifest: the same endpoint in the config advertises exactly the
 	// dialect's declared columns, including the dialect-owned label.
@@ -96,8 +104,9 @@ func TestFakeDialectFlowsThroughSamplerEnvelopeManifestAndPayload(t *testing.T) 
 		{Name: "fake-1", Type: "openai-compatible", RuntimeMetrics: &config.RuntimeMetricsConfig{Enabled: true, Kind: "fakedialect"}},
 	}
 	cols := uiRuntimeColumnsFrom(cfg)
-	require.Len(t, cols, 2)
+	require.Len(t, cols, 3)
 	assert.Equal(t, "Fake throughput", cols[0].Label)
-	assert.Equal(t, "Fake queue", cols[1].Label)
-	assert.Equal(t, "count", cols[1].Unit)
+	assert.Equal(t, "Fake running", cols[1].Label)
+	assert.Equal(t, "Fake queue", cols[2].Label)
+	assert.Equal(t, "count", cols[2].Unit)
 }

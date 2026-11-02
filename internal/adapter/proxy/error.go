@@ -48,11 +48,17 @@ func makeUserFriendlyError(err error, duration time.Duration, errorContext strin
 		return fmt.Errorf("request cancelled after %.1fs - client disconnected during processing", duration.Seconds())
 
 	case errors.Is(err, context.DeadlineExceeded):
+		// The quoted response_timeout is NOT necessarily what bounded the
+		// request: the olla engine does not enforce a per-request deadline
+		// (proxy.engine=olla: the value is only quoted here, see
+		// olla/service.go:368) - the deadline in the error chain is normally
+		// the transport connection_timeout (dial), the read-timeout silence
+		// timer, or ResponseHeaderTimeout. Say which numbers to check.
 		if responseTimeout > 0 {
-			return fmt.Errorf("request timeout after %.1fs - server timeout of %.1fs exceeded (LLM model taking longer than expected)",
+			return fmt.Errorf("request timeout after %.1fs - backend deadline exceeded; configured response_timeout %.1fs is not a per-request cap on this engine, check connection_timeout/read_timeout/response_header_timeout",
 				duration.Seconds(), responseTimeout.Seconds())
 		}
-		return fmt.Errorf("request timeout after %.1fs - server timeout exceeded (LLM response took too long)", duration.Seconds())
+		return fmt.Errorf("request timeout after %.1fs - backend deadline exceeded (check connection_timeout/read_timeout/response_header_timeout)", duration.Seconds())
 
 	case errors.Is(err, io.EOF):
 		if errorContext == "streaming" {

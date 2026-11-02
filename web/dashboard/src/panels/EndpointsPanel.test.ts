@@ -215,7 +215,9 @@ describe("EndpointsPanel runtime metrics", () => {
   const BATCH_NOTE = "Engine throughput (batch-aggregate across concurrent requests), not per-stream speed";
   const CACHE_NOTE = "avg over last 10m";
 
-  // Cells in column order (DEFAULT_UI_CONFIG): Gen, Prefill, Cache hit, KV used, Queue depth.
+  // Cells in column order (DEFAULT_UI_CONFIG): Gen, Prefill, Cache hit, Running,
+  // Waiting. KV-cache utilisation is still in the payload envelope but is no
+  // longer a declared dialect column, so the table renders no cell for it.
   function cell(index: number): { text: string; title: string } {
     const el = document.querySelectorAll(".runtime-metric")[index]!;
     return {
@@ -259,10 +261,10 @@ describe("EndpointsPanel runtime metrics", () => {
     });
 
     expect([...document.querySelectorAll(".runtime-current")].map((el) => el.textContent!.trim())).toEqual([
-      "70.1 tok/s", "502 tok/s", "98.1%", "37.0%", "6",
+      "70.1 tok/s", "502 tok/s", "98.1%", "3", "6",
     ]);
     expect([...document.querySelectorAll(".runtime-summary")].map((el) => el.textContent!.trim())).toEqual([
-      "avg 62 · max 91", "avg 440 · max 690", "avg 96.8%", "3 running",
+      "avg 62 · max 91", "avg 440 · max 690", "avg 96.8%",
     ]);
     expect(document.querySelector(".runtime-metric")!.getAttribute("title")).toContain("avg/max over last 10m");
 
@@ -286,7 +288,7 @@ describe("EndpointsPanel runtime metrics", () => {
     expect(document.querySelector(".runtime-metric")!.getAttribute("title")).toContain("stale");
   });
 
-  it("shows queue depth with its running sub-line and folds spec acceptance into the Gen tooltip", async () => {
+  it("shows running and waiting as sibling cells and folds spec acceptance into the Gen tooltip", async () => {
     component = mount(EndpointsPanel, { target: document.body });
     flushSync();
 
@@ -310,9 +312,12 @@ describe("EndpointsPanel runtime metrics", () => {
       },
     });
 
-    expect(cell(4).text).toBe("8 7 running");
-    expect(cell(4).title).toContain("Queue depth");
-    expect(cell(4).title).toContain("sampled 2026-10-05T09:00:00Z");
+    expect(cell(3).text).toBe("7");
+    expect(cell(3).title).toContain("Running");
+    expect(cell(3).title).toContain("sampled 2026-10-05T09:00:00Z");
+    // The waiting cell is a plain sibling now: its own value, no sub-line.
+    expect(cell(4).text).toBe("8");
+    expect(cell(4).title).toContain("Waiting");
 
     // The batch caveat belongs on both rate cells; the acceptance figure only
     // explains generation, so it never rides on prefill or the other columns.
@@ -322,6 +327,7 @@ describe("EndpointsPanel runtime metrics", () => {
     expect(cell(1).title).not.toContain("Speculative decode");
     expect(cell(2).title).not.toContain(BATCH_NOTE);
     expect(cell(3).title).not.toContain(BATCH_NOTE);
+    expect(cell(4).title).not.toContain(BATCH_NOTE);
   });
 
   it("drops the average from the acceptance tooltip when the engine reports a gauge only", async () => {
@@ -369,10 +375,13 @@ describe("EndpointsPanel runtime metrics", () => {
     expect(cell(0).title).toContain(BATCH_NOTE);
     expect(cell(0).title).not.toContain("Speculative decode");
     // A genuine zero backlog stays visible rather than collapsing to a dash.
-    expect(cell(4).text).toBe("0 — running");
+    expect(cell(4).text).toBe("0");
+    // The engine never reported running requests: honest dash, not 0.
+    expect(cell(3).text).toBe("—");
+    expect(cell(3).title).toContain("Running: unsupported by this backend");
   });
 
-  it("dashes the queue column for a backend whose metrics carry no queue gauge", async () => {
+  it("dashes the running and waiting columns for a backend that reports neither gauge", async () => {
     component = mount(EndpointsPanel, { target: document.body });
     flushSync();
 
@@ -392,24 +401,28 @@ describe("EndpointsPanel runtime metrics", () => {
     });
 
     expect(cell(4).text).toBe("—");
-    expect(cell(4).title).toContain("Queue depth: unsupported by this backend");
+    expect(cell(4).title).toContain("Waiting: unsupported by this backend");
     expect(cell(4).title).toContain("source sampler");
+    expect(cell(3).text).toBe("—");
+    expect(cell(3).title).toContain("Running: unsupported by this backend");
     // A single-stream backend must not inherit the batch caveat either.
     expect(cell(0).title).not.toContain(BATCH_NOTE);
     expect(cell(0).title).not.toContain("Speculative decode");
   });
 
-  it("dashes the queue column when the backend reports no runtime metrics at all", async () => {
+  it("dashes the running and waiting columns when the backend reports no runtime metrics at all", async () => {
     component = mount(EndpointsPanel, { target: document.body });
     flushSync();
 
     await refreshWithEndpoint({ ...base, name: "ollama-1", type: "ollama" });
 
+    expect(cell(3).text).toBe("—");
+    expect(cell(3).title).toBe("Running: unsupported by this backend");
     expect(cell(4).text).toBe("—");
-    expect(cell(4).title).toBe("Queue depth: unsupported by this backend");
+    expect(cell(4).title).toBe("Waiting: unsupported by this backend");
   });
 
-  it("hides queue depth and acceptance while the scrape is stale", async () => {
+  it("hides running, waiting and acceptance while the scrape is stale", async () => {
     component = mount(EndpointsPanel, { target: document.body });
     flushSync();
 
@@ -431,6 +444,7 @@ describe("EndpointsPanel runtime metrics", () => {
       },
     });
 
+    expect(cell(3).text).toBe("—");
     expect(cell(4).text).toBe("—");
     expect(cell(4).title).toContain("stale (last sampled 2026-10-05T08:55:00Z)");
     // Frozen figures are never presented as live measurements.
@@ -482,9 +496,12 @@ describe("EndpointsPanel runtime metrics", () => {
         ],
       },
     });
-    // Fresh payload, no KV gauge published: the tooltip must say so plainly.
+    // Fresh payload, no running/queue gauge: the tooltips must say so plainly.
+    expect(cell(2).text).toBe("55.0% avg 50.0%");
     expect(cell(3).text).toBe("—");
-    expect(cell(3).title).toContain("KV-cache utilisation: unsupported by this backend");
+    expect(cell(3).title).toContain("Running: unsupported by this backend");
+    expect(cell(4).text).toBe("—");
+    expect(cell(4).title).toContain("Waiting: unsupported by this backend");
     expect(cell(2).title).toContain("avg over last 10m");
     expect(cell(2).title).not.toContain("max");
   });
@@ -578,16 +595,38 @@ describe('EndpointsPanel traffic column', () => {
   });
 });
 
-// Surface tests for the P8 lifetime-tokens column (mirrors the traffic
-// column template): a real rollup sum renders compact, null renders a dash,
-// and a payload without the key at all (sampler mode / query failure / no
-// cost rows) renders a dash - never a fabricated 0.
-describe('EndpointsPanel lifetime-tokens column', () => {
-  function tokensCell(rowIndex = 0): string | undefined {
+// Surface tests for the three manifest-driven static columns (generation
+// tokens, prefill tokens, KV-cache reuse): the token columns render compact
+// and INDEPENDENTLY (disjoint fixtures prove prefill never bleeds into gen
+// or vice versa), reuse renders a one-decimal percent, and any field the
+// payload omits (sampler mode, engine exports no such signal, query
+// failure) renders a dash - never a fabricated 0.
+describe('EndpointsPanel models column', () => {
+  function modelCell(rowIndex = 0): string | undefined {
+    const table = document.querySelector('table');
+    if (!table) return undefined;
+    const idx = [...table.querySelectorAll('th')].findIndex((th) => th.textContent?.includes('Models'));
+    if (idx < 0) return undefined;
+    return table.querySelectorAll('tbody tr')[rowIndex]?.querySelectorAll('td')[idx]?.textContent?.trim();
+  }
+  it('healthy with zero discovered models shows a real 0; offline shows a dash (absence-of-discovery, not no-models)', async () => {
+    component = mount(EndpointsPanel, { target: document.body });
+    flushSync();
+    await refreshWithEndpoints([
+      { name: 'idle', type: 'ollama', status: 'healthy', url: 'http://idle:11434', priority: 90, request_count: 0, model_count: 0, traffic: '' },
+      { name: 'down', type: 'ollama', status: 'offline', url: 'http://down:11434', priority: 80, request_count: 0, model_count: 0, traffic: '' },
+    ]);
+    expect(modelCell(0)).toBe('0');
+    expect(modelCell(1)).toBe('—');
+  });
+});
+
+describe('EndpointsPanel static token columns', () => {
+  function staticCell(header: string, rowIndex = 0): string | undefined {
     const table = document.querySelector('table');
     if (!table) return undefined;
     const idx = [...table.querySelectorAll('th')].findIndex(
-      (th) => th.textContent?.trim() === 'Tokens (lifetime)'
+      (th) => th.textContent?.trim() === header
     );
     if (idx < 0) return undefined;
     return table
@@ -595,20 +634,44 @@ describe('EndpointsPanel lifetime-tokens column', () => {
       ?.querySelectorAll('td')[idx]?.textContent?.trim();
   }
 
-  it('renders compact token sums for endpoints with cost rollups', async () => {
+  it('renders gen and prefill compactly and independently plus percent reuse', async () => {
     component = mount(EndpointsPanel, { target: document.body });
     flushSync();
     await refreshWithEndpoints([
-      { name: 'big', type: 'openai-compatible', status: 'healthy', url: 'http://big:8000', priority: 100, request_count: 900, model_count: 1, total_tokens: 2192454947 },
-      { name: 'small', type: 'llamacpp', status: 'healthy', url: 'http://small:8731', priority: 90, request_count: 12, model_count: 1, total_tokens: 97467683 },
-      { name: 'unmetered', type: 'openai-compatible', status: 'healthy', url: 'http://un:8001', priority: 90, request_count: 3, model_count: 1, total_tokens: null },
+      { name: 'rad', type: 'openai-compatible', status: 'healthy', url: 'http://rad:8000', priority: 100, request_count: 900, model_count: 1, generation_tokens: 2192454947, prefill_tokens: 220000000, kv_cache_reuse_percent: 93.1 },
+      { name: 'halo', type: 'llamacpp', status: 'healthy', url: 'http://halo:8731', priority: 90, request_count: 12, model_count: 1, generation_tokens: 97467683, prefill_tokens: 5000, kv_cache_reuse_percent: 41.25 },
     ]);
-    expect(tokensCell(0)).toBe('2.19B');
-    expect(tokensCell(1)).toBe('97.5M');
-    expect(tokensCell(2)).toBe('—');
+    expect(staticCell('Tokens 180d (Gen)', 0)).toBe('2.19B');
+    expect(staticCell('Tokens 180d (Prefill)', 0)).toBe('220.0M');
+    expect(staticCell('KV cache reuse', 0)).toBe('93.1%');
+    // Row 2 carries DIFFERENT gen/prefill magnitudes: each column shows
+    // only its own field.
+    expect(staticCell('Tokens 180d (Gen)', 1)).toBe('97.5M');
+    expect(staticCell('Tokens 180d (Prefill)', 1)).toBe('5,000');
+    expect(staticCell('KV cache reuse', 1)).toBe('41.3%');
   });
 
-  it('renders a dash when the backend payload has no total_tokens key at all', async () => {
+  it('discloses the per-engine KV-reuse basis in the cell title', async () => {
+    component = mount(EndpointsPanel, { target: document.body });
+    flushSync();
+    await refreshWithEndpoint({
+      name: 'radbasis',
+      type: 'openai-compatible',
+      status: 'healthy',
+      url: 'http://rad:8000',
+      priority: 100,
+      request_count: 9,
+      model_count: 1,
+      kv_cache_reuse_percent: 96.2,
+      kv_cache_reuse_basis: 'engine prefix-cache gauge, since engine boot (resets on restart)',
+    });
+    const table = document.querySelector('table')!;
+    const idx = [...table.querySelectorAll('th')].findIndex((th) => th.textContent?.trim() === 'KV cache reuse');
+    const td = table.querySelectorAll('tbody tr')[0].querySelectorAll('td')[idx];
+    expect(td.getAttribute('title')).toContain('this endpoint: engine prefix-cache gauge');
+  });
+
+  it('renders a dash for every static field the payload omits', async () => {
     component = mount(EndpointsPanel, { target: document.body });
     flushSync();
     await refreshWithEndpoint({
@@ -620,6 +683,28 @@ describe('EndpointsPanel lifetime-tokens column', () => {
       request_count: 5,
       model_count: 1,
     });
-    expect(tokensCell(0)).toBe('—');
+    expect(staticCell('Tokens 180d (Gen)')).toBe('—');
+    expect(staticCell('Tokens 180d (Prefill)')).toBe('—');
+    expect(staticCell('KV cache reuse')).toBe('—');
+  });
+
+  it('renders a dash for an explicit null but a real 0 for measured zeros', async () => {
+    component = mount(EndpointsPanel, { target: document.body });
+    flushSync();
+    await refreshWithEndpoint({
+      name: 'zeroed',
+      type: 'llamacpp',
+      status: 'healthy',
+      url: 'http://zeroed:8731',
+      priority: 100,
+      request_count: 7,
+      model_count: 1,
+      generation_tokens: null,
+      prefill_tokens: 0,
+      kv_cache_reuse_percent: 0,
+    });
+    expect(staticCell('Tokens 180d (Gen)')).toBe('—');
+    expect(staticCell('Tokens 180d (Prefill)')).toBe('0');
+    expect(staticCell('KV cache reuse')).toBe('0%');
   });
 });

@@ -531,6 +531,18 @@ func hashEtagInt64Ptr(h hash.Hash, v *int64) {
 	hashEtagInt64(h, *v)
 }
 
+// hashEtagFloat64Ptr encodes presence like the int64 pointer form and the value in
+// shortest round-trip form (locale-independent, so a 0.1 read from Influx and
+// the 0.1 the provider computed hash identically in every environment).
+func hashEtagFloat64Ptr(h hash.Hash, v *float64) {
+	if v == nil {
+		_, _ = h.Write(etagSep)
+		return
+	}
+	_, _ = h.Write(strconv.AppendFloat(make([]byte, 0, 24), *v, 'g', -1, 64))
+	_, _ = h.Write(etagSep)
+}
+
 // hashEtagTime encodes a wall-clock instant via UnixNano. Only absolute event
 // times reach this path; the relative time-ago / time-until renderings used in
 // the dashboard (uptime, last_check, next_check, last_seen, last_model_sync)

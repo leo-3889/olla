@@ -160,26 +160,38 @@ type Application struct {
 	// the in-process sampler or, with metrics_source.mode=influx, by the
 	// ollametrics InfluxDB reader.
 	runtimeMetrics runtimeMetricsProvider
-	// metricsSourceMode is the EFFECTIVE metrics backend (influx intent can
-	// fall back to sampler at boot); surfaced through config.json so the UI
-	// never advertises influx sections the process is not serving.
-	metricsSourceMode string
-	// observe serves power/cost/GPU data for the dashboard; non-nil only
-	// in influx mode (only that backend holds the data).
-	observe *observeCollector
 	// evaluator computes the overall system status for /internal/status. It is
 	// built from the health config (host or model mode) so the handler stays a
 	// thin dispatcher over the verdict.
 	evaluator health.Evaluator
-	server    *http.Server
-	errCh     chan error
-	StartTime time.Time
+	// stickyStatsFn is non-nil when sticky sessions are enabled. Stored as a
+	// closure so the handler layer does not need to import the balancer package.
+	// observe serves power/cost/GPU data for the dashboard; non-nil only
+	// in influx mode (only that backend holds the data).
+	observe       *observeCollector
+	server        *http.Server
+	errCh         chan error
+	StartTime     time.Time
+	requestsRings map[string][]requestsRingSample
 	// capabilityWarned suppresses repeated "No models found with required
 	// capabilities" warnings. The strict pre-filter verdict is a static
 	// property of registry metadata, so per-request repeats are pure noise
 	// (239 WARN/30min measured on the live fleet 2026-10-16). First
 	// occurrence per model+capabilities key logs; later ones are silent.
 	capabilityWarned sync.Map
+	// metricsSourceMode is the EFFECTIVE metrics backend (influx intent can
+	// fall back to sampler at boot); surfaced through config.json so the UI
+	// never advertises influx sections the process is not serving.
+	metricsSourceMode string
+	// requestsRings powers the Endpoints table's windowed Requests column:
+	// endpoint URL -> the {at, totalRequests} samples of the last
+	// runtimeMetricsWindow, appended on every /internal/status/endpoints
+	// poll (the ~10s dashboard cycle) where the collector stats are read.
+	// The served number is the counter DELTA over the window; a counter
+	// decrease is a process restart (repo convention: countersReset /
+	// Flux difference(nonNegative:true)), and a window crossing one serves
+	// ABSENT - never a clamped number.
+	requestsRingsMu sync.Mutex
 }
 
 // NewApplication creates a new Application instance with all required dependencies

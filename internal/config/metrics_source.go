@@ -38,13 +38,19 @@ type InfluxSourceConfig struct {
 	// StaleAfter marks tiles stale once the newest Influx point for an
 	// endpoint is older than this (default 60s).
 	StaleAfter time.Duration `yaml:"stale_after,omitempty"`
-	// TokenLookback bounds the lifetime-tokens window on the endpoints
-	// table: per endpoint, the SUM of the hourly cost-rollup total_tokens
-	// over this window (default 730d = the costs bucket's retention). It is
-	// deliberately NOT the engine runtime counter - those reset on every
-	// engine restart; the cost rollups are the rewrite-exact lifetime
-	// authority. Rows are per endpoint id: an endpoint rename is NOT
-	// aliased, pre-rename rows stay under the old id (honest split).
+	// TokenLookback bounds the lifetime-token window on the endpoints table:
+	// per endpoint and PER COUNTER FIELD, the INTEGRAL of the llm_runtime token
+	// counters over this window, integrated per UTC day so a restart cannot
+	// corrupt the delta (default 180d = the llm/metrics retention). Generation
+	// (generation_tokens_total) and prefill (prompt_tokens_total) are summed
+	// SEPARATELY into the two token columns; cached_prompt_tokens_total is
+	// summed the same way only as the numerator of the KV-reuse ratio on engines
+	// that publish no prefix_cache_hit_ratio gauge (its denominator is the same
+	// window's prefill sum). The cost rollups are deliberately NOT the source:
+	// they are a lossy downstream derivation, and a dropped or incomplete cost
+	// interval silently shrinks the lifetime totals (measured ~9% under the true
+	// counter integral over 24h). Rows are per endpoint id: an endpoint rename
+	// is NOT aliased, pre-rename rows stay under the old id (honest split).
 	TokenLookback time.Duration `yaml:"token_lookback,omitempty"`
 }
 
@@ -53,7 +59,7 @@ const (
 	MetricsSourceModeInflux  = "influx"
 
 	defaultInfluxStaleAfter    = 60 * time.Second
-	defaultInfluxTokenLookback = 730 * 24 * time.Hour
+	defaultInfluxTokenLookback = 180 * 24 * time.Hour
 )
 
 // InfluxEnabled reports whether metrics should be read from InfluxDB. A

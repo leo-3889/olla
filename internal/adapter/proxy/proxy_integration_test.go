@@ -44,7 +44,7 @@ func TestMakeUserFriendlyError(t *testing.T) {
 			inputError:       context.DeadlineExceeded,
 			duration:         30 * time.Second,
 			context:          "backend",
-			expectedContains: []string{"request timeout", "30.0s", "server timeout", "exceeded"},
+			expectedContains: []string{"request timeout", "30.0s", "backend deadline exceeded", "connection_timeout"},
 		},
 		{
 			name:             "Connection Refused",
@@ -93,7 +93,7 @@ func TestMakeUserFriendlyError(t *testing.T) {
 			inputError:          context.DeadlineExceeded,
 			duration:            100 * time.Millisecond,
 			context:             "backend",
-			expectedContains:    []string{"request timeout", "0.1s", "server timeout"},
+			expectedContains:    []string{"request timeout", "0.1s", "backend deadline exceeded"},
 			notExpectedContains: []string{"after 0.0s"},
 		},
 	}

@@ -60,8 +60,9 @@ function stubChartRect(width = 100): HTMLElement {
 describe('nearestSampleIndex (pure helper)', () => {
   it('maps fractions to the nearest sample index', () => {
     expect(nearestSampleIndex(0, 4)).toBe(0);
-    expect(nearestSampleIndex(0.34, 4)).toBe(1); // 0.34 * 3 = 1.02 -> round 1
-    expect(nearestSampleIndex(0.5, 4)).toBe(2); // 0.5 * 3 = 1.5 -> round 2
+    expect(nearestSampleIndex(0.34, 4)).toBe(1); // 0.34 * 4 = 1.36 -> slot 1
+    expect(nearestSampleIndex(0.5, 4)).toBe(2); // 0.5 * 4 = 2 -> slot 2
+    expect(nearestSampleIndex(0.24, 4)).toBe(0); // 0.96 floors into slot 0
     expect(nearestSampleIndex(1, 4)).toBe(3);
   });
 
@@ -89,7 +90,7 @@ describe('SparkStrip', () => {
     expect(document.body.textContent).toContain('gathering data');
   });
 
-  it('hides the hint and draws both paths once 2+ samples arrive', () => {
+  it('hides the hint and draws paired bars scaled to each series max once 2+ samples arrive', () => {
     render({
       samples: [
         makeSample({ reqPerSec: 1, activeConnections: 2 }),
@@ -97,12 +98,17 @@ describe('SparkStrip', () => {
       ],
     });
     expect(document.querySelector('.spark-hint')).toBeNull();
-    const area = document.querySelector('.spark-area') as SVGPathElement | null;
-    const line = document.querySelector('.spark-line') as SVGPathElement | null;
-    expect(area).toBeTruthy();
-    expect(line).toBeTruthy();
-    expect(area!.getAttribute('d')).toMatch(/^M 0 /);
-    expect(line!.getAttribute('d')).toMatch(/^M 0 /);
+    const reqBars = [...document.querySelectorAll('.spark-bar-req')] as SVGRectElement[];
+    const connBars = [...document.querySelectorAll('.spark-bar-conn')] as SVGRectElement[];
+    expect(reqBars.length).toBe(2);
+    expect(connBars.length).toBe(2);
+    // Own-max scaling on the H=30 viewBox: req 1/2 -> 15, 2/2 -> 30;
+    // conn 2/3 -> 20, 3/3 -> 30.
+    expect(reqBars.map((b) => parseFloat(b.getAttribute('height')!))).toEqual([15, 30]);
+    expect(connBars.map((b) => parseFloat(b.getAttribute('height')!))).toEqual([
+      expect.closeTo(20, 6),
+      30,
+    ]);
   });
 
   it('reflects the latest sample in the aria-label and the readout', () => {
@@ -171,7 +177,7 @@ describe('SparkStrip', () => {
     });
     const chart = stubChartRect(100);
 
-    // x=50 -> fraction 0.5 -> nearestSampleIndex(0.5, 3) = round(1) = 1, the
+    // x=50 -> fraction 0.5 -> nearestSampleIndex(0.5, 3) = floor(1.5) = 1, the
     // middle sample (5 req/s, 3 conns). bubbles:true is needed because Svelte 5
     // delegates bubbling events to a root listener.
     chart.dispatchEvent(new MouseEvent('pointermove', { clientX: 50, bubbles: true }));
@@ -204,7 +210,7 @@ describe('SparkStrip', () => {
     const tooltip = document.querySelector('.spark-tooltip') as HTMLElement | null;
     expect(tooltip).toBeTruthy();
     expect(tooltip!.textContent).toContain('9.0 req/s');
-    expect(tooltip!.textContent).toContain('1 conns');
+    expect(tooltip!.textContent).toContain('1 conn ·');
   });
 
   it('does not show a hover tooltip during warm-up (< 2 samples)', () => {
@@ -217,7 +223,7 @@ describe('SparkStrip', () => {
 });
 
 describe('SparkStrip outage markers', () => {
-  it('draws a muted-red outage band across an error sample and breaks the area path', () => {
+  it('draws a muted-red outage band across an error sample and gaps the bars', () => {
     render({
       samples: [
         makeSample({ reqPerSec: 3, activeConnections: 2 }),
@@ -242,17 +248,18 @@ describe('SparkStrip outage markers', () => {
     expect((edges[0] as SVGLineElement).getAttribute('x1')).toBe('50');
     expect((edges[1] as SVGLineElement).getAttribute('x1')).toBe('75');
 
-    // The area path must contain two M commands (two runs of non-error
-    // samples: indices 0-1 and 3-4), confirming the break.
-    const area = document.querySelector('.spark-area') as SVGPathElement;
-    const mCount = (area.getAttribute('d') ?? '').match(/M/g)?.length ?? 0;
-    expect(mCount).toBe(2);
-
-    // The edge line and connections line also break.
-    const edge = document.querySelector('.spark-edge') as SVGPathElement;
-    expect((edge.getAttribute('d') ?? '').match(/M/g)?.length ?? 0).toBe(2);
-    const connLine = document.querySelector('.spark-line') as SVGPathElement;
-    expect((connLine.getAttribute('d') ?? '').match(/M/g)?.length ?? 0).toBe(2);
+    // The error sample renders NO bar (honest gap): 4 healthy samples ->
+    // 4 req + 4 conn bars, and nothing inside slot 2's x-window [40, 60).
+    const reqBars = [...document.querySelectorAll('.spark-bar-req')] as SVGRectElement[];
+    const connBars = [...document.querySelectorAll('.spark-bar-conn')] as SVGRectElement[];
+    expect(reqBars.length).toBe(4);
+    expect(connBars.length).toBe(4);
+    expect(
+      reqBars.filter((b) => {
+        const x = parseFloat(b.getAttribute('x')!);
+        return x >= 40 && x < 60;
+      }).length,
+    ).toBe(0);
   });
 
   it('coalesces consecutive error samples into a single band with drop and recovery edges', () => {
@@ -285,9 +292,9 @@ describe('SparkStrip outage markers', () => {
     });
     expect(document.querySelectorAll('.spark-outage').length).toBe(0);
     expect(document.querySelectorAll('.spark-outage-edge').length).toBe(0);
-    // Single continuous run: one M in the area path.
-    const area = document.querySelector('.spark-area') as SVGPathElement;
-    expect((area.getAttribute('d') ?? '').match(/M/g)?.length ?? 0).toBe(1);
+    // No gaps: both healthy samples draw their paired bars.
+    expect(document.querySelectorAll('.spark-bar-req').length).toBe(2);
+    expect(document.querySelectorAll('.spark-bar-conn').length).toBe(2);
   });
 
   it('shows "connection lost" in the tooltip when hovering an error sample', () => {
@@ -299,7 +306,7 @@ describe('SparkStrip outage markers', () => {
       ],
     });
     const chart = stubChartRect(100);
-    // x=50 -> fraction 0.5 -> nearestSampleIndex(0.5, 3) = round(1) = 1, the
+    // x=50 -> fraction 0.5 -> nearestSampleIndex(0.5, 3) = floor(1.5) = 1, the
     // error sample.
     chart.dispatchEvent(new MouseEvent('pointermove', { clientX: 50, bubbles: true }));
     flushSync();

@@ -228,7 +228,7 @@ func (l *ProfileLoader) loadBuiltInProfilesInto(profiles map[string]domain.Infer
 		Enabled: true,
 		Source:  "response_body",
 		Format:  "json",
-		Paths: map[string]string{ //nolint:gosec // JSONPath extraction map keys, not credentials
+		Paths: map[string]string{
 			"model":              "$.model",
 			"is_complete":        "$.done",
 			"finish_reason":      "$.finish_reason",
@@ -239,7 +239,7 @@ func (l *ProfileLoader) loadBuiltInProfilesInto(profiles map[string]domain.Infer
 			"prompt_duration_ns": "$.prompt_eval_duration",
 			"eval_duration_ns":   "$.eval_duration",
 		},
-		Calculations: map[string]string{ //nolint:gosec // derived-metric expressions, not credentials
+		Calculations: map[string]string{
 			"tokens_per_second": "eval_duration_ns > 0 ? (output_tokens * 1000000000.0) / eval_duration_ns : 0",
 			"ttft_ms":           "prompt_duration_ns / 1000000",
 			"total_ms":          "total_duration_ns / 1000000",
@@ -363,7 +363,7 @@ func (l *ProfileLoader) loadBuiltInProfilesInto(profiles map[string]domain.Infer
 		Enabled: true,
 		Source:  "response_body",
 		Format:  "json",
-		Paths: map[string]string{ //nolint:gosec // JSONPath extraction map keys, not credentials
+		Paths: map[string]string{
 			"model":         "$.model",
 			"finish_reason": "$.choices[0].finish_reason",
 			"input_tokens":  "$.usage.prompt_tokens",
@@ -458,7 +458,7 @@ func (l *ProfileLoader) loadBuiltInProfilesInto(profiles map[string]domain.Infer
 		Enabled: true,
 		Source:  "response_body",
 		Format:  "json",
-		Paths: map[string]string{ //nolint:gosec // JSONPath extraction map keys, not credentials
+		Paths: map[string]string{
 			"model":         "$.model",
 			"finish_reason": "$.choices[0].finish_reason",
 			"input_tokens":  "$.usage.prompt_tokens",
@@ -467,7 +467,7 @@ func (l *ProfileLoader) loadBuiltInProfilesInto(profiles map[string]domain.Infer
 			"ttft_ms":       "$.metrics.time_to_first_token",
 			"total_ms":      "$.metrics.total_time",
 		},
-		Calculations: map[string]string{ //nolint:gosec // derived-metric expressions, not credentials
+		Calculations: map[string]string{
 			"is_complete":       "len(finish_reason) > 0",
 			"tokens_per_second": "total_ms > 0 ? (output_tokens * 1000.0) / total_ms : 0",
 		},
@@ -567,7 +567,7 @@ func (l *ProfileLoader) loadLlamaCppBuiltIn(profiles map[string]domain.Inference
 		Enabled: true,
 		Source:  "response_body",
 		Format:  "json",
-		Paths: map[string]string{ //nolint:gosec // JSONPath extraction map keys, not credentials
+		Paths: map[string]string{
 			"model":                    "$.model",
 			"finish_reason":            "$.choices[0].finish_reason",
 			"input_tokens":             "$.usage.prompt_tokens",

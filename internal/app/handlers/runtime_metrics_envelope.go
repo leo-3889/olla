@@ -1,6 +1,10 @@
 package handlers
 
-import "github.com/thushan/olla/internal/app/handlers/runtime_dialect"
+import (
+	"time"
+
+	"github.com/thushan/olla/internal/app/handlers/runtime_dialect"
+)
 
 // Units, keys, sources, scope and note literals of the self-describing
 // runtime_metrics envelope. The embedded dashboard renders these verbatim and
@@ -21,7 +25,7 @@ const (
 	runtimeMetricKeyCacheHitPercent     = runtime_dialect.KeyCacheHitPercent
 	runtimeMetricKeyKvCacheUsagePercent = runtime_dialect.KeyKVCacheUsagePercent
 	runtimeMetricKeyQueueDepth          = runtime_dialect.KeyQueueDepth
-	runtimeMetricKeyRequestsRunning     = "requests_running"
+	runtimeMetricKeyRequestsRunning     = runtime_dialect.KeyRequestsRunning
 	runtimeMetricKeySpecAcceptPercent   = "spec_accept_percent"
 )
 
@@ -51,14 +55,24 @@ const (
 // only for windowed signals; Scope/Note/AttachTo are presentation semantics
 // decided by the provider, never inferred by the UI.
 type RuntimeMetric struct {
-	Key      string   `json:"key"`
-	Unit     string   `json:"unit"`
-	Current  *float64 `json:"current,omitempty"`
-	Avg      *float64 `json:"avg,omitempty"`
-	Max      *float64 `json:"max,omitempty"`
-	Scope    string   `json:"scope,omitempty"`
-	AttachTo string   `json:"attach_to,omitempty"`
-	Note     string   `json:"note,omitempty"`
+	Current     *float64 `json:"current,omitempty"`
+	Avg         *float64 `json:"avg,omitempty"`
+	Max         *float64 `json:"max,omitempty"`
+	PairedValue *float64 `json:"paired_value,omitempty"`
+	Key         string   `json:"key"`
+	Unit        string   `json:"unit"`
+	Scope       string   `json:"scope,omitempty"`
+	AttachTo    string   `json:"attach_to,omitempty"`
+	Note        string   `json:"note,omitempty"`
+	// PairedOf names the key whose window maximum anchors this reading,
+	// PairedAt is that maximum's sample timestamp (RFC3339), and PairedValue
+	// is THIS metric's value at that exact timestamp. The queue_depth entry
+	// carries it (PairedOf: requests_running): the Waiting headline is the
+	// queue depth AT the running peak, both gauges written per scrape at
+	// identical timestamps. Absent (any field) = no paired sample in the
+	// window: the UI dashes, it never falls back to current or 0.
+	PairedOf string `json:"paired_of,omitempty"`
+	PairedAt string `json:"paired_at,omitempty"`
 }
 
 // value returns one part of the metric, used by the Prometheus re-export.
@@ -105,7 +119,7 @@ func joinNote(parts ...string) string {
 
 // buildEnvelopeMetrics converts one sampler aggregate state into the
 // envelope, emitted in dashboard column order: generation, prefill, cache
-// hit, KV usage, queue, running, then speculative acceptance last because it
+// hit, KV usage, running, queue (waiting), then speculative acceptance last because it
 // renders attached to generation. The radiance dialect publishes engine-wide
 // rate gauges (batch-aggregate across concurrent requests), which is a
 // property of the data source, so the provider states it here instead of
@@ -133,11 +147,18 @@ func buildEnvelopeMetrics(state *runtimeMetricsState, kind string) []RuntimeMetr
 	if state.KVUsage != nil {
 		out = append(out, RuntimeMetric{Key: runtimeMetricKeyKvCacheUsagePercent, Unit: runtimeMetricUnitPercent, Current: copyFloat(state.KVUsage)})
 	}
-	if state.QueueDepth != nil {
-		out = append(out, RuntimeMetric{Key: runtimeMetricKeyQueueDepth, Unit: runtimeMetricUnitCount, Current: copyFloat(state.QueueDepth)})
+	if state.RequestsRunning != nil || state.running.max != nil {
+		out = append(out, RuntimeMetric{Key: runtimeMetricKeyRequestsRunning, Unit: runtimeMetricUnitCount,
+			Current: copyFloat(state.RequestsRunning), Max: copyFloat(state.running.max)})
 	}
-	if state.RequestsRunning != nil {
-		out = append(out, RuntimeMetric{Key: runtimeMetricKeyRequestsRunning, Unit: runtimeMetricUnitCount, Current: copyFloat(state.RequestsRunning)})
+	if state.QueueDepth != nil {
+		metric := RuntimeMetric{Key: runtimeMetricKeyQueueDepth, Unit: runtimeMetricUnitCount, Current: copyFloat(state.QueueDepth)}
+		if at, queue, ok := pairedQueueAtRunningMax(state.paired); ok {
+			metric.PairedOf = runtimeMetricKeyRequestsRunning
+			metric.PairedAt = at.UTC().Format(time.RFC3339Nano)
+			metric.PairedValue = copyFloat(queue)
+		}
+		out = append(out, metric)
 	}
 	if state.specAccept.current != nil || state.specAccept.avg != nil {
 		out = append(out, RuntimeMetric{Key: runtimeMetricKeySpecAcceptPercent, Unit: runtimeMetricUnitPercent,
@@ -145,6 +166,28 @@ func buildEnvelopeMetrics(state *runtimeMetricsState, kind string) []RuntimeMetr
 			AttachTo: runtimeMetricKeyGenerationTPS, Note: runtimeMetricNoteSamplerWindow})
 	}
 	return out
+}
+
+// pairedQueueAtRunningMax answers the queue value recorded AT the timestamp
+// of the window maximum of running: the argmax walk takes the highest
+// running, ties resolve to the newest timestamp, and a missing queue reading
+// at that exact sample is "not paired" (ok=false) - never a fallback onto
+// the current queue, never 0.
+func pairedQueueAtRunningMax(samples []pairedGaugeSample) (time.Time, *float64, bool) {
+	var best *pairedGaugeSample
+	for i := range samples {
+		s := &samples[i]
+		if s.running == nil {
+			continue
+		}
+		if best == nil || *s.running > *best.running || (*s.running == *best.running && s.at.After(best.at)) {
+			best = s
+		}
+	}
+	if best == nil || best.queue == nil {
+		return time.Time{}, nil, false
+	}
+	return best.at, best.queue, true
 }
 
 // aggregateHasValue reports whether a windowed aggregate carries anything at

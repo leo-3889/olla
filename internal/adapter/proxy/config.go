@@ -30,6 +30,11 @@ type Configuration struct {
 	ProxyPrefix string
 	Profile     string
 
+	// RetryOnStatus carries proxy.retry_on_status to the shared retry handler:
+	// backend status codes (4xx/5xx) that rotate the request to the next
+	// endpoint before the first byte reaches the client. Empty = off.
+	RetryOnStatus []int
+
 	ConnectionTimeout     time.Duration
 	ConnectionKeepAlive   time.Duration
 	ResponseTimeout       time.Duration
@@ -38,11 +43,6 @@ type Configuration struct {
 	TLSHandshakeTimeout   time.Duration
 	Retry                 proxyconfig.RetryPolicy
 	StreamBufferSize      int
-
-	// RetryOnStatus carries proxy.retry_on_status to the shared retry handler:
-	// backend status codes (4xx/5xx) that rotate the request to the next
-	// endpoint before the first byte reaches the client. Empty = off.
-	RetryOnStatus []int
 
 	// Olla-specific fields for advanced connection pooling
 	IdleConnTimeout time.Duration

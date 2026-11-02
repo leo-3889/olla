@@ -18,11 +18,37 @@ import (
 // them apart except through the payload's source fields.
 type runtimeMetricsProvider interface {
 	Snapshot(endpoint *domain.Endpoint) *EndpointRuntimeMetrics
-	// LifetimeTokens answers the endpoints-table "Tokens (lifetime)" column.
-	// Only the influx provider can: the sampler reads engine counters that
-	// reset on restart, so it truthfully answers "not known" (payload key
-	// absent, UI dash) in sampler mode.
-	LifetimeTokens(name string) (int64, bool)
+	// LifetimeGeneration / LifetimePrefill answer the endpoints-table token
+	// columns: the token_lookback (180d) sum of the per-UTC-day integrals of
+	// generation_tokens_total / prompt_tokens_total. Only the influx provider
+	// can answer them: the sampler holds the RAW engine counters, which reset on
+	// every restart and would answer "ever" with a lie, so it truthfully answers
+	// "not known" (payload key absent, UI dash) in sampler mode.
+	LifetimeGeneration(name string) (int64, bool)
+	LifetimePrefill(name string) (int64, bool)
+	// KVCacheReusePercent answers the endpoints-table "KV cache reuse" column.
+	// Its BASIS is per-engine and the number alone cannot tell the two apart:
+	// an engine that publishes the prefix_cache_hit_ratio gauge is answered with
+	// that gauge (measured since engine boot - it resets on every restart); an
+	// engine that publishes only the cached/computed prompt counters is answered
+	// with the cached/(cached+computed) ratio of their day integrals over the
+	// effective (retention-capped) token window. The sampler has neither integrals nor
+	// gauges, so it answers "not known". See the influx provider implementation.
+	KVCacheReusePercent(name string) (float64, bool)
+	// KVCacheReuseBasis names, in operator words, the basis the percent above
+	// was computed on ("engine prefix-cache gauge ..." vs "180d cached/prompt
+	// counter ratio"). The two bases are not comparable and the number alone
+	// cannot tell them apart, so the payload discloses which one a cell shows.
+	// "" when the reuse percent is not known (same gate as above).
+	KVCacheReuseBasis(name string) string
+	// LifetimeTokensPartial discloses that the token sums above are a
+	// best-effort LOWER BOUND: at least one window day is missing from the
+	// sum (cold-boot backfill in flight, or a day query that failed and was
+	// skipped). The payload carries it (generation_tokens_partial /
+	// prefill_tokens_partial) and the cell tooltip renders "lower bound:
+	// <reason>" - the disclosure used to live only in the gateway log.
+	// True only in influx mode; the sampler serves no sums, so never.
+	LifetimeTokensPartial() bool
 }
 
 // newRuntimeMetricsSource resolves the configured metrics backend once at

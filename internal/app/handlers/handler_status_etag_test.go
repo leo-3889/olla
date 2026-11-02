@@ -46,6 +46,13 @@ func TestEndpointsStatusHandler_ETag304OnMatch(t *testing.T) {
 	t.Parallel()
 
 	app := seedWireShapeApp(t)
+	// Warm the requests-window ring: the first cycle seeds it, every
+	// cycle after carries a stable window (stats are frozen here), so
+	// the compared pair below both see the windowed payload shape.
+	{
+		warm := httptest.NewRequest(http.MethodGet, "/internal/status/endpoints", nil)
+		app.endpointsStatusHandler(httptest.NewRecorder(), warm)
+	}
 
 	req1 := httptest.NewRequest(http.MethodGet, "/internal/status/endpoints", nil)
 	w1 := httptest.NewRecorder()
@@ -431,4 +438,55 @@ func TestEtagMatches_OversizedHeaderShortCircuits(t *testing.T) {
 	huge := `W/"` + strings.Repeat("a", 1<<16) + `"`
 	assert.False(t, etagMatches(huge, cur), "oversized If-None-Match must not match")
 	assert.False(t, etagMatches("", cur), "empty If-None-Match must not match")
+}
+
+// The three token columns are hashed into the endpoints ETag: a change in ANY
+// of them must bust the hash, or the dashboard would cache a stale column on a
+// 304. Each field is flipped in isolation - presence AND value - so a missing
+// hashEtag line for one of them fails.
+func TestEndpointStatusResponse_ETagChangesOnTokenFields(t *testing.T) {
+	t.Parallel()
+
+	base := EndpointStatusResponse{
+		TotalCount:   1,
+		HealthyCount: 1,
+		Endpoints: []EndpointSummary{{
+			ID:     "abc",
+			Name:   "ep1",
+			Status: healthyStatus,
+		}},
+	}
+	gen, genChanged := int64(1000), int64(1001)
+	pre, preChanged := int64(2000), int64(2001)
+	kv, kvChanged := 93.0, 94.0
+
+	cases := []struct {
+		name     string
+		baseline func(*EndpointSummary)
+		changed  func(*EndpointSummary)
+	}{
+		{"generation", func(s *EndpointSummary) { s.GenerationTokens = &gen }, func(s *EndpointSummary) { s.GenerationTokens = &genChanged }},
+		{"prefill", func(s *EndpointSummary) { s.PrefillTokens = &pre }, func(s *EndpointSummary) { s.PrefillTokens = &preChanged }},
+		{"kv reuse", func(s *EndpointSummary) { s.KVCacheReusePercent = &kv }, func(s *EndpointSummary) { s.KVCacheReusePercent = &kvChanged }},
+	}
+	for _, tc := range cases {
+		clone := func() EndpointStatusResponse {
+			r := base
+			r.Endpoints = append([]EndpointSummary(nil), base.Endpoints...)
+			return r
+		}
+		withBase, withChanged := clone(), clone()
+		tc.baseline(&withChanged.Endpoints[0])
+		tc.changed(&withChanged.Endpoints[0])
+
+		assert.NotEqual(t, hashEndpointStatusResponse(&withBase), hashEndpointStatusResponse(&withChanged),
+			"ETag must change when %s changes value", tc.name)
+
+		// Presence alone busts it (nil -> set), which is the sampler->influx
+		// cutover transition.
+		justAppeared := clone()
+		tc.baseline(&justAppeared.Endpoints[0])
+		assert.NotEqual(t, hashEndpointStatusResponse(&withBase), hashEndpointStatusResponse(&justAppeared),
+			"ETag must change when %s first appears", tc.name)
+	}
 }

@@ -22,8 +22,19 @@ const (
 	logKeyStatus      = "status"
 	logKeyNextCheckIn = "next_check_in"
 
-	DefaultConcurrentChecks        = 5
-	DefaultHealthCheckInterval     = 30 * time.Second
+	DefaultConcurrentChecks = 5
+	// The tick cadence is the FLOOR of every endpoint's effective check
+	// cadence: check_interval below it cannot be honoured (the due-filter
+	// runs per tick), and the dashboard's Last/Next chk columns move on it.
+	// 5s is the fleet's configured check_interval, so the GUI clock and the
+	// probes agree.
+	DefaultHealthCheckInterval = 5 * time.Second
+	// Per-tick probe budget, deliberately DECOUPLED from the tick cadence:
+	// halving the interval (30s -> 10s) must not halve the budget below the
+	// fleet's check_timeout (10s live) - derive-from-interval/2 cancelled
+	// slow-but-alive probes at 5s. 15s covers one full probe round with slack.
+	HealthCheckTickBudget          = 15 * time.Second
+	LogThrottleInterval            = 2 * time.Minute
 	DefaultRecoveryCallbackTimeout = 10 * time.Second
 )
 
@@ -250,7 +261,7 @@ func (c *HTTPHealthChecker) healthCheckLoop(ctx context.Context) {
 				// Derive from the loop's own context so in-flight checks are
 				// cancelled when the checker shuts down, rather than running
 				// to their full timeout against an already-stopped service.
-				checkCtx, cancel := context.WithTimeout(ctx, DefaultHealthCheckInterval/2)
+				checkCtx, cancel := context.WithTimeout(ctx, HealthCheckTickBudget)
 				defer cancel()
 				c.performHealthChecks(checkCtx)
 			}()

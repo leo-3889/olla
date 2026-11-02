@@ -176,7 +176,7 @@ type DashboardConfig struct {
 type DashboardPollingConfig struct {
 	// OverviewInterval is how often the overview/health poll runs (default 5s).
 	OverviewInterval time.Duration `yaml:"overview_interval,omitempty"`
-	// EndpointsInterval is how often the endpoints poll runs (default 5s).
+	// EndpointsInterval is how often the endpoints poll runs (default 10s).
 	EndpointsInterval time.Duration `yaml:"endpoints_interval,omitempty"`
 	// ModelsInterval is how often the models poll runs (default 15s).
 	ModelsInterval time.Duration `yaml:"models_interval,omitempty"`
@@ -325,11 +325,21 @@ func (s StickySessionConfig) Validate() error {
 
 // ProxyConfig holds proxy-specific configuration
 type ProxyConfig struct {
-	ProfileFilter  *domain.FilterConfig `yaml:"profile_filter,omitempty"`
-	Engine         string               `yaml:"engine"`
-	LoadBalancer   string               `yaml:"load_balancer"`
-	Profile        string               `yaml:"profile"`
-	StickySessions StickySessionConfig  `yaml:"sticky_sessions"`
+	ProfileFilter *domain.FilterConfig `yaml:"profile_filter,omitempty"`
+	Engine        string               `yaml:"engine"`
+	LoadBalancer  string               `yaml:"load_balancer"`
+	Profile       string               `yaml:"profile"`
+	// RetryOnStatus arms backend-error failover: backend HTTP status codes
+	// (4xx/5xx, e.g. [429, 503]) that rotate the request to the next endpoint
+	// BEFORE the first response byte reaches the client. A rotated-away refusal
+	// is never forwarded; tried endpoints are excluded exactly like the
+	// connection-error path. Suppressions are the same: once any byte is
+	// flushed (streaming started) the response passes through untouched.
+	// Empty (default) = byte-identical to a gateway without the feature:
+	// status codes reach the client as the backend answered. Boot-validated
+	// via ProxyConfig.Validate - entries must be 4xx/5xx.
+	RetryOnStatus  []int               `yaml:"retry_on_status"`
+	StickySessions StickySessionConfig `yaml:"sticky_sessions"`
 	// BusyQueueDepth arms load-aware Busy steering: a probe-healthy endpoint
 	// whose engine queue depth is at or above this value is graded Busy
 	// (routable, SWRR weight 0.3) so NEW conversations steer away from a
@@ -340,17 +350,7 @@ type ProxyConfig struct {
 	// metrics_source influx (influxRuntimeMetricsProvider.QueueDepthFor), so
 	// grading is armed in BOTH metrics modes. It stays inert when the queue
 	// signal is absent, zero, or older than 90s.
-	BusyQueueDepth int `yaml:"busy_queue_depth"`
-	// RetryOnStatus arms backend-error failover: backend HTTP status codes
-	// (4xx/5xx, e.g. [429, 503]) that rotate the request to the next endpoint
-	// BEFORE the first response byte reaches the client. A rotated-away refusal
-	// is never forwarded; tried endpoints are excluded exactly like the
-	// connection-error path. Suppressions are the same: once any byte is
-	// flushed (streaming started) the response passes through untouched.
-	// Empty (default) = byte-identical to a gateway without the feature:
-	// status codes reach the client as the backend answered. Boot-validated
-	// via ProxyConfig.Validate - entries must be 4xx/5xx.
-	RetryOnStatus         []int         `yaml:"retry_on_status"`
+	BusyQueueDepth        int           `yaml:"busy_queue_depth"`
 	ConnectionTimeout     time.Duration `yaml:"connection_timeout"`
 	ConnectionKeepAlive   time.Duration `yaml:"connection_keep_alive"`
 	ResponseTimeout       time.Duration `yaml:"response_timeout"`

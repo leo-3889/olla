@@ -16,6 +16,8 @@ func selectVLLM(values map[string]float64) Counters {
 		CacheHits:         first(values, "vllm:prefix_cache_hits_total", "vllm_prefix_cache_hits_total"),
 		CacheQueries:      first(values, "vllm:prefix_cache_queries_total", "vllm_prefix_cache_queries_total"),
 		KVUsage:           normalisePercent(first(values, vllmKVUsageNames...)),
+		RequestsRunning:   first(values, "vllm:num_requests_running", "vllm_num_requests_running"),
+		QueueDepth:        first(values, "vllm:num_requests_waiting", "vllm_num_requests_waiting"),
 	}
 }
 
@@ -24,10 +26,11 @@ func init() {
 		Kind:   "vllm",
 		Select: selectVLLM,
 		Columns: []Column{
-			{Key: KeyGenerationTPS, Label: "Generation", Unit: UnitTokS, Windowed: true},
-			{Key: KeyPrefillTPS, Label: "Prefill", Unit: UnitTokS, Windowed: true},
-			{Key: KeyCacheHitPercent, Label: "Prompt-cache hit rate", Unit: UnitPercent, Windowed: true},
-			{Key: KeyKVCacheUsagePercent, Label: "KV-cache utilisation", Unit: UnitPercent},
+			{Key: KeyGenerationTPS, Label: "Generation", Unit: UnitTokS, Windowed: true, Help: HelpGeneration},
+			{Key: KeyPrefillTPS, Label: "Prefill", Unit: UnitTokS, Windowed: true, Help: HelpPrefill},
+			{Key: KeyCacheHitPercent, Label: "Prompt-cache hit rate", Unit: UnitPercent, Windowed: true, Help: HelpCacheHit},
+			{Key: KeyRequestsRunning, Label: "Running", Unit: UnitCount, Help: HelpRunning},
+			{Key: KeyQueueDepth, Label: "Waiting", Unit: UnitCount, Help: HelpWaiting},
 		},
 	})
 }

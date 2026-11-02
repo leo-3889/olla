@@ -409,23 +409,93 @@ func TestStatusHandler_SystemStickyBlock(t *testing.T) {
 	assert.Equal(t, float64(2), sticky2["misses"])
 }
 
-// stubLifetimeProvider is the minimal runtimeMetricsProvider for the P8
-// payload contract: no runtime envelope, fixed lifetime totals.
+// stubLifetimeProvider is the minimal runtimeMetricsProvider for the payload
+// contract: no runtime envelope, fixed per-field lifetime sums and a KV-reuse
+// verdict.
 type stubLifetimeProvider struct {
-	totals map[string]int64
+	gen     map[string]int64
+	prefill map[string]int64
+	kv      map[string]float64
+	basis   map[string]string
 }
 
 func (stubLifetimeProvider) Snapshot(*domain.Endpoint) *EndpointRuntimeMetrics { return nil }
 
-func (s stubLifetimeProvider) LifetimeTokens(name string) (int64, bool) {
-	v, ok := s.totals[name]
+func (s stubLifetimeProvider) LifetimeGeneration(name string) (int64, bool) {
+	v, ok := s.gen[name]
 	return v, ok
 }
 
-// P8 payload contract: total_tokens rides on the endpoint entry ONLY when the
-// provider knows a sum; sampler mode / query failure / no cost rows all leave
-// the JSON key ABSENT (omitempty) - never a fabricated 0.
-func TestEndpointsStatusHandler_LifetimeTokens(t *testing.T) {
+func (s stubLifetimeProvider) LifetimePrefill(name string) (int64, bool) {
+	v, ok := s.prefill[name]
+	return v, ok
+}
+
+func (s stubLifetimeProvider) KVCacheReusePercent(name string) (float64, bool) {
+	v, ok := s.kv[name]
+	return v, ok
+}
+
+func (s stubLifetimeProvider) KVCacheReuseBasis(name string) string {
+	return s.basis[name]
+}
+
+func (s stubLifetimeProvider) LifetimeTokensPartial() bool { return false }
+
+// Payload contract: the three token columns ride on the endpoint entry ONLY
+// when the provider knows them; sampler mode / a field with no counter rows /
+// an engine with neither KV-reuse signal all leave the JSON key ABSENT
+// (omitempty) - the UI renders a dash, never a fabricated 0.
+// S5: the Requests column is the WINDOW DELTA of the lifetime gateway
+// counter (the ~10s status poll is the sampling cycle). A counter DECREASE
+// is a process restart (repo convention: countersReset / Flux
+// difference(nonNegative:true)) => the window serves ABSENT, never a
+// clamped number, and resumes once enough post-reset samples accumulate.
+func TestEndpointsStatusHandler_RequestsWindow(t *testing.T) {
+	ep := &domain.Endpoint{Name: "metered", Type: "openai-compatible", URLString: "http://metered:8000", Status: domain.StatusHealthy, Priority: 1}
+	stats := &mockStatusStatsCollector{endpointStats: map[string]ports.EndpointStats{
+		"http://metered:8000": {Name: "metered", URL: "http://metered:8000", TotalRequests: 10, SuccessfulRequests: 10},
+	}}
+	app := &Application{
+		repository:     &mockStatusEndpointRepository{endpoints: []*domain.Endpoint{ep}},
+		statsCollector: stats,
+		modelRegistry:  &mockStatusModelRegistry{},
+	}
+	get := func() map[string]interface{} {
+		shape := jsonShape(t, doStatus(t, app, "/internal/status/endpoints"))
+		list, _ := shape["endpoints"].([]interface{})
+		require.NotEmpty(t, list)
+		return list[0].(map[string]interface{})
+	}
+
+	first := get()
+	_, hasWindow := first["requests_window"]
+	assert.False(t, hasWindow, "one sample cannot cover a window: absent, not 0")
+
+	stats.endpointStats["http://metered:8000"] = ports.EndpointStats{Name: "metered", URL: "http://metered:8000", TotalRequests: 14, SuccessfulRequests: 14}
+	second := get()
+	require.Contains(t, second, "requests_window")
+	assert.Equal(t, float64(4), second["requests_window"], "the delta over the window, not the lifetime counter (14)")
+	assert.Greater(t, second["requests_window_ms"], float64(0), "the span the delta covers")
+
+	// Gateway restart: the counter goes DOWN. The window crosses the reset:
+	// ABSENT (the UI dashes it), never a clamped 0.
+	stats.endpointStats["http://metered:8000"] = ports.EndpointStats{Name: "metered", URL: "http://metered:8000", TotalRequests: 1, SuccessfulRequests: 1}
+	third := get()
+	_, hasWindow = third["requests_window"]
+	assert.False(t, hasWindow, "a window crossing a counter reset serves ABSENT")
+	assert.Equal(t, float64(1), third["request_count"], "the lifetime counter stays truthful on its own key")
+
+	// Post-reset samples accumulate a clean window: the delta resumes.
+	stats.endpointStats["http://metered:8000"] = ports.EndpointStats{Name: "metered", URL: "http://metered:8000", TotalRequests: 3, SuccessfulRequests: 3}
+	fourth := get()
+	require.Contains(t, fourth, "requests_window")
+	assert.Equal(t, float64(2), fourth["requests_window"], "post-reset delta only")
+}
+
+// T3: the lower-bound flag rides the payload exactly where the token sums
+// are served, so the cell tooltip can say "lower bound".
+func TestEndpointsStatusHandler_TokenPartialFlag(t *testing.T) {
 	endpoints := []*domain.Endpoint{
 		{Name: "metered", Type: "openai-compatible", URLString: "http://metered:8000", Status: domain.StatusHealthy, Priority: 1},
 		{Name: "unmetered", Type: "openai-compatible", URLString: "http://unmetered:8000", Status: domain.StatusHealthy, Priority: 1},
@@ -434,7 +504,45 @@ func TestEndpointsStatusHandler_LifetimeTokens(t *testing.T) {
 		repository:     &mockStatusEndpointRepository{endpoints: endpoints},
 		statsCollector: &mockStatusStatsCollector{},
 		modelRegistry:  &mockStatusModelRegistry{},
-		runtimeMetrics: stubLifetimeProvider{totals: map[string]int64{"metered": 2192454947}},
+		runtimeMetrics: partialLifetimeProvider{stubLifetimeProvider{
+			gen:     map[string]int64{"metered": 1000},
+			prefill: map[string]int64{"metered": 2000},
+			basis:   map[string]string{},
+		}},
+	}
+	shape := jsonShape(t, doStatus(t, app, "/internal/status/endpoints"))
+	byName := map[string]map[string]interface{}{}
+	for _, e := range shape["endpoints"].([]interface{}) {
+		m := e.(map[string]interface{})
+		byName[m["name"].(string)] = m
+	}
+	assert.Equal(t, true, byName["metered"]["generation_tokens_partial"])
+	assert.Equal(t, true, byName["metered"]["prefill_tokens_partial"])
+	_, genKey := byName["unmetered"]["generation_tokens_partial"]
+	assert.False(t, genKey, "the flag rides only where a sum is served")
+}
+
+// partialLifetimeProvider is stubLifetimeProvider with a disclosed lower
+// bound on the token sums.
+type partialLifetimeProvider struct{ stubLifetimeProvider }
+
+func (partialLifetimeProvider) LifetimeTokensPartial() bool { return true }
+
+func TestEndpointsStatusHandler_LifetimeTokenFields(t *testing.T) {
+	endpoints := []*domain.Endpoint{
+		{Name: "metered", Type: "openai-compatible", URLString: "http://metered:8000", Status: domain.StatusHealthy, Priority: 1},
+		{Name: "unmetered", Type: "openai-compatible", URLString: "http://unmetered:8000", Status: domain.StatusHealthy, Priority: 1},
+	}
+	app := &Application{
+		repository:     &mockStatusEndpointRepository{endpoints: endpoints},
+		statsCollector: &mockStatusStatsCollector{},
+		modelRegistry:  &mockStatusModelRegistry{},
+		runtimeMetrics: stubLifetimeProvider{
+			gen:     map[string]int64{"metered": 2192454947},
+			prefill: map[string]int64{"metered": 3000000000},
+			kv:      map[string]float64{"metered": 93.4},
+			basis:   map[string]string{"metered": kvReuseBasisGauge},
+		},
 	}
 	req := httptest.NewRequest(http.MethodGet, "/internal/status/endpoints", nil)
 	w := httptest.NewRecorder()
@@ -450,12 +558,20 @@ func TestEndpointsStatusHandler_LifetimeTokens(t *testing.T) {
 	for _, e := range raw.Endpoints {
 		byName[e["name"].(string)] = e
 	}
-	assert.Equal(t, float64(2192454947), byName["metered"]["total_tokens"], "exact lifetime sum as a JSON number")
-	_, present := byName["unmetered"]["total_tokens"]
-	assert.False(t, present, "no cost rows => the key is absent (UI dash), never a fake 0")
+	assert.Equal(t, float64(2192454947), byName["metered"]["generation_tokens"], "exact generation sum as a JSON number")
+	assert.Equal(t, float64(3000000000), byName["metered"]["prefill_tokens"], "prefill is its own number, not folded into generation")
+	assert.InDelta(t, 93.4, byName["metered"]["kv_cache_reuse_percent"], 1e-9, "the KV-reuse basis as a percentage")
+	assert.Equal(t, kvReuseBasisGauge, byName["metered"]["kv_cache_reuse_basis"],
+		"the basis travels with the percent: the two per-engine bases are not comparable")
+	for _, key := range []string{"generation_tokens", "prefill_tokens", "kv_cache_reuse_percent", "kv_cache_reuse_basis"} {
+		_, present := byName["unmetered"][key]
+		assert.False(t, present, "no basis for %s => the key is absent (UI dash), never a fake 0", key)
+	}
+	_, present := byName["metered"]["total_tokens"]
+	assert.False(t, present, "the single combined lifetime key is gone")
 
-	// Sampler mode: the provider answers "not known" for every endpoint, so
-	// the payload carries NO total_tokens key anywhere.
+	// Sampler mode: the provider answers "not known" for every endpoint and
+	// every field, so the payload carries NO token key anywhere.
 	samplerApp := &Application{
 		repository:     &mockStatusEndpointRepository{endpoints: endpoints},
 		statsCollector: &mockStatusStatsCollector{},
@@ -471,7 +587,9 @@ func TestEndpointsStatusHandler_LifetimeTokens(t *testing.T) {
 	require.NoError(t, json.NewDecoder(w2.Body).Decode(&raw2))
 	require.Len(t, raw2.Endpoints, 2)
 	for _, e := range raw2.Endpoints {
-		_, present := e["total_tokens"]
-		assert.False(t, present, "sampler mode must omit total_tokens entirely")
+		for _, key := range []string{"generation_tokens", "prefill_tokens", "kv_cache_reuse_percent", "kv_cache_reuse_basis"} {
+			_, present := e[key]
+			assert.False(t, present, "sampler mode must omit %s entirely", key)
+		}
 	}
 }

@@ -140,10 +140,55 @@ halogen:prompt_tokens_cached_total 981
 	assert.InDelta(t, 98.0, *envNum(t, got, runtimeMetricKeyCacheHitPercent, runtimeMetricPartCurrent), .01)
 	assert.InDelta(t, 33, *envNum(t, got, runtimeMetricKeyGenerationTPS, runtimeMetricPartCurrent), .001)
 	assert.InDelta(t, 4, *envNum(t, got, runtimeMetricKeyPrefillTPS, runtimeMetricPartCurrent), .001)
-	// Radiance-only saturation/spec fields stay nil for other kinds.
+	// Saturation and spec fields this fixture never publishes stay nil:
+	// absence is honest, never a fabricated zero.
 	assert.Nil(t, envNum(t, got, runtimeMetricKeyQueueDepth, runtimeMetricPartCurrent))
 	assert.Nil(t, envNum(t, got, runtimeMetricKeyRequestsRunning, runtimeMetricPartCurrent))
 	assert.Nil(t, envMetric(t, got, runtimeMetricKeySpecAcceptPercent))
+}
+
+// S3 + S4 on the sampler (keeping both sources semantically identical): the
+// Running headline aggregates the gauge through the window machinery, and
+// the Waiting headline is the queue gauge sampled AT the running peak.
+func TestRuntimeMetricsRunningWindowMaxAndPairedWaiting(t *testing.T) {
+	t.Parallel()
+	s := newEndpointRuntimeMetricsSampler(nil, nil)
+	ep := &domain.Endpoint{URLString: "x", Type: "vllm", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true}
+	at := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	s.record("x", at, parseRuntimeCounters("vllm", "vllm:num_requests_running 3\nvllm:num_requests_waiting 3\n"))
+	s.record("x", at.Add(10*time.Second), parseRuntimeCounters("vllm", "vllm:num_requests_running 7\nvllm:num_requests_waiting 1\n"))
+	s.record("x", at.Add(20*time.Second), parseRuntimeCounters("vllm", "vllm:num_requests_running 2\nvllm:num_requests_waiting 9\n"))
+	got := s.Snapshot(ep)
+	require.NotNil(t, got)
+	running := envMetric(t, got, runtimeMetricKeyRequestsRunning)
+	require.NotNil(t, running)
+	require.NotNil(t, running.Max, "the gauge enters the window aggregate")
+	assert.InDelta(t, 7.0, *running.Max, .001, "window max of the 10s samples")
+	assert.InDelta(t, 2.0, *running.Current, .001)
+	queue := envMetric(t, got, runtimeMetricKeyQueueDepth)
+	require.NotNil(t, queue)
+	require.NotNil(t, queue.PairedValue)
+	assert.InDelta(t, 1.0, *queue.PairedValue, .001, "the queue at the running peak's scrape (7), not the current 9")
+	assert.Equal(t, runtimeMetricKeyRequestsRunning, queue.PairedOf)
+	assert.Equal(t, at.Add(10*time.Second).UTC().Format(time.RFC3339Nano), queue.PairedAt)
+	assert.InDelta(t, 9.0, *queue.Current, .001, "current stays for the Prometheus re-export")
+}
+
+// The pair is all-or-nothing: an engine publishing no queue gauge has no
+// queue entry at all (UI dash), and the running window max flows regardless.
+func TestRuntimeMetricsPairedWaitingAbsentNeverFallsBack(t *testing.T) {
+	t.Parallel()
+	s := newEndpointRuntimeMetricsSampler(nil, nil)
+	ep := &domain.Endpoint{URLString: "x", Type: "llamacpp", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true}
+	at := time.Now().UTC()
+	s.record("x", at, parseRuntimeCounters("llamacpp", "llamacpp:requests_running 3\n"))
+	s.record("x", at.Add(10*time.Second), parseRuntimeCounters("llamacpp", "llamacpp:requests_running 7\n"))
+	got := s.Snapshot(ep)
+	require.NotNil(t, got)
+	running := envMetric(t, got, runtimeMetricKeyRequestsRunning)
+	require.NotNil(t, running)
+	require.NotNil(t, running.Max)
+	assert.Nil(t, envMetric(t, got, runtimeMetricKeyQueueDepth), "an engine publishing no queue gauge has no queue entry at all")
 }
 
 // TestRuntimeMetricsHonoursPerEndpointTimeout verifies that a per-endpoint
@@ -217,6 +262,15 @@ func TestRuntimeMetricsETagIgnoresSampleTimestampsButTracksValues(t *testing.T) 
 	six := 6.0
 	withQueue := base
 	withQueue.Metrics = append(append([]RuntimeMetric{}, base.Metrics...), RuntimeMetric{Key: runtimeMetricKeyQueueDepth, Unit: runtimeMetricUnitCount, Current: &six})
+	withPaired := withQueue
+	withPaired.Metrics = append([]RuntimeMetric{}, withQueue.Metrics...)
+	withPaired.Metrics[1].PairedOf = runtimeMetricKeyRequestsRunning
+	withPaired.Metrics[1].PairedAt = "2026-09-24T14:00:00Z"
+	withPaired.Metrics[1].PairedValue = &six
+	pairedFlip := withPaired
+	pairedFlip.Metrics = append([]RuntimeMetric{}, withPaired.Metrics...)
+	sevenTwo := 7.0
+	pairedFlip.Metrics[1].PairedValue = &sevenTwo
 	sourceFlip := base
 	sourceFlip.Source = runtimeMetricsSourceInflux
 	zeroed := base
@@ -230,6 +284,10 @@ func TestRuntimeMetricsETagIgnoresSampleTimestampsButTracksValues(t *testing.T) 
 	scopeFlip.Metrics = []RuntimeMetric{gen(&seven)}
 	scopeFlip.Metrics[0].Scope = runtimeMetricScopeEngine
 
+	pairedE, pairedS := hashes(&withPaired)
+	baseE0, baseS0 := hashes(&base)
+	assert.NotEqual(t, baseE0, pairedE, "attaching a paired reading must churn the endpoints ETag")
+	assert.NotEqual(t, baseS0, pairedS, "attaching a paired reading must churn the status ETag")
 	baseE, baseS := hashes(&base)
 	resampledE, resampledS := hashes(&resampled)
 	assert.Equal(t, baseE, resampledE, "timestamp-only change must not churn the /internal/status/endpoints ETag")
@@ -243,6 +301,7 @@ func TestRuntimeMetricsETagIgnoresSampleTimestampsButTracksValues(t *testing.T) 
 		"nilValue":  func(m *EndpointRuntimeMetrics) { *m = nilCleared },
 		"note":      func(m *EndpointRuntimeMetrics) { *m = noteFlip },
 		"scope":     func(m *EndpointRuntimeMetrics) { *m = scopeFlip },
+		"paired":    func(m *EndpointRuntimeMetrics) { *m = pairedFlip },
 	} {
 		flipped := base
 		mutate(&flipped)

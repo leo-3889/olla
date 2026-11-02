@@ -25,6 +25,5 @@ const (
 	FallbackReasonTranslatorDoesNotSupportPassthrough TranslatorFallbackReason = "translator_does_not_support_passthrough"
 
 	// FallbackReasonCannotPassthrough means endpoints don't support native format
-	//nolint:gosec // false positive: "passthrough" is not a credential
 	FallbackReasonCannotPassthrough TranslatorFallbackReason = "cannot_passthrough"
 )

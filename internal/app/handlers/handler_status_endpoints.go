@@ -23,26 +23,75 @@ type EndpointSummary struct {
 	NextCheckAt     *time.Time              `json:"next_check_at,omitempty"`
 	HealthCheckAt   *time.Time              `json:"health_check_at,omitempty"`
 	LastModelSyncAt *time.Time              `json:"last_model_sync_at,omitempty"`
-	Name            string                  `json:"name"`
-	Type            string                  `json:"type"`
-	Status          string                  `json:"status"`
-	LastModelSync   string                  `json:"last_model_sync,omitempty"`
-	HealthCheck     string                  `json:"health_check"`
-	ResponseTime    string                  `json:"response_time,omitempty"`
-	SuccessRate     string                  `json:"success_rate"`
-	Issues          string                  `json:"issues,omitempty"`
-	URL             string                  `json:"url"`
+	// GenerationTokens / PrefillTokens split the endpoint's lifetime token
+	// production by counter: the integral of llm_runtime generation_tokens_total
+	// / prompt_tokens_total over the EFFECTIVE token window = min(
+	// metrics_source.influx.token_lookback, the bucket's measured retention),
+	// summed from per-UTC-day parts. Pointer + omitempty:
+	// nil (key ABSENT) in sampler mode, while no day part of the window carries
+	// that field, and for endpoints with no counter rows - the UI renders a dash,
+	// never a fabricated 0. A raw counter cannot answer "ever" (it resets on
+	// restart); the per-day integral can. The cost rollups are NOT the source (a
+	// lossy downstream derivation). Pre-rename rows under ghost endpoint ids are
+	// NOT credited to the current id.
+	GenerationTokens *int64 `json:"generation_tokens,omitempty"`
+	PrefillTokens    *int64 `json:"prefill_tokens,omitempty"`
+	// KVCacheReusePercent is prefix-cache reuse in percent (0..100). THE BASIS IS
+	// PER ENGINE and the number alone does not disclose it, so the dashboard must
+	// present it as per-engine semantics:
+	//   - radiance / vLLM-family engines publish the engine's own
+	//     prefix_cache_hit_ratio gauge; the value is that gauge, measured SINCE
+	//     ENGINE BOOT, so it RESETS on every engine restart and is a fresh
+	//     window's rate, not a lifetime ratio.
+	//   - llama.cpp-family engines publish no such gauge; the value is the
+	//     ratio of the counter day-integrals over the effective token window:
+	//     cached / (cached + computed) - prompt_tokens_total counts COMPUTED
+	//     (non-cached) prompt tokens, so it is a term of the denominator,
+	//     not the denominator (the ratio is <= 100 by construction) - a
+	//     windowed ratio that survives a restart and lags far more slowly.
+	// The two are NOT comparable with each other. Key ABSENT (dash) when the
+	// engine publishes neither signal, when its gauge is older than
+	// metrics_source.influx.stale_after, when the window has no cached-token
+	// rows, or in sampler mode.
+	KVCacheReusePercent *float64 `json:"kv_cache_reuse_percent,omitempty"`
+	// RequestsWindow is the gateway proxy request counter DELTA over the
+	// 10-minute reporting window (the same window every other windowed
+	// column uses), sampled at the ~10s status poll. RequestsWindowMS is
+	// the span the delta covers. Pointer + omitempty: a window that
+	// crosses a gateway restart (the counter decreased - the repo
+	// convention for a reset) serves ABSENT, never a clamped number, and
+	// the UI dashes it.
+	RequestsWindow   *int64   `json:"requests_window,omitempty"`
+	RequestsWindowMS *float64 `json:"requests_window_ms,omitempty"`
+	Name             string   `json:"name"`
+	Type             string   `json:"type"`
+	Status           string   `json:"status"`
+	LastModelSync    string   `json:"last_model_sync,omitempty"`
+	HealthCheck      string   `json:"health_check"`
+	ResponseTime     string   `json:"response_time,omitempty"`
+	SuccessRate      string   `json:"success_rate"`
+	Issues           string   `json:"issues,omitempty"`
+	URL              string   `json:"url"`
 	// ID is a stable, opaque identifier derived from the SANITISED endpoint
 	// URL (scheme+host+port+path) via buildEndpointIDs, so credentials in the
 	// query string cannot influence it and credential rotation leaves it
 	// unchanged. Siblings that share a sanitised form get a positional
 	// disambiguator assigned by sorted (secret-independent) sibling order.
 	// See buildEndpointIDs and stableEndpointID.
-	ID           string `json:"id"`
-	Priority     int    `json:"priority"`
-	ModelCount   int    `json:"model_count"`
-	RequestCount int64  `json:"request_count"`
-	Traffic      string `json:"traffic"`
+	ID      string `json:"id"`
+	Traffic string `json:"traffic"`
+	// KVCacheReuseBasis names the basis of the percent above in operator words
+	// (see runtimeMetricsProvider.KVCacheReuseBasis): the two per-engine bases
+	// are not comparable, and for prefix-cache-gauge engines the cell repeats
+	// the prompt-cache-hit tile - the payload says so, the UI repeats it.
+	// Present exactly when KVCacheReusePercent is present.
+	KVCacheReuseBasis string `json:"kv_cache_reuse_basis,omitempty"`
+	Priority          int    `json:"priority"`
+	ModelCount        int    `json:"model_count"`
+	// RequestCount is the LIFETIME gateway proxy counter (xsync, since
+	// gateway process start) - kept for API consumers; the Endpoints table
+	// headlines Requests with RequestsWindow (below), not this.
+	RequestCount int64 `json:"request_count"`
 	// Additive dashboard fields, existing fields above are unchanged.
 	// min/max latency follow the same plain-zero convention as RequestCount
 	// for no-traffic endpoints; avg_latency_ms is a pointer so a no-traffic
@@ -50,14 +99,12 @@ type EndpointSummary struct {
 	MinLatencyMs      int64 `json:"min_latency_ms"`
 	MaxLatencyMs      int64 `json:"max_latency_ms"`
 	ActiveConnections int64 `json:"active_connections"`
-	// TotalTokens is the endpoint's lifetime token production: the SUM of
-	// hourly cost-rollup total_tokens over metrics_source.influx.token_lookback
-	// (730d retention). Pointer + omitempty: nil (key ABSENT) in sampler
-	// mode, while the lifetime query is failing, and for endpoints with no
-	// cost rows - the UI renders a dash, never a fabricated 0. Engine
-	// counters are NOT the source (they reset on restart); pre-rename rows
-	// under ghost endpoint ids are NOT credited to the current id.
-	TotalTokens *int64 `json:"total_tokens,omitempty"`
+	// GenerationTokensPartial / PrefillTokensPartial disclose that the
+	// token sums above are best-effort LOWER BOUNDS: at least one day
+	// window is missing from the sum (cold-boot backfill in flight, or a
+	// day query failed and was skipped). Rendered in the cell tooltip.
+	GenerationTokensPartial bool `json:"generation_tokens_partial,omitempty"`
+	PrefillTokensPartial    bool `json:"prefill_tokens_partial,omitempty"`
 }
 
 type EndpointStatusResponse struct {
@@ -97,6 +144,7 @@ func (a *Application) endpointsStatusHandler(w http.ResponseWriter, r *http.Requ
 
 	for _, endpoint := range allEndpoints {
 		summary := a.buildEndpointSummaryOptimised(endpoint, endpointStats, connectionStats, modelMap, endpointIDs[endpoint.URLString])
+		a.recordRequestsRing(endpoint.URLString, endpointStats, time.Now(), &summary)
 		summaries = append(summaries, summary)
 	}
 
@@ -202,15 +250,74 @@ func (a *Application) buildEndpointSummaryOptimised(endpoint *domain.Endpoint, s
 	summary.Issues = a.getEndpointIssuesSummaryOptimised(endpoint, stats, hasStats)
 	if a.runtimeMetrics != nil {
 		summary.RuntimeMetrics = a.runtimeMetrics.Snapshot(endpoint)
-		// Lifetime tokens by endpoint NAME (the Influx endpoint tag equals
+		// Lifetime counters by endpoint NAME (the Influx endpoint tag equals
 		// the olla endpoint Name): a configured endpoint with no rows, an
-		// errored lifetime query, or sampler mode all leave the key absent.
-		if total, ok := a.runtimeMetrics.LifetimeTokens(endpoint.Name); ok {
-			summary.TotalTokens = &total
+		// errored lifetime leg, or sampler mode leaves each key absent.
+		if gen, ok := a.runtimeMetrics.LifetimeGeneration(endpoint.Name); ok {
+			summary.GenerationTokens = &gen
+		}
+		if prefill, ok := a.runtimeMetrics.LifetimePrefill(endpoint.Name); ok {
+			summary.PrefillTokens = &prefill
+		}
+		// T3: the lower-bound flag is window-wide; disclose it per field
+		// only where that field's sum is actually served (so it must run
+		// AFTER the assignments above).
+		if a.runtimeMetrics.LifetimeTokensPartial() {
+			summary.GenerationTokensPartial = summary.GenerationTokens != nil
+			summary.PrefillTokensPartial = summary.PrefillTokens != nil
+		}
+		if kv, ok := a.runtimeMetrics.KVCacheReusePercent(endpoint.Name); ok {
+			summary.KVCacheReusePercent = &kv
+			summary.KVCacheReuseBasis = a.runtimeMetrics.KVCacheReuseBasis(endpoint.Name)
 		}
 	}
 
 	return summary
+}
+
+// requestsRingSample is one point of the per-endpoint request-counter ring.
+type requestsRingSample struct {
+	at    time.Time
+	total int64
+}
+
+// recordRequestsRing appends this poll's lifetime counter to the endpoint's
+// ring (window: runtimeMetricsWindow, the same 10m every other windowed
+// column uses) and serves the window delta on the summary. An endpoint with
+// no collector stats records nothing (nothing to diff). A DECREASE between
+// consecutive samples is a process restart - a request counter never
+// legitimately decreases (repo convention: countersReset, Flux
+// difference(nonNegative:true)) - so the pre-reset samples are dropped and
+// the window serves ABSENT until enough post-reset samples accumulate to
+// cover a window again.
+func (a *Application) recordRequestsRing(url string, statsMap map[string]ports.EndpointStats, now time.Time, summary *EndpointSummary) {
+	stats, ok := statsMap[url]
+	if !ok {
+		return
+	}
+	a.requestsRingsMu.Lock()
+	defer a.requestsRingsMu.Unlock()
+	if a.requestsRings == nil {
+		a.requestsRings = map[string][]requestsRingSample{}
+	}
+	ring := a.requestsRings[url]
+	if n := len(ring); n > 0 && stats.TotalRequests < ring[n-1].total {
+		ring = nil // counter reset: the old window cannot be diffed honestly
+	}
+	ring = append(ring, requestsRingSample{at: now, total: stats.TotalRequests})
+	cutoff := now.Add(-runtimeMetricsWindow)
+	i := 0
+	for i < len(ring) && ring[i].at.Before(cutoff) {
+		i++
+	}
+	ring = ring[i:]
+	a.requestsRings[url] = ring
+	if len(ring) >= 2 {
+		window := ring[len(ring)-1].total - ring[0].total
+		span := ring[len(ring)-1].at.Sub(ring[0].at).Seconds() * 1000
+		summary.RequestsWindow = &window
+		summary.RequestsWindowMS = &span
+	}
 }
 
 func (a *Application) getEndpointIssuesSummaryOptimised(endpoint *domain.Endpoint, stats ports.EndpointStats, hasStats bool) string {
@@ -384,15 +491,29 @@ func hashEndpointSummary(h hash.Hash, s *EndpointSummary) {
 	hashEtagInt64(h, int64(s.Priority))
 	hashEtagInt64(h, int64(s.ModelCount))
 	hashEtagInt64(h, s.RequestCount)
+	hashEtagInt64Ptr(h, s.RequestsWindow)
+	// RequestsWindowMS is the poll-cycle span (a clock, not a signal): it
+	// grows with every poll, so hashing it would break 304 every cycle.
+	// The delta it qualifies IS hashed.
+	_ = s.RequestsWindowMS
 	hashEtagInt64(h, s.MinLatencyMs)
 	hashEtagInt64(h, s.MaxLatencyMs)
 	hashEtagInt64(h, s.ActiveConnections)
 	hashEndpointRuntimeMetrics(h, s.RuntimeMetrics)
 	hashEtagInt64Ptr(h, s.AvgLatencyMs)
-	// The lifetime sum moves once per cost cycle (5 min), so hashing it
-	// costs at most one extra 200 per endpoint per cycle - and NOT hashing
-	// it would freeze the column on a 304 while the number grew.
-	hashEtagInt64Ptr(h, s.TotalTokens)
+	// The lifetime sums move once per cost cycle (5 min) and the reuse gauge on
+	// every sampled scrape, so hashing them costs at most one extra 200 per
+	// endpoint per cycle - and NOT hashing them would freeze the columns on a
+	// 304 while the numbers moved.
+	hashEtagInt64Ptr(h, s.GenerationTokens)
+	hashEtagInt64Ptr(h, s.PrefillTokens)
+	hashEtagFloat64Ptr(h, s.KVCacheReusePercent)
+	hashEtagString(h, strconv.FormatBool(s.GenerationTokensPartial))
+	hashEtagString(h, strconv.FormatBool(s.PrefillTokensPartial))
+	// The basis string is a per-engine constant (changes only when the engine
+	// starts/stops publishing its gauge), so it costs no extra 200s in steady
+	// state - and NOT hashing it would let a basis flip ride through a 304.
+	hashEtagString(h, s.KVCacheReuseBasis)
 	hashMinuteBucket(h, s.NextCheckAt)
 	hashMinuteBucket(h, s.HealthCheckAt)
 	hashMinuteBucket(h, s.LastModelSyncAt)

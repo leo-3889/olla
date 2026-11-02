@@ -298,10 +298,13 @@ dashboard:
 #       bucket: llm/metrics
 #       costs_bucket: llm/costs
 #       stale_after: 60s
-#       token_lookback: 730d   # "Tokens (lifetime)" column window: per endpoint, the SUM
-#                              # of hourly cost-rollup total_tokens over this window
-#                              # (default 730d = costs-bucket retention). NOT the engine
-#                              # counters - those reset on every engine restart.
+#       token_lookback: 180d   # "Tokens (lifetime)" column window: per endpoint, the
+#                              # integral of the engine token counters (llm/metrics
+#                              # llm_runtime generation_tokens_total +
+#                              # prompt_tokens_total) over this window, integrated per
+#                              # UTC day so engine restarts cannot corrupt it (default
+#                              # 180d = llm/metrics retention). NOT the cost rollups -
+#                              # those are a lossy downstream derivation.
 #       power_attribution:
 #         halogen-395: plug-395
 #         radiance-9700-64: plug-box

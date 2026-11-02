@@ -99,6 +99,9 @@ Gates on `make ready` first, then boots seven `test/cmd/ollamock` instances (por
 - Comment on **why**, not **what**. Concise and direct.
 - Production code must not panic - guard closes with CAS or `sync.Once`.
 - Always run `make ready` before committing, plus `make ci-web` if `web/` changed.
+- Every config change (live `config.yaml`, compose, endpoint definitions) must be validated against a dummy container first: boot a throwaway olla instance on a scratch port with the new config and exercise it (`/olla-validate --quick` or a smoke probe) before touching the running deployment. The live instance is never the test bed.
+- **Backups: at most one per file.** A new backup replaces the existing one (`foo.bak`, never `foo.bak-2` families). Old backups are deleted at the moment the new one is taken, not "later".
+- **Documentation is optimised with every change.** In the same change that alters behaviour, update, trim, and consolidate the affected docs so they match reality. Append-only doc growth is a defect.
 
 ## Dependencies (Endorsed)
 Do not add dependencies unless explicitly asked.

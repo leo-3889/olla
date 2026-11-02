@@ -128,18 +128,42 @@ export interface EndpointSummary {
   priority: number;
   model_count: number;
   request_count: number;
+  // Gateway request counter DELTA over the 10-minute reporting window
+  // (the ~10s status poll is the sampling cycle) and the span it covers.
+  // ABSENT on the first poll after boot and across a gateway counter
+  // reset - render the lifetime counter then, never a fake 0.
+  requests_window?: number | null;
+  requests_window_ms?: number | null;
+  // Disclose the token sums as best-effort LOWER BOUNDS (a window day is
+  // missing: cold-boot backfill in flight, or a day query failed). The
+  // cell tooltip says so; present only where the sum is served.
+  generation_tokens_partial?: boolean;
+  prefill_tokens_partial?: boolean;
   // Proxy bytes through this endpoint (in + out), pre-formatted. Emitted by
   // the backend since the traffic column landed; empty string for endpoints
   // with no stats (the UI renders a dash via ||, not ??). Optional so
   // fixtures built against older payloads stay valid.
   traffic?: string;
-  // Lifetime token production from the cost rollups (sum of hourly
-  // llm_endpoint_cost_v3 total_tokens over metrics_source.influx.token_lookback).
-  // ABSENT when metrics_source is sampler, the lifetime query is failing,
-  // or the endpoint has no cost rows (unmetered node) - the panel renders a
-  // dash via fmtTokens, never a fabricated 0. Pre-rename rows under ghost
-  // endpoint ids are NOT credited to the current id.
-  total_tokens?: number | null;
+  // Lifetime token production, split by phase: each field is the integral
+  // of the engine's per-day token flux over the lookback window
+  // (metrics_source.influx.token_lookback, 180d) - NOT the live engine
+  // counter, which resets on every engine restart. ABSENT when
+  // metrics_source is sampler, the day queries are failing, or the engine
+  // exports no such counter - the panel renders a dash via fmtTokens,
+  // never a fabricated 0. Pre-rename rows under ghost endpoint ids are NOT
+  // credited to the current id.
+  generation_tokens?: number | null;
+  prefill_tokens?: number | null;
+  // KV-cache reuse as a 0-100 percentage. Basis is per-engine: radiance
+  // reports its engine prefix-cache gauge (since-boot, resets on restart),
+  // halogen the 180-day ratio of cached to prompt tokens. ABSENT when the
+  // engine exposes neither signal - render a dash, never a fake 0.
+  kv_cache_reuse_percent?: number | null;
+  // Names the basis of kv_cache_reuse_percent in operator words. The two
+  // per-engine bases are not comparable, and for prefix-cache-gauge engines
+  // the cell repeats the prompt-cache-hit tile - the tooltip says which
+  // basis a row uses. Present exactly when the percent is present.
+  kv_cache_reuse_basis?: string;
   min_latency_ms: number;
   max_latency_ms: number;
   active_connections: number;
@@ -199,6 +223,9 @@ export interface UIConfigMetricColumn {
   key: string;
   label: string;
   unit: string;
+  // Header tooltip (window, source, aggregate, known ceiling), published
+  // verbatim by the backend. The built-in defaults mirror these strings.
+  help?: string;
   window: boolean;
 }
 

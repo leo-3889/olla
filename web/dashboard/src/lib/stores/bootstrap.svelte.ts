@@ -25,17 +25,23 @@ export const DEFAULT_UI_CONFIG: UIConfig = {
     { id: 'cost', enabled: false, reason: 'requires metrics_source.mode=influx' },
     { id: 'gpu', enabled: false, reason: 'requires metrics_source.mode=influx and metrics_source.influx.gpu_endpoints' },
   ],
+  // Built-in defaults mirror the Go dialect union (runtime_dialect.UnionColumns
+  // over the registered dialects) INCLUDING the help strings, published
+  // verbatim by /internal/ui/config.json - the manifest always wins.
   runtime_metric_columns: [
-    { key: 'generation_tps', label: 'Generation', unit: 'tok_s', window: true },
-    { key: 'prefill_tps', label: 'Prefill', unit: 'tok_s', window: true },
-    { key: 'cache_hit_percent', label: 'Prompt-cache hit rate', unit: 'percent', window: true },
-    { key: 'kv_cache_usage_percent', label: 'KV-cache utilisation', unit: 'percent', window: false },
-    { key: 'queue_depth', label: 'Queue depth', unit: 'count', window: false },
+    { key: 'generation_tps', label: 'Generation', unit: 'tok_s', window: true, help: 'Window: the last 10 minutes. Headline = the window MAX; sub-row = window avg/max. Source: engine-reported generation throughput (10s sampler scrapes / 1m ollametrics Influx windows) - max of 10s samples, not a true peak. Blanks with the whole runtime envelope when the source is stale.' },
+    { key: 'prefill_tps', label: 'Prefill', unit: 'tok_s', window: true, help: 'Window: the last 10 minutes. Headline = the window MAX; sub-row = window avg/max. Source: engine-reported prefill throughput (10s sampler scrapes / 1m ollametrics Influx windows) - max of 10s samples, not a true peak. Blanks with the whole runtime envelope when the source is stale.' },
+    { key: 'cache_hit_percent', label: 'Prompt-cache hit rate', unit: 'percent', window: true, help: "Window: the last 10 minutes. Headline = the latest engine sample; sub-row = window avg. Source: engine prompt-cache counters (cached / (cached + computed) prompt tokens, or the engine's own hit-rate gauge) via sampler scrapes / ollametrics Influx. Blanks with the runtime envelope when the source is stale." },
+    { key: 'requests_running', label: 'Running', unit: 'count', window: false, help: "Window: the last 10 minutes. Headline = the window MAX of the engine's running-requests gauge (10s sampler scrapes / 1m ollametrics Influx windows) - max of 10s samples, not a true peak. Blanks with the whole runtime envelope when the source is stale." },
+    { key: 'queue_depth', label: 'Waiting', unit: 'count', window: false, help: 'Window: the last 10 minutes. Headline = queue_depth sampled AT THE TIMESTAMP of the window max of Running (both engine gauges are written per scrape at identical timestamps). Dash = no paired sample in the window - never the current value, never 0. Source: engine queue gauge via sampler / ollametrics. Blanks with the runtime envelope when the source is stale.' },
   ],
-  // Must match the Go uiStaticColumns(): the lifetime-tokens column exists
-  // outside the dialect union (cost rollups, not engine-reported).
+  // Must match the Go uiStaticColumns(): lifetime token production split by
+  // phase plus KV-cache reuse - all outside the dialect union (per-day
+  // integrals / engine gauges, not window-sampled engine rates).
   static_metric_columns: [
-    { key: 'total_tokens', label: 'Tokens (lifetime)', unit: 'count', window: false },
+    { key: 'generation_tokens', label: 'Tokens 180d (Gen)', unit: 'count', window: false, help: "Window: the effective token lookback 180d = min(configured token_lookback, the bucket's measured retention). Source: per-UTC-day integrals of the engine token counter via ollametrics/Influx - influx mode only; sampler mode dashes every cell. A missing day window shrinks the sum: the cell tooltip then says LOWER BOUND. Dash = no data, never a fabricated 0." + ' Counter: generation_tokens_total.' },
+    { key: 'prefill_tokens', label: 'Tokens 180d (Prefill)', unit: 'count', window: false, help: "Window: the effective token lookback 180d = min(configured token_lookback, the bucket's measured retention). Source: per-UTC-day integrals of the engine token counter via ollametrics/Influx - influx mode only; sampler mode dashes every cell. A missing day window shrinks the sum: the cell tooltip then says LOWER BOUND. Dash = no data, never a fabricated 0." + ' Counter: prompt_tokens_total (llama.cpp-family counts COMPUTED prompt tokens).' },
+    { key: 'kv_cache_reuse_percent', label: 'KV cache reuse', unit: 'percent', window: false, help: "Per-engine basis, named in the cell tooltip: the engine's prefix-cache gauge (measured since engine boot, resets on every restart) or the ratio cached/(cached+computed) prompt tokens over the token window. Source: engine metrics via ollametrics/Influx; sampler mode dashes. Dash = the engine exposes no cache-reuse signal." },
   ],
 };
 

@@ -34,11 +34,11 @@ func init() {
 		EngineScoped: true,
 		Select:       selectRadiance,
 		Columns: []Column{
-			{Key: KeyGenerationTPS, Label: "Generation", Unit: UnitTokS, Windowed: true},
-			{Key: KeyPrefillTPS, Label: "Prefill", Unit: UnitTokS, Windowed: true},
-			{Key: KeyCacheHitPercent, Label: "Prompt-cache hit rate", Unit: UnitPercent, Windowed: true},
-			{Key: KeyKVCacheUsagePercent, Label: "KV-cache utilisation", Unit: UnitPercent},
-			{Key: KeyQueueDepth, Label: "Queue depth", Unit: UnitCount},
+			{Key: KeyGenerationTPS, Label: "Generation", Unit: UnitTokS, Windowed: true, Help: HelpGenerationEngine},
+			{Key: KeyPrefillTPS, Label: "Prefill", Unit: UnitTokS, Windowed: true, Help: HelpPrefill},
+			{Key: KeyCacheHitPercent, Label: "Prompt-cache hit rate", Unit: UnitPercent, Windowed: true, Help: HelpCacheHit},
+			{Key: KeyRequestsRunning, Label: "Running", Unit: UnitCount, Help: HelpRunning},
+			{Key: KeyQueueDepth, Label: "Waiting", Unit: UnitCount, Help: HelpWaiting},
 		},
 	})
 }

@@ -39,14 +39,16 @@ export function fmtInt(n: number | null | undefined): string {
 }
 
 /**
- * Compact token count for the lifetime-tokens column. Tokens are a COUNT,
- * so this uses decimal (SI) scales, not the 1024 ladder of fmtBytes:
+ * Compact token count for the lifetime token columns (generation/prefill).
+ * Tokens are a COUNT, so this uses decimal (SI) scales, not the 1024 ladder
+ * of fmtBytes:
  * - < 10 000          -> thousands grouping, exact ("1,234")
  * - < 1e6 / < 1e9     -> K/M with one decimal ("456.7K", "97.5M")
  * - < 1e12 / above    -> B/T with two decimals ("2.19B")
  * null/undefined/non-finite/negative -> "" so callers render a dash: the
- * backend omits total_tokens when no lifetime source is wired, and a fake
- * 0 would claim the endpoint produced nothing.
+ * backend omits the lifetime token fields when no lifetime source is wired
+ * (or the engine exports no such counter), and a fake 0 would claim the
+ * endpoint produced nothing.
  */
 export function fmtTokens(n: number | null | undefined): string {
   if (n === null || n === undefined || !Number.isFinite(n) || n < 0) return '';

@@ -67,7 +67,16 @@ COPY --from=webbuild /src/internal/app/handlers/dashboard/dist ./internal/app/ha
 # `go vet` and `go test` passed for this exact source.
 COPY --from=test /src/go.mod /tmp/test-gate/go.mod
 # -trimpath keeps the binary reproducible; -s -w strips symbols to shrink it.
-RUN go build -trimpath -ldflags "-s -w" -o /app/olla .
+# VERSION/COMMIT/BUILD_DATE stamp internal/version so the dashboard's Version
+# cell names the binary that is actually running (dev default v0.0.x made a
+# stamped prod build indistinguishable from a test build). Pass them at build:
+#   --build-arg VERSION=$(git describe --tags --abbrev=0) \
+#   --build-arg COMMIT=$(git rev-parse --short HEAD) \
+#   --build-arg BUILD_DATE=$(date -u +%FT%TZ)
+ARG VERSION=v0.0.x
+ARG COMMIT=none
+ARG BUILD_DATE=nowish
+RUN go build -trimpath -ldflags "-s -w -X github.com/thushan/olla/internal/version.Version=${VERSION} -X github.com/thushan/olla/internal/version.Commit=${COMMIT} -X github.com/thushan/olla/internal/version.Date=${BUILD_DATE}" -o /app/olla .
 
 # ---- Stage 2: minimal runtime (mirrors the repo Dockerfile) ----------------
 FROM alpine:latest

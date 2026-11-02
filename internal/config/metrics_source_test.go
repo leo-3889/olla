@@ -28,7 +28,7 @@ func TestMetricsSourceValidate(t *testing.T) {
 				PowerAttribution: map[string]string{"ep": "plug"},
 			}},
 			wantMode: "influx", wantStale: 60 * time.Second, wantCosts: "llm/metrics",
-			wantLookback: 730 * 24 * time.Hour,
+			wantLookback: 180 * 24 * time.Hour,
 		},
 		{
 			name: "negative token_lookback rejected",

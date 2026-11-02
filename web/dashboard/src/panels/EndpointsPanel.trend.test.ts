@@ -135,7 +135,9 @@ describe('EndpointsPanel trend selection', () => {
     }
     flushSync();
     const trend = document.querySelector('[data-testid="endpoint-trend"]');
-    expect(trend?.querySelector('path.line-gen')).not.toBeNull();
+    // bars, not lines: all three seeded samples share the 0-60 s bin
+    expect(trend?.querySelectorAll('rect.bar-gen').length).toBe(1);
+    expect(trend?.querySelectorAll('rect.bar-prefill').length).toBe(1);
     expect(trend?.textContent).toContain('gen avg 10 tok/s');
     expect(trend?.textContent).toContain('prefill avg 100 tok/s');
     expect(trend?.textContent).toContain('3 samples');

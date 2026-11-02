@@ -29,6 +29,7 @@ const (
 	KeyCacheHitPercent     = "cache_hit_percent"
 	KeyKVCacheUsagePercent = "kv_cache_usage_percent"
 	KeyQueueDepth          = "queue_depth"
+	KeyRequestsRunning     = "requests_running"
 )
 
 // Counters is the engine-neutral set of raw signals a dialect selects out of
@@ -53,11 +54,32 @@ type Counters struct {
 
 // Column declares one dashboard column this dialect can fill.
 type Column struct {
-	Key      string
-	Label    string
-	Unit     string
+	Key   string
+	Label string
+	Unit  string
+	// Help explains the column to the operator: the window, the source
+	// (gateway proxy counters vs engine metrics via sampler/ollametrics),
+	// the aggregate, and the known ceiling. Published verbatim on the
+	// dashboard manifest as the header tooltip; the dashboard's built-in
+	// defaults mirror these strings (bootstrap.svelte.ts).
+	Help     string
 	Windowed bool
 }
+
+// Column help texts are wire contract (the manifest publishes them verbatim
+// as the header tooltips). Each names the WINDOW, the SOURCE, the AGGREGATE,
+// and the known ceiling; the staleness sentence states the honest ceiling of
+// the whole-envelope blanking (all engine-runtime cells blank together).
+const (
+	HelpGeneration = "Window: the last 10 minutes. Headline = the window MAX; sub-row = window avg/max. Source: engine-reported generation throughput (10s sampler scrapes / 1m ollametrics Influx windows) - max of 10s samples, not a true peak. Blanks with the whole runtime envelope when the source is stale."
+	HelpPrefill    = "Window: the last 10 minutes. Headline = the window MAX; sub-row = window avg/max. Source: engine-reported prefill throughput (10s sampler scrapes / 1m ollametrics Influx windows) - max of 10s samples, not a true peak. Blanks with the whole runtime envelope when the source is stale."
+	HelpCacheHit   = "Window: the last 10 minutes. Headline = the latest engine sample; sub-row = window avg. Source: engine prompt-cache counters (cached / (cached + computed) prompt tokens, or the engine's own hit-rate gauge) via sampler scrapes / ollametrics Influx. Blanks with the runtime envelope when the source is stale."
+	HelpRunning    = "Window: the last 10 minutes. Headline = the window MAX of the engine's running-requests gauge (10s sampler scrapes / 1m ollametrics Influx windows) - max of 10s samples, not a true peak. Blanks with the runtime envelope when the source is stale."
+	HelpWaiting    = "Window: the last 10 minutes. Headline = queue_depth sampled AT THE TIMESTAMP of the window max of Running (both engine gauges are written per scrape at identical timestamps). Dash = no paired sample in the window - never the current value, never 0. Source: engine queue gauge via sampler / ollametrics. Blanks with the runtime envelope when the source is stale."
+	// HelpGenerationEngine is the radiance variant: the same shape plus the
+	// engine-wide batch-aggregate caveat the envelope states for scoped kinds.
+	HelpGenerationEngine = "Window: the last 10 minutes. Headline = the window MAX; sub-row = window avg/max. Engine-wide batch aggregate across concurrent requests, not per-stream speed (10s sampler scrapes / 1m ollametrics Influx windows) - max of 10s samples, not a true peak. Blanks with the whole runtime envelope when the source is stale."
+)
 
 // Dialect describes one backend family.
 type Dialect struct {
@@ -66,8 +88,9 @@ type Dialect struct {
 	// Kind is the canonical runtime kind (config.CanonicalRuntimeKind).
 	Kind string
 	// Columns lists what backends of this kind can render, in display
-	// order. Signals that render attached to a column (speculative
-	// acceptance) or inside one (requests running) are not columns.
+	// order: the manifest union publishes the columns in this order, so
+	// Running precedes Waiting wherever both exist. Signals that render
+	// attached to a column (speculative acceptance) are not columns.
 	Columns []Column
 	// EngineScoped marks whose throughput values are engine-wide batch
 	// aggregates across concurrent requests rather than per-stream speed;

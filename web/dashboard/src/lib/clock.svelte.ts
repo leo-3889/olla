@@ -13,8 +13,36 @@ const CLOCK_JOB_NAME = 'clock';
 
 let now = $state(Date.now());
 
+// Browser-to-server clock offset in ms (server timestamp - local Date.now()
+// at the last successful poll). Relative labels everywhere ("Xs ago",
+// "in Xs", uptime) measure SERVER-issued instants; against a skewed browser
+// clock every label shifted by the skew. getNow() adds this offset so the
+// shared clock is server-truth within poll latency.
+let skewMs = 0;
+
 function tick(): void {
-  now = Date.now();
+  now = Date.now() + skewMs;
+}
+
+/** Align the shared clock with the server: pass the payload's top-level
+ *  `timestamp`. Clamped to +/-15 min so a malformed/garbage timestamp can
+ *  never teleport the clock and freeze the labels. */
+export function setServerSkew(serverTimestampIso: string | undefined | null): void {
+  if (serverTimestampIso === null) {
+    skewMs = 0;
+    now = Date.now();
+    return;
+  }
+  if (!serverTimestampIso) return;
+  const t = Date.parse(serverTimestampIso);
+  if (Number.isNaN(t)) return;
+  // Measure against the clock's own LOCAL base (now - current skew), not a
+  // fresh Date.now(): mocked/frozen clocks (tests) and 1 s tick granularity
+  // cancel out, and only the server-vs-local difference lands in skewMs.
+  const local = now - skewMs;
+  const d = t - local;
+  skewMs = Math.max(-15 * 60_000, Math.min(15 * 60_000, d));
+  now = local + skewMs;
 }
 
 let registered = false;
