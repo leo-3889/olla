@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sync/atomic"
 	"time"
 
@@ -78,6 +79,27 @@ func NewBaseProxyComponents(
 // IncrementRequests increments the total request counter
 func (b *BaseProxyComponents) IncrementRequests() {
 	atomic.AddInt64(&b.Stats.TotalRequests, 1)
+}
+
+// DeferredStatusReporter is implemented by response writers that can report
+// a status code currently held (not yet committed to the client). The proxy
+// engines use this to suppress success accounting (circuit breaker, model
+// stats) for a refusal the gate is holding: the retry loop may rotate that
+// response to the next endpoint, in which case booking a success here would
+// mask the refusal signal from the circuit breaker and model-level stats.
+type DeferredStatusReporter interface {
+	Deferred() (int, bool)
+}
+
+// IsRefusalHeld reports whether w is a gate currently holding a refusal.
+// Proxy engines call this to skip cb.RecordSuccess and RecordSuccess for
+// attempts whose response the gate will rotate away.
+func IsRefusalHeld(w interface{ Header() http.Header }) bool {
+	if d, ok := w.(DeferredStatusReporter); ok {
+		_, held := d.Deferred()
+		return held
+	}
+	return false
 }
 
 // RecordSuccess records a successful request. modelName is the resolved

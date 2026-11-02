@@ -102,7 +102,6 @@ func TestMetricsHandler_MatchesModelStatsCounts(t *testing.T) {
 				AverageLatency:     110,
 				P95Latency:         200,
 				P99Latency:         350,
-				UniqueClients:      3,
 				RoutingHits:        35,
 				RoutingMisses:      5,
 				RoutingFallbacks:   2,

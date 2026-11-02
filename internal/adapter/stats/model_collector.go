@@ -26,7 +26,6 @@ type modelData struct {
 
 	// Percentile tracking
 	percentileTracker  PercentileTracker
-	uniqueClients      *xsync.Map[string, int64] // IP -> last seen timestamp
 	totalRequests      *xsync.Counter
 	successfulRequests *xsync.Counter
 	failedRequests     *xsync.Counter
@@ -161,7 +160,6 @@ func (mc *ModelCollector) getOrInitModel(model string, now int64) *modelData {
 		return &modelData{
 			name:               model,
 			percentileTracker:  tracker,
-			uniqueClients:      xsync.NewMap[string, int64](),
 			lastRequested:      now,
 			totalRequests:      xsync.NewCounter(),
 			successfulRequests: xsync.NewCounter(),
@@ -225,13 +223,6 @@ func (mc *ModelCollector) calculateModelStats(data *modelData) ports.ModelStats 
 	// Calculate percentiles
 	p95, p99 := mc.calculatePercentiles(data)
 
-	// Count unique clients
-	var uniqueClients int64
-	data.uniqueClients.Range(func(ip string, lastSeen int64) bool {
-		uniqueClients++
-		return true
-	})
-
 	return ports.ModelStats{
 		Name:               data.name,
 		TotalRequests:      total,
@@ -241,7 +232,6 @@ func (mc *ModelCollector) calculateModelStats(data *modelData) ports.ModelStats 
 		AverageLatency:     avgLatency,
 		P95Latency:         p95,
 		P99Latency:         p99,
-		UniqueClients:      uniqueClients,
 		LastRequested:      time.Unix(0, atomic.LoadInt64(&data.lastRequested)),
 		RoutingHits:        data.routingHits.Value(),
 		RoutingMisses:      data.routingMisses.Value(),
@@ -309,16 +299,12 @@ func (mc *ModelCollector) tryCleanup(now int64) {
 
 func (mc *ModelCollector) cleanupOldData(now int64) {
 	modelCutoff := now - mc.config.ModelStatsTTL.Nanoseconds()
-	clientIPCutoff := now - mc.config.ClientIPRetentionTime.Nanoseconds()
 
 	// Clean up old models
 	var modelsToDelete []string
 	mc.models.Range(func(name string, data *modelData) bool {
 		if atomic.LoadInt64(&data.lastRequested) < modelCutoff {
 			modelsToDelete = append(modelsToDelete, name)
-		} else {
-			// Clean up old client IPs more aggressively
-			mc.cleanupClientIPs(data, clientIPCutoff)
 		}
 		return true
 	})
@@ -331,46 +317,6 @@ func (mc *ModelCollector) cleanupOldData(now int64) {
 	// Keep only top N models if we exceed the limit
 	if mc.models.Size() > mc.config.MaxTrackedModels {
 		mc.pruneExcessModels()
-	}
-}
-
-// cleanupClientIPs removes old client IPs and enforces the max clients per model limit
-func (mc *ModelCollector) cleanupClientIPs(data *modelData, cutoff int64) {
-	var ipsToDelete []string
-	var allIPs []struct {
-		ip   string
-		time int64
-	}
-
-	data.uniqueClients.Range(func(ip string, lastSeen int64) bool {
-		if lastSeen < cutoff {
-			ipsToDelete = append(ipsToDelete, ip)
-		} else {
-			allIPs = append(allIPs, struct {
-				ip   string
-				time int64
-			}{ip, lastSeen})
-		}
-		return true
-	})
-
-	// Delete old IPs
-	for _, ip := range ipsToDelete {
-		data.uniqueClients.Delete(ip)
-	}
-
-	// If we still have too many IPs, remove the oldest ones
-	if len(allIPs) > mc.config.MaxUniqueClientsPerModel {
-		// Sort by time, oldest first
-		sort.Slice(allIPs, func(i, j int) bool {
-			return allIPs[i].time < allIPs[j].time
-		})
-
-		// Delete the oldest IPs
-		toRemove := len(allIPs) - mc.config.MaxUniqueClientsPerModel
-		for i := range toRemove {
-			data.uniqueClients.Delete(allIPs[i].ip)
-		}
 	}
 }
 

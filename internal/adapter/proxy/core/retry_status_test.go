@@ -421,7 +421,7 @@ func TestStatusGateWriter_HoldsAndDiscards(t *testing.T) {
 		assert.Equal(t, "no capacity", rec.Body.String())
 	})
 
-	t.Run("flush commits the held response", func(t *testing.T) {
+	t.Run("flush suppressed while holding a refusal", func(t *testing.T) {
 		t.Parallel()
 		rec := &commitTrackingWriter{ResponseRecorder: httptest.NewRecorder()}
 		g := newStatusGate(rec, map[int]struct{}{429: {}})
@@ -429,8 +429,18 @@ func TestStatusGateWriter_HoldsAndDiscards(t *testing.T) {
 		_, _ = g.Write([]byte("streamed refusal"))
 		require.NoError(t, http.NewResponseController(g).Flush())
 		_, held := g.deferred()
-		assert.False(t, held, "a flush commits the response: streaming started, rotation is over")
-		assert.Equal(t, 429, rec.Code)
-		assert.Equal(t, "streamed refusal", rec.Body.String())
+		assert.True(t, held, "flush is suppressed while a refusal is held: rotation is still possible")
+		assert.Equal(t, 0, rec.headerWrites, "suppressed flush must not commit")
+	})
+
+	t.Run("flush forwards when not holding", func(t *testing.T) {
+		t.Parallel()
+		rec := &commitTrackingWriter{ResponseRecorder: httptest.NewRecorder()}
+		g := newStatusGate(rec, map[int]struct{}{429: {}})
+		g.WriteHeader(200) // not in set: pass-through
+		_, _ = g.Write([]byte("data"))
+		require.NoError(t, http.NewResponseController(g).Flush())
+		_, held := g.deferred()
+		assert.False(t, held, "not held: flush forwards normally")
 	})
 }

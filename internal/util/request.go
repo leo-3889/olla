@@ -55,7 +55,11 @@ func GetClientIP(r *http.Request, trustProxyHeaders bool, trustedCIDRs []*net.IP
 	}
 
 	if ip := r.Header.Get("X-Forwarded-For"); ip != "" {
-		return strings.TrimSpace(strings.Split(ip, ",")[0])
+		// ponytail: rightmost = the IP the trusted proxy observed its upstream connect
+		// from. Leftmost is fully attacker-controlled; using it allows rate-limit
+		// bypass by prepending fake XFF entries.
+		parts := strings.Split(ip, ",")
+		return strings.TrimSpace(parts[len(parts)-1])
 	}
 	if ip := r.Header.Get("X-Real-IP"); ip != "" {
 		return strings.TrimSpace(ip)

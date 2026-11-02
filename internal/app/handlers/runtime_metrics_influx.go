@@ -973,6 +973,15 @@ func clampKVReusePercent(v float64) float64 {
 	return v
 }
 
+// clampPercentPtr clamps a derived percentage pointer (0..100), preserving nil.
+func clampPercentPtr(p *float64) *float64 {
+	if p == nil {
+		return nil
+	}
+	c := clampKVReusePercent(*p)
+	return &c
+}
+
 // KVCacheReusePercent implements the KV-cache-reuse read surface. THE BASIS IS
 // PER ENGINE and the number alone does not disclose it, which the payload
 // comment states verbatim:
@@ -1265,10 +1274,10 @@ func (s *influxSeries) envelope() []RuntimeMetric {
 	}
 	if v, ok := s.last["prefix_cache_hit_ratio"]; ok {
 		out = append(out, RuntimeMetric{Key: runtimeMetricKeyCacheHitPercent, Unit: runtimeMetricUnitPercent,
-			Current: floatPtr(100 * v), Avg: s.gaugeMeanAvg("prefix_cache_hit_ratio", 100), Note: runtimeMetricNoteInfluxGauge})
+			Current: floatPtr(clampKVReusePercent(100 * v)), Avg: clampPercentPtr(s.gaugeMeanAvg("prefix_cache_hit_ratio", 100)), Note: runtimeMetricNoteInfluxGauge})
 	}
 	if v, ok := s.last["kv_cache_usage_ratio"]; ok {
-		out = append(out, RuntimeMetric{Key: runtimeMetricKeyKvCacheUsagePercent, Unit: runtimeMetricUnitPercent, Current: floatPtr(100 * v)})
+		out = append(out, RuntimeMetric{Key: runtimeMetricKeyKvCacheUsagePercent, Unit: runtimeMetricUnitPercent, Current: floatPtr(clampKVReusePercent(100 * v))})
 	}
 	if v, ok := s.last["requests_running"]; ok {
 		metric := RuntimeMetric{Key: runtimeMetricKeyRequestsRunning, Unit: runtimeMetricUnitCount,
@@ -1289,7 +1298,7 @@ func (s *influxSeries) envelope() []RuntimeMetric {
 	}
 	if v, ok := s.last["draft_acceptance_ratio"]; ok {
 		out = append(out, RuntimeMetric{Key: runtimeMetricKeySpecAcceptPercent, Unit: runtimeMetricUnitPercent,
-			Current: floatPtr(100 * v), Avg: s.gaugeMeanAvg("draft_acceptance_ratio", 100),
+			Current: floatPtr(clampKVReusePercent(100 * v)), Avg: clampPercentPtr(s.gaugeMeanAvg("draft_acceptance_ratio", 100)),
 			AttachTo: runtimeMetricKeyGenerationTPS, Note: runtimeMetricNoteInfluxGauge})
 	}
 	return out

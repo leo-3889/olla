@@ -1,0 +1,29 @@
+# Shepherd watcher config template — copy to shepherd-watch.yaml (gitignored)
+# next to this file (or point SHEPHERD_CONFIG at the deployed copy). One entry
+# per wakeable node; values below are placeholders.
+metrics: "http://127.0.0.1:40114/internal/metrics"
+idle_seconds: 1800        # no demand for this long -> shutdown
+wake_demand_window: 90    # demand younger than this (s) triggers wake
+wake_cooldown: 180        # min seconds between WOL bursts while node is down
+
+nodes:
+  - name: gpu-box-1
+    endpoint: gpu-box-1      # olla_endpoint_up{endpoint=...}
+    models: [qwen4exp]              # any of these counters growing = demand
+    keep_asleep_if_up: [gpu-box-2]   # twin serving => do not wake
+    mac: "AA:BB:CC:DD:EE:FF"
+    broadcast: "192.168.1.255"
+    wol_port: 9
+    wol_repeat: 3
+    ssh: "shepherd@192.168.1.50"   # shutdown target; key auth + passwordless sudo
+
+  # Example - strix/comfyui, when it ever needs power management:
+  # - name: gpu-box-2
+  #   endpoint: gpu-box-3
+  #   models: [qwen3.5-2b]
+  #   keep_asleep_if_up: []
+  #   mac: "AA:BB:CC:DD:EE:F0"
+  #   broadcast: "192.168.1.255"
+  #   wol_port: 9
+  #   wol_repeat: 3
+  #   ssh: "shepherd@192.168.1.51"

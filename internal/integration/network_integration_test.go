@@ -45,8 +45,8 @@ func TestTrustedProxyCIDRsIntegration(t *testing.T) {
 			name:          "trusted_proxy_with_x_forwarded_for",
 			remoteAddr:    "192.168.1.1:12345",
 			xForwardedFor: "203.0.113.1, 198.51.100.1",
-			expectedIP:    "203.0.113.1",
-			description:   "Should use first IP from X-Forwarded-For when coming from trusted proxy",
+			expectedIP:    "198.51.100.1",
+			description:   "Should use rightmost IP from X-Forwarded-For when coming from trusted proxy",
 		},
 		{
 			name:          "untrusted_proxy_with_x_forwarded_for",
@@ -164,7 +164,7 @@ func TestRealWorldScenarios(t *testing.T) {
 				cidrs, _ := util.ParseTrustedCIDRs([]string{"192.168.0.0/16"})
 				return req, cidrs, true
 			},
-			expectedIP: "203.0.113.1",
+			expectedIP: "104.16.1.1",
 		},
 		{
 			name:        "docker_compose_setup",

@@ -144,8 +144,11 @@ func (s *Service) proxyToSingleEndpoint(ctx context.Context, w http.ResponseWrit
 	}
 	defer resp.Body.Close()
 
-	// Record success with circuit breaker
-	if cb != nil {
+	// Record success with circuit breaker. Skip when the status gate is
+	// holding a refusal (the retry loop may rotate this response — booking
+	// a success here would mask the refusal signal from the breaker).
+	held := core.IsRefusalHeld(w)
+	if cb != nil && !held {
 		cb.RecordSuccess(attempt)
 	}
 
@@ -190,12 +193,18 @@ func (s *Service) proxyToSingleEndpoint(ctx context.Context, w http.ResponseWrit
 	}
 
 	// The response is relayed whatever its status, but a backend 5xx is still a
-	// failed request as far as the stats are concerned.
+	// failed request as far as the stats are concerned. A refusal the status gate
+	// is still holding is not a success either: the retry loop discards that
+	// response and rotates, so booking a success (proxy stats + model stats) or
+	// publishing the success event here would overstate the endpoint's health.
 	duration := time.Since(stats.StartTime)
 	if resp.StatusCode >= http.StatusInternalServerError {
 		s.RecordUpstreamError(ctx, endpoint, resolvedModel, resp.StatusCode, duration, int64(bytesWritten))
-	} else {
+	} else if !held {
 		s.RecordSuccess(endpoint, resolvedModel, duration.Milliseconds(), int64(bytesWritten))
+	}
+
+	if !held {
 
 		s.PublishEvent(core.ProxyEvent{
 			Type:      core.EventTypeProxySuccess,

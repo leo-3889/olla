@@ -68,7 +68,6 @@ type ModelStats struct {
 	AverageLatency     int64  `json:"avg_latency_ms"`
 	P95Latency         int64  `json:"p95_latency_ms"`
 	P99Latency         int64  `json:"p99_latency_ms"`
-	UniqueClients      int64  `json:"unique_clients"`
 
 	// Routing effectiveness
 	RoutingHits      int64 `json:"routing_hits"`      // Found on first endpoint

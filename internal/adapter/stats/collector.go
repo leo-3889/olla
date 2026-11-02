@@ -468,7 +468,7 @@ func (c *Collector) cleanup(now int64) {
 		sort.Slice(ages, func(i, j int) bool {
 			return ages[i].time < ages[j].time
 		})
-		remove := len(ages) - MaxTrackedEndpoints + 100
+		remove := len(ages) - MaxTrackedEndpoints
 		for i := 0; i < remove && i < len(ages); i++ {
 			c.endpoints.Delete(ages[i].url)
 		}

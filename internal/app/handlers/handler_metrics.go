@@ -197,7 +197,6 @@ type modelMetricSample struct {
 	avgLatency         float64
 	p95Latency         float64
 	p99Latency         float64
-	uniqueClients      float64
 	routingHits        float64
 	routingMisses      float64
 	routingFallbacks   float64
@@ -227,7 +226,6 @@ func writeModelPrometheusMetrics(b *strings.Builder, summary ModelStatsSummary, 
 			avgLatency:         float64(stats.AverageLatency),
 			p95Latency:         float64(stats.P95Latency),
 			p99Latency:         float64(stats.P99Latency),
-			uniqueClients:      float64(stats.UniqueClients),
 			routingHits:        float64(stats.RoutingHits),
 			routingMisses:      float64(stats.RoutingMisses),
 			routingFallbacks:   float64(stats.RoutingFallbacks),
@@ -265,7 +263,6 @@ func writeModelPrometheusMetrics(b *strings.Builder, summary ModelStatsSummary, 
 	writePrometheusHelpType(b, "olla_model_avg_latency_ms", "gauge", "Model average latency in milliseconds")
 	writePrometheusHelpType(b, "olla_model_p95_latency_ms", "gauge", "Model P95 latency in milliseconds")
 	writePrometheusHelpType(b, "olla_model_p99_latency_ms", "gauge", "Model P99 latency in milliseconds")
-	writePrometheusHelpType(b, "olla_model_unique_clients", "gauge", "Unique clients per model")
 	writePrometheusHelpType(b, "olla_model_routing_hits_total", "counter", "Model routing hits (first endpoint)")
 	writePrometheusHelpType(b, "olla_model_routing_misses_total", "counter", "Model routing misses (retry required)")
 	writePrometheusHelpType(b, "olla_model_routing_fallbacks_total", "counter", "Model routing fallbacks")
@@ -303,9 +300,6 @@ func writeModelPrometheusMetrics(b *strings.Builder, summary ModelStatsSummary, 
 	}
 	for _, sample := range modelSamples {
 		writePrometheusLabeledGauge(b, "olla_model_p99_latency_ms", sample.p99Latency, "model", sample.name)
-	}
-	for _, sample := range modelSamples {
-		writePrometheusLabeledGauge(b, "olla_model_unique_clients", sample.uniqueClients, "model", sample.name)
 	}
 	for _, sample := range modelSamples {
 		writePrometheusLabeledGauge(b, "olla_model_routing_hits_total", sample.routingHits, "model", sample.name)

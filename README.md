@@ -1,7 +1,7 @@
 # olla — fork
 
 Fork of [thushan/olla](https://github.com/thushan/olla) at upstream `bb06121`
-(2026-09-22). `main` here = upstream + **66 commits** of production hardening
+(2026-09-22). `main` here = upstream + **~290 first-parent commits** of production hardening
 and features, developed against a live 6-endpoint GPU fleet (vLLM/radiance,
 llama.cpp, ComfyUI, TTS/STT voice lanes) running 24/7 for weeks.
 
@@ -24,20 +24,21 @@ This file documents **what the fork adds** and **where it lives**.
 
 Every new knob ships **default-off / byte-identical** to upstream behaviour.
 
-## Feature branches
+## Feature snapshots (tags)
 
-Each is origin/main-based, self-contained, gate-green (`go test -race`,
-gofmt/vet, golangci v2 on touched scope), and maps to upstream issues:
+Each is a `main`-based tag, gate-green (`go test -race`,
+gofmt/vet, golangci v2 on touched scope), and maps to upstream issues.
 
-| Branch | Feature | Upstream issue |
+| Tag | Feature | Upstream issue |
 |---|---|---|
-| `pr/balancer-tier-rotation` | SWRR tier rotation + tie-break + drift prune | #84 |
-| `pr/sticky-conversation-key` | conversation-keyed sticky + pin persistence + stats | #216 #226 |
-| `pr/health-load-aware` | Busy grading + effective check_timeout + routable dispatch | #216 #226 #166 |
-| `pr/retry-on-status` | rotate on backend 429/503 before first byte | #193 |
-| `pr/gate-internal-api` | gate the operational API behind one access policy | #214 |
-| `pr/anthropic-vision` | Anthropic image blocks + registry-visible vision | #115 |
-| `pr/audio-multipart` | audio capability vocabulary + multipart routing + 413 cap | — |
+| `pr-snapshot-balancer-tier-rotation` | SWRR tier rotation + tie-break + drift prune | #84 |
+| `pr-snapshot-sticky-conversation-key` | conversation-keyed sticky + pin persistence + stats | #216 #226 |
+| `pr-snapshot-health-load-aware` | Busy grading + effective check_timeout + routable dispatch | #216 #226 #166 |
+| `pr-snapshot-retry-on-status` | rotate on backend 429/503 before first byte | #193 |
+| `pr-snapshot-gate-internal-api` | gate the operational API behind one access policy | #214 |
+| `pr-snapshot-anthropic-vision` | Anthropic image blocks + registry-visible vision | #115 |
+
+**Active branches**: `main`, `feature/endpoint-runtime-metrics`
 
 ## Gates (fork-pinned)
 

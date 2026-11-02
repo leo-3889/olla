@@ -3,13 +3,14 @@
 > :memo: **Default Configuration**
 > ```yaml
 > proxy:
->   load_balancer: "least-connections"  # least-connections, priority, or round-robin
+>   load_balancer: "least-connections"  # least-connections, priority, round-robin, or least-load
 > ```
 > **Supported**:
 > 
 > - `least-connections` _(default)_ - Routes to least busy endpoint
 > - `priority` - Routes to the highest priority tier, rotating evenly inside it
 > - `round-robin` - Cycles through endpoints evenly
+> - `least-load` - Routes new conversations to the endpoint with fewest admitted requests (opt-in; requires `load_probe.enabled`)
 > 
 > **Environment Variable**: `OLLA_PROXY_LOAD_BALANCER`
 

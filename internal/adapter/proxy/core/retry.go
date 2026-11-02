@@ -225,10 +225,15 @@ type statusGateWriter struct {
 	buf     bytes.Buffer
 	code    int
 	pending bool
+	// baseline is the header map as it was when the gate was built: handler
+	// and middleware write their observability headers (X-Olla-Mode, request
+	// id, ...) before the proxy runs, so discarding a refusal drops only the
+	// refused attempt's response headers, not those.
+	baseline http.Header
 }
 
 func newStatusGate(next http.ResponseWriter, set map[int]struct{}) *statusGateWriter {
-	return &statusGateWriter{next: next, set: set}
+	return &statusGateWriter{next: next, set: set, baseline: next.Header().Clone()}
 }
 
 func (g *statusGateWriter) Header() http.Header { return g.next.Header() }
@@ -262,6 +267,14 @@ func (g *statusGateWriter) deferred() (int, bool) {
 	return g.code, g.pending
 }
 
+// Deferred is the exported accessor used by proxy engines to suppress success
+// accounting for a refusal the gate is holding (the retry loop may rotate
+// this response, so booking a success for it would mask the refusal signal
+// from circuit breakers and model stats).
+func (g *statusGateWriter) Deferred() (int, bool) {
+	return g.code, g.pending
+}
+
 // commit releases a held response to the wrapped writer (status + buffered
 // body). A no-op when nothing is held, so success paths can commit
 // unconditionally.
@@ -280,11 +293,24 @@ func (g *statusGateWriter) commit() {
 }
 
 // discard drops a held response without ever writing it: the rotation path
-// uses this so the rotated-away refusal never reaches the client.
+// uses this so the rotated-away refusal never reaches the client. The
+// underlying writer's Header() map is cleared because proxyToSingleEndpoint
+// writes response headers (SetResponseHeaders, CopyResponseHeaders) into
+// the shared header map before WriteHeader is intercepted by the gate —
+// without this reset, those headers leak into the next attempt's response.
 func (g *statusGateWriter) discard() {
 	g.pending = false
 	g.code = 0
 	g.buf.Reset()
+	h := g.next.Header()
+	for k := range h {
+		h.Del(k)
+	}
+	for k, values := range g.baseline {
+		for _, v := range values {
+			h.Add(k, v)
+		}
+	}
 }
 
 // reset clears any held response between attempts: the previous attempt
@@ -294,20 +320,26 @@ func (g *statusGateWriter) reset() {
 	g.discard()
 }
 
-// Flush commits any held response and forwards the flush. A flush is a
-// stream start: after this, rotation is off the table (responseStarted).
+// Flush forwards the flush to the underlying writer. While the gate is
+// holding a refusal (pending), the flush is suppressed: the auto-profile
+// streaming loop flushes after every Write, so a refusal body would commit
+// on the first chunk, making rotation impossible. A refusal is small JSON,
+// not a real stream — the gate buffers it for rotation, and the streaming
+// flush is an artifact of the content-type heuristic, not a stream-start
+// signal.
 func (g *statusGateWriter) Flush() {
-	g.commit()
+	if g.pending {
+		return
+	}
 	_ = http.NewResponseController(g.next).Flush()
 }
 
-// FlushError mirrors Flush with observable errors, matching
-// ResponseStartedWriter's contract (http.ErrNotSupported when nothing in the
-// chain can flush - which committed nothing, so no bytes left the gate).
+// FlushError mirrors Flush with observable errors. While the gate is holding
+// a refusal (pending), the flush is suppressed (same rationale as Flush).
 func (g *statusGateWriter) FlushError() error {
-	g.commit()
-	// http.ResponseController.Flush surfaces the FlushError() error of the
-	// underlying chain (http.ErrNotSupported when nothing can flush).
+	if g.pending {
+		return nil
+	}
 	return http.NewResponseController(g.next).Flush()
 }
 

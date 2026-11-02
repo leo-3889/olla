@@ -359,7 +359,7 @@ discovery:
 | `static.endpoints[].health_check_url` | string | No | Health check path (optional, uses profile default if not specified) |
 | `static.endpoints[].model_url` | string | No | Model discovery path (optional, uses profile default if not specified) |
 | `static.endpoints[].check_interval` | duration | No | Health check interval (default: `5s`) |
-| `static.endpoints[].check_timeout` | duration | No | Health check timeout (default: `10s`). Enforced per probe: each check gets an http.Client whose hard timeout follows this budget (plus 1s slack), so budgets above the 5s historical client cap are effective |
+| `static.endpoints[].check_timeout` | duration | No | Health check timeout (default: `2s`). Enforced per probe: each check gets an http.Client whose hard timeout follows this budget (plus 1s slack), so budgets above the 5s historical client cap are effective |
 | `static.endpoints[].runtime_metrics` | object | No | Opt-in server-side `/metrics` sampler (see below) |
 | `static.endpoints[].model_filter` | object | No | Model filtering for this endpoint |
 | `static.endpoints[].auth` | object | No | Outbound authentication credentials (see below) |

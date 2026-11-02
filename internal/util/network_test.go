@@ -38,7 +38,7 @@ func TestGetClientIP_NoProxyHeaders(t *testing.T) {
 func TestGetClientIP_WithProxyHeaders_TrustedSource(t *testing.T) {
 	req := httptest.NewRequest("GET", "/test", nil)
 	req.RemoteAddr = "192.168.1.1:12345" // Trusted proxy IP
-	req.Header.Set("X-Forwarded-For", "203.0.113.1, 192.168.1.1")
+	req.Header.Set("X-Forwarded-For", "203.0.113.1")
 
 	trustedCIDRs, _ := ParseTrustedCIDRs([]string{"192.168.0.0/16"})
 
@@ -236,8 +236,8 @@ func TestGetClientIP_MultipleForwardedIPs(t *testing.T) {
 	trustedCIDRs, _ := ParseTrustedCIDRs([]string{"192.168.0.0/16"})
 
 	ip := GetClientIP(req, true, trustedCIDRs)
-	if ip != "203.0.113.1" {
-		t.Errorf("Expected first IP from X-Forwarded-For chain: 203.0.113.1, got %s", ip)
+	if ip != "192.168.1.1" {
+		t.Errorf("Expected rightmost IP from X-Forwarded-For chain: 192.168.1.1, got %s", ip)
 	}
 }
 

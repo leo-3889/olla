@@ -73,10 +73,10 @@ func (hc *HealthClient) Check(ctx context.Context, endpoint *domain.Endpoint) (r
 	overallStart := time.Now()
 	maxRetries := DefaultMaxRetries
 
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		if attempt > 0 {
+	for retry := 0; retry <= maxRetries; retry++ {
+		if retry > 0 {
 			// Calculate exponential backoff delay
-			delay := calculateBackoffDelay(attempt)
+			delay := calculateBackoffDelay(retry)
 
 			// Use a separate context for the delay to avoid cancelling the main operation
 			delayCtx, delayCancel := context.WithTimeout(context.Background(), delay)

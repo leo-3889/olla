@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Block site secrets from entering commits. Blocklist lives OUTSIDE the repo
+# (one grep -E pattern per line). Fails CLOSED: a pattern that errors blocks.
+PATTERNS="${OLLA_SECRET_PATTERNS:-$HOME/.config/olla-push-guard.txt}"
+[ -f "$PATTERNS" ] || exit 0
+staged=$(git diff --cached -U0)
+[ -z "$staged" ] && exit 0
+bad=0
+while IFS= read -r p; do
+  [ -z "$p" ] && continue
+  printf '%s\n' "$staged" | grep -qiE "$p"
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    [ "$rc" -gt 1 ] && { echo "pre-commit: pattern '$p' is invalid — refusing (fail closed)" >&2; bad=1; }
+    continue
+  fi
+  echo "pre-commit: staged content matches blocked pattern '$p'" >&2
+  printf '%s\n' "$staged" | grep -niE "$p" | head -3 >&2
+  bad=1
+done < "$PATTERNS"
+exit $bad

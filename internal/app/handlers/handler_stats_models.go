@@ -43,7 +43,6 @@ type ModelStats struct {
 	TotalRequests      int64                         `json:"total_requests"`
 	SuccessfulRequests int64                         `json:"successful_requests"`
 	FailedRequests     int64                         `json:"failed_requests"`
-	UniqueClients      int64                         `json:"unique_clients"`
 	RoutingHits        int64                         `json:"routing_hits"`
 	RoutingMisses      int64                         `json:"routing_misses"`
 	RoutingFallbacks   int64                         `json:"routing_fallbacks"`
@@ -168,7 +167,6 @@ func (a *Application) convertModelStats(name string, stats ports.ModelStats,
 		AverageLatency:     format.Latency(stats.AverageLatency),
 		P95Latency:         format.Latency(stats.P95Latency),
 		P99Latency:         format.Latency(stats.P99Latency),
-		UniqueClients:      stats.UniqueClients,
 		LastRequested:      format.TimeAgo(stats.LastRequested),
 		RoutingHits:        stats.RoutingHits,
 		RoutingMisses:      stats.RoutingMisses,
