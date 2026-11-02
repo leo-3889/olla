@@ -75,6 +75,12 @@ export interface PollStore<T> {
   /** Deactivate this store's job, clear its timer and abort any in-flight tick. */
   stop(): void;
   refresh(): void;
+  /** Inject a payload from a mutation response as a success tick: sets data,
+   *  advances the success clock, and clears the ETag so the NEXT poll
+   *  refetches the new server state instead of 304-ing against the pre-
+   *  mutation cache. Used by panels whose POST returns the full status body
+   *  (e.g. ShepherdPanel enable/disable). */
+  refreshWith(body: T): void;
 }
 
 export function createPollStore<T>(opts: PollStoreOptions<T>): PollStore<T> {
@@ -234,6 +240,13 @@ export function createPollStore<T>(opts: PollStoreOptions<T>): PollStore<T> {
     /** Force an immediate refresh (used by "retry now" buttons). */
     refresh() {
       pollScheduler.refresh(name);
+    },
+    refreshWith(body: T) {
+      // A mutation just changed server state: the retained ETag describes the
+      // PRE-mutation body, so drop it - a 304 on the next tick would keep the
+      // old snapshot and undo the injected payload.
+      etag = null;
+      onSuccess(body);
     },
   };
 }

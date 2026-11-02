@@ -35,6 +35,9 @@ LDFLAGS := -ldflags "\
 # time" guarantee is enforced for plain go builds.
 build: build-web
 	@echo "Building olla $(VERSION)..."
+	@# Dist is gitignored: a -o build-web run, a clean-web wipe, or a stale
+	@# tree lands here. Fail before compiling, not as a 503 in prod.
+	@test -f "$(EMBED_DIST)/$(EMBED_INDEX)" || { echo "build: $(EMBED_DIST)/$(EMBED_INDEX) missing - run make build-web first"; exit 1; }
 	@go build $(LDFLAGS) -o bin/olla .
 
 # Build release version (optimised). build-web first for the same reason.

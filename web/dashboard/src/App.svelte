@@ -4,6 +4,7 @@
   import OverviewPanel from './panels/OverviewPanel.svelte';
   import EndpointsPanel from './panels/EndpointsPanel.svelte';
   import ModelsPanel from './panels/ModelsPanel.svelte';
+  import SettingsPanel from './panels/SettingsPanel.svelte';
   import { pollScheduler } from './lib/poll-scheduler';
   import { startClock } from './lib/clock.svelte';
   import { navigation } from './lib/stores/navigation.svelte';
@@ -14,6 +15,7 @@
   // Module side-effect: registers endpoints/models jobs with the scheduler.
   import './lib/stores/endpoints.svelte';
   import './lib/stores/models.svelte';
+  import './lib/stores/shepherd.svelte';
   import { startRouter, currentRoute, type Route } from './lib/router';
   import { jumpToEndpointKey } from './lib/jump-to-endpoint';
 
@@ -71,5 +73,7 @@
     <EndpointsPanel />
   {:else if navigation.current === 'models'}
     <ModelsPanel />
+  {:else if navigation.current === 'settings'}
+    <SettingsPanel />
   {/if}
 </DashboardLayout>

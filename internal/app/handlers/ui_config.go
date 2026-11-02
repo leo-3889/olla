@@ -161,6 +161,7 @@ func uiConfigFrom(cfg *config.Config, effectiveMode, tokenWindow string) UIConfi
 			{ID: "overview", Enabled: true},
 			{ID: "endpoints", Enabled: true},
 			{ID: "models", Enabled: modelsEnabled},
+			{ID: "settings", Enabled: true},
 			{ID: "power", Enabled: powerEnabled, Reason: reasonIfDisabled(powerEnabled, "requires metrics_source.mode=influx")},
 			{ID: "cost", Enabled: influx, Reason: reasonIfDisabled(influx, "requires metrics_source.mode=influx")},
 			{ID: "gpu", Enabled: gpuEnabled, Reason: reasonIfDisabled(gpuEnabled, "requires metrics_source.mode=influx and metrics_source.influx.gpu_endpoints")},

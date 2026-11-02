@@ -51,6 +51,7 @@ let CONFIG_BODY: Record<string, unknown> = {
     { id: 'overview', enabled: true },
     { id: 'endpoints', enabled: true },
     { id: 'models', enabled: true },
+    { id: 'settings', enabled: true },
     { id: 'power', enabled: false, reason: 'requires metrics_source.mode=influx' },
     { id: 'cost', enabled: false, reason: 'requires metrics_source.mode=influx' },
     { id: 'gpu', enabled: false, reason: 'requires metrics_source.mode=influx and metrics_source.influx.gpu_endpoint' },
@@ -170,6 +171,7 @@ describe('App influx-mode observe sections', () => {
         { id: 'overview', enabled: true },
         { id: 'endpoints', enabled: true },
         { id: 'models', enabled: true },
+        { id: 'settings', enabled: true },
         { id: 'power', enabled: true },
         { id: 'cost', enabled: true },
         { id: 'gpu', enabled: true },
@@ -239,5 +241,32 @@ describe('App influx-mode observe sections', () => {
     // Leave the singleton clean for anything that mounts App afterwards.
     CONFIG_BODY = { ...CONFIG_BODY, metrics_source: 'sampler' };
     await bootstrap.load(true);
+  });
+});
+
+describe('App settings panel', () => {
+  it('navigating to the settings tab renders a section headed "Shepherd"', () => {
+    // Mock shepherd fetch to return available=false (collapses the body, minimal DOM).
+    global.fetch = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.includes('/internal/ui/config.json')) return jsonResponse(CONFIG_BODY);
+      if (url.includes('/internal/shepherd')) return jsonResponse({
+        available: false, enabled: false, dry_run: false,
+        config: { node_name: '', mac_masked: '', idle_shutdown_seconds: 0, wake_window_seconds: 0 },
+        state: { last_check: '', last_action: '', last_wake: '', last_shutdown: '', last_error: '' },
+      });
+      return jsonResponse(STATUS_BODY);
+    }) as ReturnType<typeof vi.fn>;
+
+    component = mount(App, { target: document.body });
+    flushSync();
+
+    navigation.set('settings');
+    flushSync();
+
+    expect(document.getElementById('panel-settings')).not.toBeNull();
+    const heading = document.querySelector('#panel-settings h2');
+    expect(heading).not.toBeNull();
+    expect(heading!.textContent).toContain('Shepherd');
   });
 });

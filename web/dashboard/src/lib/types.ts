@@ -437,3 +437,48 @@ export interface ProcessStatsResponse {
   goroutines: { health_status: string; count: number };
   runtime: { uptime: string; go_version: string; num_cpu: number };
 }
+
+// --- /internal/shepherd (node power / WOL watcher) ---------------------
+// Hand-mirrored from the shepherd handler's response struct (parallel lane).
+// Every field is required by the contract; the panel must render a dash for
+// empty strings (never a fake "never"/0), and the whole body collapses to the
+// watcher-not-mounted state when `available` is false.
+
+export interface ShepherdConfig {
+  node_name: string;
+  // Masked by the backend (e.g. "aa:bb:**:**:**:**") - render verbatim.
+  mac_masked: string;
+  idle_shutdown_seconds: number;
+  wake_window_seconds: number;
+}
+
+export interface ShepherdState {
+  // RFC3339 instants; the UI renders "Xs ago" via fmtAgo, dash when empty.
+  last_check: string;
+  last_action: string;
+  last_wake: string;
+  last_shutdown: string;
+  // Non-empty only. The panel surfaces it as a warning row when present.
+  last_error: string;
+}
+
+export interface ShepherdEditable {
+  wake_window_seconds: number;
+  keep_asleep_if_up: string[];
+}
+
+export interface ShepherdConstraints {
+  wake_window_seconds: { min: number; max: number };
+  keep_asleep_if_up: { max_items: number; pattern: string };
+}
+
+export interface ShepherdResponse {
+  available: boolean;
+  enabled: boolean;
+  dry_run: boolean;
+  config: ShepherdConfig;
+  state: ShepherdState;
+  editable: ShepherdEditable;
+  defaults: ShepherdEditable;
+  constraints: ShepherdConstraints;
+}

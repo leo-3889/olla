@@ -12,7 +12,7 @@ import { navigation } from './stores/navigation.svelte';
 
 describe('router parse/serialize', () => {
   it('round-trips every panel-only route', () => {
-    for (const panel of ['overview', 'endpoints', 'models'] as const) {
+    for (const panel of ['overview', 'endpoints', 'models', 'settings'] as const) {
       const r = { panel };
       expect(parseHash(routeToHash(r))).toEqual(r);
     }
@@ -31,7 +31,7 @@ describe('router parse/serialize', () => {
 
   it('defaults to overview on an unrecognised panel', () => {
     expect(parseHash('#garbage')).toEqual({ panel: 'overview' });
-    expect(parseHash('#settings')).toEqual({ panel: 'overview' });
+    expect(parseHash('#shepherd')).toEqual({ panel: 'overview' });
   });
 
   it('drops the endpoint fragment when the panel is not endpoints', () => {

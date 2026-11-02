@@ -21,6 +21,7 @@ export const DEFAULT_UI_CONFIG: UIConfig = {
     { id: 'overview', enabled: true },
     { id: 'endpoints', enabled: true },
     { id: 'models', enabled: true },
+    { id: 'settings', enabled: true },
     { id: 'power', enabled: false, reason: 'requires metrics_source.mode=influx' },
     { id: 'cost', enabled: false, reason: 'requires metrics_source.mode=influx' },
     { id: 'gpu', enabled: false, reason: 'requires metrics_source.mode=influx and metrics_source.influx.gpu_endpoints' },

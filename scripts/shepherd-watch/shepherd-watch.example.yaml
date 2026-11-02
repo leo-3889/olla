@@ -6,6 +6,22 @@ idle_seconds: 1800        # no demand for this long -> shutdown
 wake_demand_window: 90    # demand younger than this (s) triggers wake
 wake_cooldown: 180        # min seconds between WOL bursts while node is down
 
+# Enable flag (the dashboard's Shepherd toggle). ABSENT = DISABLED: the watcher
+# records action=disabled + last_check in the state file, exits 0 and does
+# nothing else - no metrics scrape, no WOL, no ssh. PRESENT = behave normally.
+# The dashboard writes/removes this file through POST /internal/shepherd/enabled
+# (read side: GET /internal/shepherd), so the toggle is the authoritative
+# switch; a deploy that has no opinion simply has no flag file. The file lives
+# in the deployed directory (the container's /config/watch mount, alongside the
+# state file) - that whole directory is OUTSIDE this repo, so nothing here
+# points at a live path. Override the location with enable_flag_file below.
+# Note the API's dry_run field mirrors the state file's dry_run key (written on
+# every run the watcher records); a state file without that key - written
+# before this knob existed - is reported as dry_run=true, matching the fact
+# that a watcher which never declared enforcement is not enforcing: the live
+# deployment runs WITHOUT --enforce, i.e. dry-run.
+# enable_flag_file: /config/watch/shepherd-enabled
+
 nodes:
   - name: gpu-box-1
     endpoint: gpu-box-1      # olla_endpoint_up{endpoint=...}
@@ -27,3 +43,16 @@ nodes:
   #   wol_port: 9
   #   wol_repeat: 3
   #   ssh: "shepherd@192.168.1.51"
+
+# Wake trigger overrides (GUI-editable): shepherd-overrides.json, written by
+# the dashboard (POST /internal/shepherd/config) into the SAME directory as
+# shepherd-enabled (env OLLA_SHEPHERD_DIR, default /config/watch), containing
+# exactly {"wake_window_seconds": int, "keep_asleep_if_up": [...]}. The watcher
+# applies it over the values above on EVERY run: missing file = pure YAML;
+# corrupt JSON or any out-of-range/malformed value is IGNORED with a log line
+# naming the field (fail-closed - the YAML value always wins). Only these two
+# triggers are editable (window 30..3600; up to 16 endpoint names matching
+# ^[A-Za-z0-9._-]{1,128}$, applied to every node); demand models, idle_seconds,
+# MACs, IPs, endpoints and enforce mode stay YAML-only and are never writable
+# through the API. Effective values + per-field source (yaml|override) are
+# disclosed under "triggers" in the state file.

@@ -55,6 +55,12 @@ func (a *Application) registerRoutes() {
 	a.routeRegistry.RegisterWithMethod("/internal/stats/translators", gate(a.translatorStatsHandler), "Translator statistics", "GET")
 	a.routeRegistry.RegisterWithMethod("/internal/stats/sticky", gate(a.stickyStatsHandler), "Sticky session statistics", "GET")
 	a.routeRegistry.RegisterWithMethod("/internal/process", gate(a.processStatsHandler), "Process status", "GET")
+	// Shepherd (WOL) settings: the dashboard power toggle read/write pair.
+	// Rides the same gate as every other operational route, so
+	// dashboard.gate_internal_api covers a switch that powers real machines.
+	a.routeRegistry.RegisterWithMethod("/internal/shepherd", gate(a.shepherdHandler), "Shepherd (WOL) settings", "GET")
+	a.routeRegistry.RegisterWithMethod("/internal/shepherd/enabled", gate(a.shepherdEnabledHandler), "Shepherd enable toggle", "POST")
+	a.routeRegistry.RegisterWithMethod("/internal/shepherd/config", gate(a.shepherdConfigHandler), "Shepherd wake triggers", "POST/DELETE")
 	a.routeRegistry.RegisterWithMethod("/version", gate(a.versionHandler), "Olla version information", "GET")
 
 	// Unified model views aggregate across all providers
