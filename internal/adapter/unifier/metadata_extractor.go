@@ -182,6 +182,17 @@ func inferCapabilitiesFromMetadata(modelType, modelName string, contextLength in
 
 	capabilities["text-generation"] = true
 
+	// The engine's OWN declaration is the most trusted source, ahead of every
+	// heuristic below: the name-pattern list matches names like "vlm"/"llava",
+	// so a vision model named qwen4exp - whose engine advertises
+	// capabilities.image=true on /v1/models - was advertised by the registry
+	// as text-generation only.
+	if engineCaps, ok := metadata["engine_capabilities"].([]string); ok {
+		for _, c := range engineCaps {
+			capabilities[c] = true
+		}
+	}
+
 	modelTypeLower := strings.ToLower(modelType)
 	if typeCaps, exists := config.Capabilities.TypeCapabilities[modelTypeLower]; exists {
 		for _, cap := range typeCaps {
@@ -213,17 +224,19 @@ func inferCapabilitiesFromMetadata(modelType, modelName string, contextLength in
 	}
 
 	// Context window size determines long-form processing capabilities
-	if contextLength > 0 {
-		thresholds := config.Capabilities.ContextThresholds
-		switch {
-		case contextLength >= thresholds["ultra_long_context"]:
-			capabilities["ultra-long-context"] = true
-			capabilities["long-context"] = true
-		case contextLength >= thresholds["long_context"]:
-			capabilities["long-context"] = true
-		case contextLength >= thresholds["extended_context"]:
-			capabilities["extended-context"] = true
-		}
+	applyContextWindowCapabilities(capabilities, contextLength, config)
+
+	// An engine that declares chat:false on /v1/models (whisper-small,
+	// kokoro-82m) disclaims text generation; applyModelDetails carries that
+	// disclaimer as engine_chat_disabled. The unconditional baseline above
+	// plus the type/name-pattern fallbacks would otherwise advertise such a
+	// model as [text-generation] - a lie that makes a transcriber or a TTS
+	// voice look like a chat model to any capability filter. Drop the
+	// inferred stamp; an explicit "text-generation" declared in source
+	// metadata (preserved below) still wins, because a source that declares
+	// it means it.
+	if disabled, ok := metadata["engine_chat_disabled"].(bool); ok && disabled {
+		delete(capabilities, "text-generation")
 	}
 
 	// Preserve explicitly declared capabilities from source metadata
@@ -243,6 +256,25 @@ func inferCapabilitiesFromMetadata(modelType, modelName string, contextLength in
 	}
 
 	return result
+}
+
+// applyContextWindowCapabilities stamps the long-context ladder from the
+// configured thresholds. Extracted from inferCapabilitiesFromMetadata to keep
+// that function's branch count legible.
+func applyContextWindowCapabilities(capabilities map[string]bool, contextLength int64, config *ModelUnificationConfig) {
+	if contextLength <= 0 {
+		return
+	}
+	thresholds := config.Capabilities.ContextThresholds
+	switch {
+	case contextLength >= thresholds["ultra_long_context"]:
+		capabilities["ultra-long-context"] = true
+		capabilities["long-context"] = true
+	case contextLength >= thresholds["long_context"]:
+		capabilities["long-context"] = true
+	case contextLength >= thresholds["extended_context"]:
+		capabilities["extended-context"] = true
+	}
 }
 
 // extractFamilyAndVariant extracts family and variant from model name
@@ -501,4 +533,23 @@ func extractPublisher(modelName string, metadata map[string]interface{}) string 
 	}
 
 	return ""
+}
+
+// canonicalEngineCapabilities maps engine-declared /v1/models feature flags
+// onto the registry's capability vocabulary. Only declared-true flags with a
+// known mapping contribute; unknown true keys are ignored - the engines'
+// vocabulary is not the registry's, and inventing capability names makes the
+// advertised list un-filterable.
+func canonicalEngineCapabilities(caps map[string]bool) []string {
+	var out []string
+	if caps["image"] {
+		out = append(out, "vision")
+	}
+	if caps["audio"] {
+		out = append(out, "audio-transcription")
+	}
+	if caps["audio_generation"] {
+		out = append(out, "audio-speech")
+	}
+	return out
 }

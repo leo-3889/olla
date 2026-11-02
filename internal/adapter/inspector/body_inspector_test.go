@@ -739,7 +739,10 @@ func TestBodyInspector_BodyDecidesNotContentType(t *testing.T) {
 		{name: "json with charset", body: embedBody, contentType: "application/json; charset=utf-8", wantModel: "nomic-embed-text", wantEmbed: true},
 		{name: "leading whitespace", body: "  \r\n\t" + embedBody, contentType: "text/plain", wantModel: "nomic-embed-text", wantEmbed: true},
 
-		{name: "multipart with model field", body: "--b\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nwhisper\r\n--b--\r\n", contentType: "multipart/form-data; boundary=b", wantUntouch: true},
+		// Fork contract: multipart/form-data is inspected for its "model" form field so
+		// OpenAI audio uploads route by registry membership (see inspectMultipart).
+		// The body must still reach the proxy byte-identical.
+		{name: "multipart with model field", body: "--b\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nwhisper\r\n--b--\r\n", contentType: "multipart/form-data; boundary=b", wantModel: "whisper", skipCapCheck: true},
 		{name: "multipart even if body looks like JSON", body: embedBody, contentType: "multipart/form-data; boundary=b", wantUntouch: true},
 		{name: "gzip body", body: "\x1f\x8b\x08\x00binary", contentType: "application/json", encoding: "gzip", wantUntouch: true},
 		{name: "encoded header on JSON-looking body", body: embedBody, contentType: "application/json", encoding: "gzip", wantUntouch: true},

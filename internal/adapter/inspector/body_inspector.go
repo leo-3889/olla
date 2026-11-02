@@ -5,8 +5,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"strings"
 
@@ -37,6 +40,23 @@ const (
 
 	// maxLeadingWhitespace caps how much leading whitespace we look past before giving up.
 	maxLeadingWhitespace = 4096
+	// MultipartModelScanSize bounds the bytes buffered when scanning a
+	// multipart/form-data body (OpenAI /v1/audio/transcriptions) for its
+	// "model" field. The field may follow a multi-megabyte "file" part, so the
+	// whole body must be scanned; 8 MB covers conversational audio clips while
+	// bounding memory per request. Above this ceiling the scan is skipped, and
+	// an unscanned audio upload silently takes the default routing chain - the
+	// proven class where a >8 MB transcription upload lands on a text-only
+	// endpoint and 501s. The proxy handler therefore rejects multipart bodies
+	// above this ceiling on the transcription route with 413 (see
+	// handlers.rejectOversizeAudioUpload); proxy.request_limits.max_body_size
+	// (16 MiB) stays deliberately larger, so this is the routing ceiling, not
+	// the gateway's body ceiling.
+	MultipartModelScanSize = 8 * 1024 * 1024
+
+	// multipartModelFieldLimit bounds the "model" form field we will read.
+	// Model names are small text; anything larger is not a model name.
+	multipartModelFieldLimit = 256
 )
 
 type modelRequest struct {
@@ -71,6 +91,16 @@ func (bi *BodyInspector) Name() string {
 
 func (bi *BodyInspector) Inspect(ctx context.Context, r *http.Request, profile *domain.RequestProfile) error {
 	if r.Body == nil || r.ContentLength == 0 {
+		return nil
+	}
+
+	// Multipart bodies (OpenAI /v1/audio/transcriptions) carry the model as a form
+	// field: route them by registry membership the same way JSON bodies are, instead
+	// of leaving them opaque on the default chain. The boundary is case-sensitive, so
+	// the raw header is what reaches inspectMultipart.
+	rawContentType := r.Header.Get(constants.HeaderContentType)
+	if strings.Contains(strings.ToLower(rawContentType), "multipart/form-data") {
+		bi.inspectMultipart(r, profile, rawContentType)
 		return nil
 	}
 
@@ -279,6 +309,73 @@ func (bi *BodyInspector) inspectLarge(r *http.Request, profile *domain.RequestPr
 	} else {
 		bi.logger.Debug("Could not extract model name from large request body",
 			"content_length", r.ContentLength)
+	}
+}
+
+// inspectMultipart extracts the "model" form field from a multipart request
+// (OpenAI /v1/audio/transcriptions) so the proxy can route by registry
+// membership. The body is buffered and restored, mirroring the JSON path: the
+// downstream proxy must forward the upload byte-identical. Bodies larger than
+// MultipartModelScanSize are left untouched (capability/default routing).
+func (bi *BodyInspector) inspectMultipart(r *http.Request, profile *domain.RequestProfile, contentType string) {
+	_, params, err := mime.ParseMediaType(contentType)
+	if err != nil || params["boundary"] == "" {
+		bi.logger.Debug("Multipart body without a usable boundary, skipping inspection", "error", err)
+		return
+	}
+	if r.ContentLength > MultipartModelScanSize {
+		bi.logger.Debug("Multipart body exceeds the model-scan ceiling, skipping inspection",
+			"content_length", r.ContentLength)
+		return
+	}
+
+	buffer, err := bi.bufferPool.Get()
+	if err != nil {
+		return
+	}
+	defer func() {
+		buffer.Reset()
+		bi.bufferPool.Put(buffer)
+	}()
+
+	if _, err := io.Copy(buffer, io.LimitReader(r.Body, MultipartModelScanSize)); err != nil {
+		bi.logger.Debug("Failed to read multipart body", "error", err)
+		return
+	}
+
+	// Copy before the deferred Reset()/Put() invalidates the pooled slice, and
+	// restore the body for the downstream proxy exactly like the JSON path.
+	restored := append([]byte(nil), buffer.Bytes()...)
+	origBody := r.Body
+	r.Body = readCloser{
+		Reader: io.MultiReader(bytes.NewReader(restored), origBody),
+		Closer: origBody,
+	}
+
+	mr := multipart.NewReader(bytes.NewReader(restored), params["boundary"])
+	for {
+		part, err := mr.NextPart()
+		if errors.Is(err, io.EOF) {
+			return
+		}
+		if err != nil {
+			bi.logger.Debug("Multipart parse failed, continuing with default routing", "error", err)
+			return
+		}
+		if part.FormName() != "model" {
+			_ = part.Close()
+			continue
+		}
+		data, err := io.ReadAll(io.LimitReader(part, multipartModelFieldLimit+1))
+		_ = part.Close()
+		if err != nil || len(data) == 0 || len(data) > multipartModelFieldLimit {
+			return
+		}
+		if model := strings.TrimSpace(string(data)); model != "" {
+			profile.ModelName = bi.normalizeModelName(model)
+			bi.logger.Debug("Extracted model name from multipart form", "model", profile.ModelName)
+		}
+		return
 	}
 }
 

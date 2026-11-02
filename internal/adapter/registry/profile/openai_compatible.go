@@ -11,6 +11,9 @@ type OpenAICompatibleModel struct {
 	Created     *int64  `json:"created,omitempty"`
 	OwnedBy     *string `json:"owned_by,omitempty"`
 	MaxModelLen *int64  `json:"max_model_len,omitempty"`
-	ID          string  `json:"id"`
-	Object      string  `json:"object"`
+	// Capabilities is the engine-declared feature map (radiance: {"image":true,
+	// "video":true}); absent on strict OpenAI servers.
+	Capabilities map[string]bool `json:"capabilities,omitempty"`
+	ID           string          `json:"id"`
+	Object       string          `json:"object"`
 }

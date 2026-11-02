@@ -53,5 +53,9 @@ export default defineConfig({
           : [],
       },
     },
+    // Real-timer tests (poll-store, poll-scheduler, theme, StatusStrip,
+    // Header, uptime-freeze) hit vitest's 5s default when 3+ gate containers
+    // share the CPU. Raise the ceiling; no fake-timer rewrites.
+    timeout: 15000,
   },
 });

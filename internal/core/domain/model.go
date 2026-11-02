@@ -27,6 +27,11 @@ type ModelDetails struct {
 	// Olla's vocabulary (vision, function_calling). They are added to what the
 	// model's kind and name imply.
 	Capabilities []string `json:"capabilities,omitempty"`
+	// Capabilities are the engine's OWN feature declarations from its
+	// /v1/models entry (radiance/vLLM advertise e.g. image=true). The
+	// registry treats them as the most-trusted capability source; name
+	// patterns are the fallback.
+	EngineCapabilities map[string]bool `json:"engine_capabilities,omitempty"`
 }
 
 type ModelInfo struct {

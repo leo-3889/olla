@@ -30,10 +30,13 @@ type DiscoveryService struct {
 	endpointRepo   domain.EndpointRepository
 	loadReader     health.LoadReader
 	config         *config.DiscoveryConfig
-	registryConfig *config.ModelRegistryConfig
-	healthChecker  *health.HTTPHealthChecker
-	statsService   *StatsService
-	modelDiscovery *discovery.ModelDiscoveryService
+	// modelCapabilities mirrors the top-level config model_capabilities map
+	// (operator per-model declarations); installed once at wiring time.
+	modelCapabilities map[string][]string
+	registryConfig    *config.ModelRegistryConfig
+	healthChecker     *health.HTTPHealthChecker
+	statsService      *StatsService
+	modelDiscovery    *discovery.ModelDiscoveryService
 	// purgeDeadFn, when set, is called with the current routable endpoint list
 	// whenever a backend transitions to unhealthy. Wired by the proxy layer so sticky
 	// session entries for dead backends are evicted promptly rather than waiting for TTL.
@@ -68,6 +71,13 @@ func (s *DiscoveryService) Name() string {
 }
 
 // Start initialises discovery components
+// SetModelCapabilities installs the operator per-model capability
+// declarations (top-level config model_capabilities) for discovery-time
+// augmentation. Call at wiring time, before Start.
+func (s *DiscoveryService) SetModelCapabilities(caps map[string][]string) {
+	s.modelCapabilities = caps
+}
+
 func (s *DiscoveryService) Start(ctx context.Context) error {
 	s.logger.Info("Initialising discovery service")
 
@@ -112,10 +122,7 @@ func (s *DiscoveryService) Start(ctx context.Context) error {
 	}
 
 	s.healthChecker = health.NewHTTPHealthCheckerWithDefaults(s.endpointRepo, s.logger)
-	if s.busyQueueDepth > 0 && s.loadReader != nil {
-		s.healthChecker.SetLoadAwareness(s.busyQueueDepth, s.loadReader)
-		s.logger.Info("Load-aware Busy grading armed", "queue_depth_threshold", s.busyQueueDepth)
-	}
+	s.armLoadAwareGrading()
 
 	// Evict sticky session entries for backends that LEFT THE FLEET. The purgeFn
 	// is nil when sticky sessions are disabled, making this callback a cheap
@@ -167,6 +174,8 @@ func (s *DiscoveryService) Start(ctx context.Context) error {
 			return fmt.Errorf("failed to create profile factory: %w", err)
 		}
 		client := discovery.NewHTTPModelDiscoveryClient(profileFactory, s.logger, httpClient)
+		client.SetModelCapabilities(s.modelCapabilities)
+		client.SetCapabilityProbe(true)
 		discoveryConfig := discovery.DiscoveryConfig{
 			Interval:          s.config.ModelDiscovery.Interval,
 			Timeout:           s.config.ModelDiscovery.Timeout,
@@ -213,6 +222,22 @@ func (s *DiscoveryService) Start(ctx context.Context) error {
 }
 
 // Stop gracefully shuts down discovery components
+// armLoadAwareGrading wires the queue reader into the health checker and
+// reports the result once. The boot line is gated on the checker's own
+// accessor - the single source of truth for "armed" - so the logged
+// sentence and the grading state cannot drift apart if arming ever grows a
+// path that does not go through the config field. Extracted from Start so
+// the pinned gocognit budget for Start stays green.
+func (s *DiscoveryService) armLoadAwareGrading() {
+	if s.busyQueueDepth <= 0 || s.loadReader == nil {
+		return
+	}
+	s.healthChecker.SetLoadAwareness(s.busyQueueDepth, s.loadReader)
+	if s.healthChecker.LoadAwarenessArmed() {
+		s.logger.Info("Load-aware Busy grading armed", "queue_depth_threshold", s.busyQueueDepth)
+	}
+}
+
 func (s *DiscoveryService) Stop(ctx context.Context) error {
 	s.logger.Info(" Stopping discovery service")
 

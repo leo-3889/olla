@@ -34,9 +34,17 @@ const (
 type HTTPModelDiscoveryClient struct {
 	httpClient     *http.Client
 	profileFactory *profile.Factory
-	logger         logger.StyledLogger
-	metrics        DiscoveryMetrics
-	mu             sync.RWMutex
+	// modelCaps are the operator per-model capability declarations
+	// (config model_capabilities), installed once at start via
+	// SetModelCapabilities and read-only during discovery cycles.
+	modelCaps map[string][]string
+	// capabilityProbe enables the W1 health-probe augmentation; installed
+	// explicitly by the discovery service so bare clients (tests, embedders)
+	// see zero extra requests.
+	capabilityProbe bool
+	logger          logger.StyledLogger
+	metrics         DiscoveryMetrics
+	mu              sync.RWMutex
 }
 
 // NewHTTPModelDiscoveryClient uses httpClient verbatim. Discovery sends the
@@ -223,6 +231,8 @@ func (c *HTTPModelDiscoveryClient) discoverWithProfile(ctx context.Context, endp
 			m.AverageLatency = time.Duration((int64(m.AverageLatency) + int64(duration)) / 2)
 		}
 	})
+
+	c.augmentCapabilities(ctx, endpoint, models)
 
 	return models, nil
 }
