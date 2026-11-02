@@ -49,6 +49,9 @@ func TestDefaultConfig(t *testing.T) {
 	if want := (RetryConfig{Enabled: true, NonIdempotent: true}); cfg.Proxy.Retry != want {
 		t.Errorf("Expected default retry policy %+v, got %+v", want, cfg.Proxy.Retry)
 	}
+	if cfg.Proxy.BusyQueueDepth != DefaultBusyQueueDepth {
+		t.Errorf("Expected busy_queue_depth default %d, got %d", DefaultBusyQueueDepth, cfg.Proxy.BusyQueueDepth)
+	}
 
 	// Test engineering defaults
 	if cfg.Engineering.ShowNerdStats != false {
@@ -73,12 +76,18 @@ func TestLoadConfig_WithoutFile(t *testing.T) {
 func TestLoadConfig_WithEnvironmentVariables(t *testing.T) {
 	// Set test environment variables
 	testEnvVars := map[string]string{
-		"OLLA_SERVER_PORT":            "8080",
-		"OLLA_SERVER_HOST":            "0.0.0.0",
-		"OLLA_PROXY_LOAD_BALANCER":    "round-robin",
-		"OLLA_LOGGING_LEVEL":          "debug",
-		"OLLA_SHOW_NERD_STATS":        "true",
-		"OLLA_PROXY_RESPONSE_TIMEOUT": "15m",
+		"OLLA_SERVER_PORT":                     "8080",
+		"OLLA_SERVER_HOST":                     "0.0.0.0",
+		"OLLA_PROXY_LOAD_BALANCER":             "round-robin",
+		"OLLA_PROXY_BUSY_QUEUE_DEPTH":          "4",
+		"OLLA_PROXY_LOAD_PROBE_ENABLED":        "true",
+		"OLLA_PROXY_LOAD_PROBE_TIMEOUT":        "300ms",
+		"OLLA_PROXY_LOAD_PROBE_FAN_OUT_BUDGET": "500ms",
+		"OLLA_PROXY_LOAD_PROBE_HEALTH_PATH":    "/health/live",
+		"OLLA_PROXY_LOAD_PROBE_ACTIVE_FIELD":   "active",
+		"OLLA_LOGGING_LEVEL":                   "debug",
+		"OLLA_SHOW_NERD_STATS":                 "true",
+		"OLLA_PROXY_RESPONSE_TIMEOUT":          "15m",
 	}
 
 	// Set env vars
@@ -107,6 +116,24 @@ func TestLoadConfig_WithEnvironmentVariables(t *testing.T) {
 	}
 	if cfg.Proxy.LoadBalancer != "round-robin" {
 		t.Errorf("Expected load balancer round-robin from env var, got %s", cfg.Proxy.LoadBalancer)
+	}
+	if cfg.Proxy.BusyQueueDepth != 4 {
+		t.Errorf("Expected busy_queue_depth 4 from env var, got %d", cfg.Proxy.BusyQueueDepth)
+	}
+	if !cfg.Proxy.LoadProbe.Enabled {
+		t.Error("Expected load_probe.enabled true from env var")
+	}
+	if cfg.Proxy.LoadProbe.Timeout != 300*time.Millisecond {
+		t.Errorf("Expected load_probe.timeout 300ms from env var, got %v", cfg.Proxy.LoadProbe.Timeout)
+	}
+	if cfg.Proxy.LoadProbe.FanOutBudget != 500*time.Millisecond {
+		t.Errorf("Expected load_probe.fan_out_budget 500ms from env var, got %v", cfg.Proxy.LoadProbe.FanOutBudget)
+	}
+	if cfg.Proxy.LoadProbe.HealthPath != "/health/live" {
+		t.Errorf("Expected load_probe.health_path override, got %q", cfg.Proxy.LoadProbe.HealthPath)
+	}
+	if cfg.Proxy.LoadProbe.ActiveField != "active" {
+		t.Errorf("Expected load_probe.active_field override, got %q", cfg.Proxy.LoadProbe.ActiveField)
 	}
 	if cfg.Logging.Level != "debug" {
 		t.Errorf("Expected log level debug from env var, got %s", cfg.Logging.Level)

@@ -893,3 +893,41 @@ func TestUpdateEndpoint_PersistsRateLimitedUntil(t *testing.T) {
 // Userinfo rejection and its redacted-error coverage live in
 // repository_userinfo_test.go (TestEndpointConfigValidation_RejectsUserinfo,
 // TestEndpointConfigValidation_AcceptsPlainURL).
+
+// Per-host busy_queue_depth: negative is a boot error, 0 and positive load,
+// and the value lands on the domain endpoint for the health checker to grade.
+func TestLoadFromConfig_BusyQueueDepthPerHost(t *testing.T) {
+	t.Parallel()
+	neg, zero, four := -1, 0, 4
+	for _, tc := range []struct {
+		name      string
+		val       *int
+		expectErr bool
+	}{
+		{"negative rejected", &neg, true},
+		{"zero = host-off accepted", &zero, false},
+		{"positive override accepted", &four, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			repo := NewStaticEndpointRepository()
+			err := repo.LoadFromConfig(context.Background(), []config.EndpointConfig{{
+				Name: "bqd-" + tc.name, URL: "http://localhost:11434", Type: "ollama",
+				BusyQueueDepth: tc.val,
+			}})
+			if tc.expectErr {
+				if err == nil {
+					t.Fatal("expected boot error for negative busy_queue_depth")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			eps, _ := repo.GetAll(context.Background())
+			if len(eps) != 1 || eps[0].BusyQueueDepth == nil || *eps[0].BusyQueueDepth != *tc.val {
+				t.Fatalf("busy_queue_depth did not reach the domain endpoint: %+v", eps[0].BusyQueueDepth)
+			}
+		})
+	}
+}

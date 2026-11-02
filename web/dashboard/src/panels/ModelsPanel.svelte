@@ -45,7 +45,7 @@
   // them, so they would always read zero and mislead the operator. Wiring
   // that up on the proxy path is deferred to a later change.
   const columns: Column[] = [
-    { key: 'name', label: 'Model', sortable: true, sticky: true },
+    { key: 'name', label: 'Model', sortable: true },
     { key: 'params', label: 'Params', sortable: true },
     { key: 'quant', label: 'Quant', sortable: true },
     { key: 'size_bytes', label: 'Size', sortable: true, num: true, align: 'right' },

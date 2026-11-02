@@ -340,11 +340,15 @@ type ProxyConfig struct {
 	// via ProxyConfig.Validate - entries must be 4xx/5xx.
 	RetryOnStatus  []int               `yaml:"retry_on_status"`
 	StickySessions StickySessionConfig `yaml:"sticky_sessions"`
-	// BusyQueueDepth arms load-aware Busy steering: a probe-healthy endpoint
-	// whose engine queue depth is at or above this value is graded Busy
-	// (routable, SWRR weight 0.3) so NEW conversations steer away from a
-	// saturating node before it starts refusing. 0 = off (default): nothing is
-	// graded Busy, so the weight ladder degenerates to the healthy tier.
+	// BusyQueueDepth is the FLEET-DEFAULT arm for load-aware Busy steering: a
+	// probe-healthy endpoint whose engine queue depth (admitted count:
+	// processing + queued, not the waiting queue alone) is at or above this
+	// value is graded Busy (routable, SWRR weight 0.3) so NEW conversations
+	// steer away from a saturating node before it starts refusing.
+	// Default 8; 0 = off fleet-wide. Individual endpoints override it with
+	// their own busy_queue_depth (endpoint config), which is how a fleet mixes
+	// thresholds per host. Nothing is graded while the resolved threshold is
+	// 0 or the queue signal is absent or older than 90s.
 	// Requires runtime_metrics on the endpoint: the queue signal is the engine
 	// scrape under the sampler, and the llm_runtime queue_depth gauge under
 	// metrics_source influx (influxRuntimeMetricsProvider.QueueDepthFor), so
@@ -361,6 +365,13 @@ type ProxyConfig struct {
 	StreamBufferSize      int           `yaml:"stream_buffer_size"`
 	MaxRetries            int           `yaml:"max_retries"` // Deprecated: unused, set proxy.retry instead. TODO: Removal: v0.1.0
 	Retry                 RetryConfig   `yaml:"retry"`
+
+	// LoadProbe arms the assignment-time occupancy probe used by
+	// proxy.load_balancer: "least-load". Off by default: with Enabled false, or
+	// with any other balancer, the gateway is byte-identical to a build without
+	// the feature - no probe round is ever issued. Boot-validated via
+	// LoadProbeConfig.Validate.
+	LoadProbe LoadProbeConfig `yaml:"load_probe"`
 }
 
 // RetryConfig controls failover between endpoints for a single request. Only
@@ -384,6 +395,63 @@ func (p ProxyConfig) Validate() error {
 		if code < 400 || code > 599 {
 			return fmt.Errorf("retry_on_status: %d is not a 4xx/5xx status code (only backend refusal codes may trigger endpoint failover)", code)
 		}
+	}
+	if err := p.LoadProbe.Validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// LoadProbeConfig configures the one round of occupancy probes the gateway
+// fires when a NEW conversation needs a node (a sticky miss). It is not a
+// poller: nothing runs on a timer, and conversations already pinned to a node
+// never trigger a probe (sticky.go returns before the balancer runs).
+//
+// The measured cost that sets these defaults: radiance answers /health in
+// ~1.0 ms with a 63-byte body, /metrics in ~1.8 ms with a 34 KB body, on the
+// live LAN (2026-11-03, also while 4 generations were mid-flight: 1.1-2.2 ms).
+// Timeout is therefore ~250x the observed cost and only pays out when an
+// engine is wedged.
+type LoadProbeConfig struct {
+	// Enabled is the master switch: false = no probe round is ever issued.
+	Enabled bool `yaml:"enabled"`
+	// Timeout bounds ONE endpoint probe. An endpoint that does not answer
+	// inside it is reported as unknown and ranks on the gateway's own live
+	// connection count, not on a fabricated zero.
+	Timeout time.Duration `yaml:"timeout"`
+	// FanOutBudget bounds the whole parallel round. It must be >= Timeout
+	// (a budget below the per-probe timeout would cancel every probe while it
+	// was still within its own allowance). Keep it small: this is added to the
+	// first request of a new conversation.
+	FanOutBudget time.Duration `yaml:"fan_out_budget"`
+	// HealthPath is the endpoint path probed first (default "/health").
+	HealthPath string `yaml:"health_path"`
+	// ActiveField is the JSON number in that response counting admitted
+	// requests (default "in_flight": radiance's field). When the path or field
+	// is absent the probe falls back to the endpoint's /metrics gauges via the
+	// runtime dialect, and finally to the gateway's own connection count.
+	ActiveField string `yaml:"active_field"`
+}
+
+// Validate rejects a load_probe configuration that cannot do its job. Boot
+// error, not a request-time no-op (same precedent as sticky_sessions
+// key_sources and retry_on_status: a silently inert knob reads as "the feature
+// is broken" in the field).
+func (l LoadProbeConfig) Validate() error {
+	if !l.Enabled {
+		return nil
+	}
+	if l.Timeout <= 0 {
+		return errors.New("load_probe.timeout must be > 0 when load_probe.enabled (a zero timeout cancels every probe before it is sent)")
+	}
+	if l.FanOutBudget > 0 && l.FanOutBudget < l.Timeout {
+		return fmt.Errorf("load_probe.fan_out_budget (%s) must be >= load_probe.timeout (%s): the round cannot end before its own probes are allowed to finish", l.FanOutBudget, l.Timeout)
+	}
+	if l.HealthPath != "" && l.HealthPath[0] != '/' {
+		return fmt.Errorf("load_probe.health_path must start with '/' (got %q)", l.HealthPath)
+	}
+	if l.ActiveField == "" {
+		return errors.New("load_probe.active_field must not be empty when load_probe.enabled")
 	}
 	return nil
 }
@@ -456,14 +524,19 @@ type EndpointConfig struct {
 	// since 0 is a valid, lower-than-default priority value.
 	Priority       *int                  `yaml:"priority"`
 	RuntimeMetrics *RuntimeMetricsConfig `yaml:"runtime_metrics,omitempty"`
-	URL            string                `yaml:"url"`
-	Name           string                `yaml:"name"`
-	Type           string                `yaml:"type"`
-	HealthCheckURL string                `yaml:"health_check_url"`
-	ModelURL       string                `yaml:"model_url"`
-	CheckInterval  time.Duration         `yaml:"check_interval"`
-	CheckTimeout   time.Duration         `yaml:"check_timeout"`
-	PreservePath   bool                  `yaml:"preserve_path"`
+	// BusyQueueDepth overrides proxy.busy_queue_depth for THIS endpoint only:
+	// Busy grading threshold on the engine's admitted-request count
+	// (processing + queued). Unset = inherit the global (default 8);
+	// 0 = this host is never graded Busy. Negative is a boot error.
+	BusyQueueDepth *int          `yaml:"busy_queue_depth,omitempty"`
+	URL            string        `yaml:"url"`
+	Name           string        `yaml:"name"`
+	Type           string        `yaml:"type"`
+	HealthCheckURL string        `yaml:"health_check_url"`
+	ModelURL       string        `yaml:"model_url"`
+	CheckInterval  time.Duration `yaml:"check_interval"`
+	CheckTimeout   time.Duration `yaml:"check_timeout"`
+	PreservePath   bool          `yaml:"preserve_path"`
 }
 
 // LoggingConfig holds logging configuration

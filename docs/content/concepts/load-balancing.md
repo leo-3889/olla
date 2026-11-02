@@ -160,6 +160,57 @@ discovery:
         type: "vllm"
 ```
 
+### Least Load
+
+Assigns **new conversations** to the endpoint carrying the fewest admitted
+requests (processing + queued), inside the highest priority tier.
+
+```yaml
+proxy:
+  load_balancer: "least-load"
+  load_probe:
+    enabled: true          # without this, least-load behaves exactly like priority
+    timeout: 250ms
+    fan_out_budget: 400ms
+```
+
+How a selection runs:
+
+1. **Sticky first.** With sticky sessions enabled, a pinned conversation is
+   answered before the balancer runs - existing sessions never move because
+   the fleet got busier. Least-load dispatches only sticky misses (new
+   conversations) and failover attempts.
+2. **Priority tiers unchanged.** Like `priority`, only the top tier is
+   eligible; a lower-priority endpoint serves when the top tier has no
+   routable member. "Least load" means emptiest *in the tier*.
+3. **One probe round per multi-endpoint selection**, fired at assignment
+   time - never on a timer, never from InfluxDB. The probe reads the engine
+   itself (health JSON field, else /metrics gauges) - there is no
+   connection-count reading. A node's reported load includes requests
+   the gateway did not proxy: engine load is engine load.
+4. An endpoint that did not answer ranks **behind every answered one**
+   (ordered by the gateway's own connection count), because absence is not
+   the measurement 0.
+5. Ties fall back to the smooth weighted round-robin of `priority`, so with
+   no load signal at all `least-load` is byte-identical to `priority`.
+
+Costs and limits:
+
+- The probe round adds at most `fan_out_budget` to the first request of a
+  new conversation; measured live-engine answers are 1-4 ms, and pinned
+  conversations pay nothing.
+- Parallel bursts are spread by per-selection reservations even before the
+  engine gauges move (8 concurrent requests on idle twins land 4/4).
+- `busy_queue_depth` (the health-probe Busy label, 5 s cadence, weight 0.3)
+  stays available: its reduced weight applies wherever the priority weighted
+  rotation runs, including least-load's tie pool and its probe-off path. The
+  assignment-time occupancy steering on top of it is the finer mechanism.
+  It is a fleet default (8 admitted requests; 0 = off) and each endpoint may
+  override it per host (`busy_queue_depth` in the endpoint block; unset
+  inherits, 0 disables for that host). The graded number is always the
+  engine's admitted count (processing + queued), never the waiting queue
+  alone.
+
 ## Strategy Comparison
 
 | Strategy | Distribution | Failover Speed | Best Use Case | Complexity |

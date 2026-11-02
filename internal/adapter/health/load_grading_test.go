@@ -77,3 +77,23 @@ func TestSetLoadAwareness_DefaultOff(t *testing.T) {
 	assert.Equal(t, domain.StatusHealthy, gradeProbeStatus(domain.StatusHealthy, c.busyQueueDepth, c.loadReader, ep),
 		"an unarmed checker leaves Healthy verdicts untouched")
 }
+
+// Per-host overrides (endpoint busy_queue_depth) win over the fleet default.
+func TestGradeProbeStatusPerHostOverride(t *testing.T) {
+	on := func(v int) *int { return &v }
+	ep := &domain.Endpoint{}
+	assert.Equal(t, domain.StatusHealthy, gradeProbeStatus(domain.StatusHealthy, 8, fakeLoad{5, true}, ep),
+		"fleet default 8 leaves a host at 5 admitted Healthy")
+
+	hostLow := &domain.Endpoint{BusyQueueDepth: on(2)}
+	assert.Equal(t, domain.StatusBusy, gradeProbeStatus(domain.StatusHealthy, 8, fakeLoad{5, true}, hostLow),
+		"host threshold 2 must grade at 5 admitted even though the fleet default is 8")
+
+	hostOff := &domain.Endpoint{BusyQueueDepth: on(0)}
+	assert.Equal(t, domain.StatusHealthy, gradeProbeStatus(domain.StatusHealthy, 8, fakeLoad{999, true}, hostOff),
+		"host threshold 0 = never Busy, even with the fleet armed")
+
+	hostOn := &domain.Endpoint{BusyQueueDepth: on(4)}
+	assert.Equal(t, domain.StatusBusy, gradeProbeStatus(domain.StatusHealthy, 0, fakeLoad{4, true}, hostOn),
+		"host override arms grading even when the fleet default is off")
+}

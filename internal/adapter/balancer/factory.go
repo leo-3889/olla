@@ -12,10 +12,21 @@ const DefaultBalancerPriority = "priority"
 const DefaultBalancerRoundRobin = "round-robin"
 const DefaultBalancerLeastConnections = "least-connections"
 
+// DefaultBalancerLeastLoad dispatches NEW conversations (sticky misses) to the
+// endpoint with the fewest admitted requests inside the top priority tier. It
+// is opt-in: "priority" remains the default so enabling it is a config choice,
+// not an upgrade side effect.
+const DefaultBalancerLeastLoad = "least-load"
+
 type Factory struct {
 	creators       map[string]func(ports.StatsCollector) domain.EndpointSelector
 	statsCollector ports.StatsCollector
-	mu             sync.RWMutex
+
+	// loadProber is the occupancy source handed to selectors that need one
+	// ("least-load"). nil = no signal, and a selector built with no signal
+	// behaves exactly like "priority".
+	loadProber domain.LoadProber
+	mu         sync.RWMutex
 }
 
 func NewFactory(statsCollector ports.StatsCollector) *Factory {
@@ -34,7 +45,26 @@ func NewFactory(statsCollector ports.StatsCollector) *Factory {
 		return NewLeastConnectionsSelector(collector)
 	})
 
+	// The closure reads loadProber at Create time, so SetLoadProber must run
+	// BEFORE Create for the selector to be built with a prober - that ordering
+	// is enforced at the single call site (app/services/proxy.go).
+	factory.Register(DefaultBalancerLeastLoad, func(collector ports.StatsCollector) domain.EndpointSelector {
+		factory.mu.RLock()
+		prober := factory.loadProber
+		factory.mu.RUnlock()
+		return NewLeastLoadSelector(collector, prober)
+	})
+
 	return factory
+}
+
+// SetLoadProber supplies the occupancy source consumed by the "least-load"
+// selector. Safe to call before or after Create; nil means "no signal", and a
+// selector built with no signal behaves exactly like "priority".
+func (f *Factory) SetLoadProber(prober domain.LoadProber) {
+	f.mu.Lock()
+	f.loadProber = prober
+	f.mu.Unlock()
 }
 
 func (f *Factory) Register(name string, creator func(ports.StatsCollector) domain.EndpointSelector) {

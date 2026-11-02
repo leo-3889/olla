@@ -10,7 +10,7 @@
 >
 > **Environment Variable**: `OLLA_PROXY_STICKY_SESSIONS_ENABLED`
 
-Sticky sessions route repeat turns in a multi-turn conversation to the same backend endpoint, maximising KV-cache reuse across turns. The feature wraps the configured load balancer as a decorator. The underlying strategy (priority, round-robin, least-connections) is unchanged for new sessions and fallback cases.
+Sticky sessions route repeat turns in a multi-turn conversation to the same backend endpoint, maximising KV-cache reuse across turns. The feature wraps the configured load balancer as a decorator. The underlying strategy (priority, round-robin, least-connections, least-load) is unchanged for new sessions and fallback cases. With least-load specifically: hits never reach the balancer, so a pinned conversation keeps its warm node even when the other nodes are strictly emptier - affinity deliberately beats load for existing sessions.
 
 ## Why sticky sessions
 

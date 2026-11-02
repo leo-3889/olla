@@ -86,6 +86,12 @@ func (c *HTTPHealthChecker) LoadAwarenessArmed() bool {
 // breaker-striking a loaded-but-alive node must not be reintroduced), so
 // isSuccess is computed from the raw probe result, never from the grade.
 func gradeProbeStatus(status domain.EndpointStatus, threshold float64, reader LoadReader, endpoint *domain.Endpoint) domain.EndpointStatus {
+	// Per-host override wins over the fleet default: endpoint config
+	// busy_queue_depth (nil = inherit). 0 on the host = never Busy there
+	// even while the fleet default is armed.
+	if endpoint != nil && endpoint.BusyQueueDepth != nil {
+		threshold = float64(*endpoint.BusyQueueDepth)
+	}
 	if threshold <= 0 || reader == nil || status != domain.StatusHealthy {
 		return status
 	}

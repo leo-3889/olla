@@ -181,8 +181,14 @@ Proxy engine and request handling settings.
 |-------|------|---------|-------------|
 | `engine` | string | `"olla"` | Proxy engine (`olla` or `sherpa`; `sherpa` is in maintenance mode) |
 | `profile` | string | `"auto"` | Proxy profile (`auto`, `streaming`, `standard`) |
-| `load_balancer` | string | `"least-connections"` | Load balancer strategy (`round-robin`, `least-connections`, `priority`) |
-| `busy_queue_depth` | int | `0` | Load-aware Busy steering (priority balancer): a probe-healthy endpoint whose engine queue depth is at/above this value is graded `busy` (routable, weight 0.3), so new conversations steer away from a saturating node BEFORE it refuses connections. 0 = off. Requires `runtime_metrics` enabled on the endpoint: the queue signal is the engine scrape under the sampler, and the `llm_runtime` `queue_depth` gauge under `metrics_source: influx` (so grading is live in both modes). Grading is inert when that signal is absent, zero, or older than 90s. Busy endpoints keep carrying traffic at the reduced weight, so lower this value only after measuring: on the live fleet `queue_depth >= 8` is routine under agent fan-out, and grading at 1-3 starves the healthy tier's weight budget. |
+| `load_balancer` | string | `"least-connections"` | Load balancer strategy (`round-robin`, `least-connections`, `priority`, `least-load`) |
+| `load_probe` | object | disabled | Assignment-time occupancy probe used by `load_balancer: least-load`. Off by default; nothing is probed and nothing is polled until enabled. |
+| `load_probe.enabled` | bool | `false` | Master switch. `true` while `load_balancer` is not `least-load` logs a startup warning and changes nothing. |
+| `load_probe.timeout` | duration | `250ms` | Per-endpoint probe budget. An endpoint that does not answer in time is treated as unknown and ranked behind every endpoint that answered (never as idle). |
+| `load_probe.fan_out_budget` | duration | `400ms` | Whole-round budget. This is the worst-case latency added to the FIRST request of a new conversation (pinned conversations never probe). A positive value below `timeout` fails boot while the probe is enabled; `0`/unset is not an error - the probe silently auto-raises it to max(2×`timeout`, 400ms). Live measurement: engines answer in ~1-4 ms, so the budget only pays out on a wedged engine. |
+| `load_probe.health_path` | string | `"/health"` | Endpoint path probed first. |
+| `load_probe.active_field` | string | `"in_flight"` | JSON number in that response counting ADMITTED requests (processing + queued). Radiance reports exactly this. When the field is absent the probe falls back to the endpoint's `/metrics` gauges (`radiance:http_queue_depth`, else `vllm:num_requests_running` + `vllm:num_requests_waiting`). There is no connection-count fallback reading: an endpoint that yields neither is UNKNOWN and ranks behind every endpoint that answered, ordered among unknowns by the gateway's own live connection count. |
+| `busy_queue_depth` | int | `8` | Fleet-default load-aware Busy steering (affects selection anywhere priority-style weighted rotation runs: `priority`, and `least-load` ties / probe-off): a probe-healthy endpoint whose engine queue depth is at/above this value is graded `busy` (routable, weight 0.3), so new conversations steer away from a saturating node BEFORE it refuses connections. The graded value is the engine's ADMITTED count (processing + queued), never the waiting queue alone. 0 = off fleet-wide. Each endpoint can override it (`busy_queue_depth` in the endpoint block; unset inherits, 0 disables for that host). Requires `runtime_metrics` enabled on the endpoint: the queue signal is the engine scrape under the sampler, and the `llm_runtime` `queue_depth` gauge under `metrics_source: influx` (so grading is live in both modes). Grading is inert when that signal is absent, zero, or older than 90s. Busy endpoints keep carrying traffic at the reduced weight, so lower this value only after measuring: on the live fleet `queue_depth >= 8` is routine under agent fan-out, and grading at 1-3 starves the healthy tier's weight budget. |
 
 Example:
 
@@ -490,6 +496,7 @@ discovery:
 | `runtime_metrics.timeout` | duration | Per-scrape HTTP timeout (default: `3s`). |
 | `runtime_metrics.kind` | string | Metric dialect: `vllm`, `llamacpp` (also accepted: `halogen`), or `radiance`. Pin it when the endpoint `type` alone does not identify the engine - e.g. a radiance backend registered as `openai-compatible`. Resolution is pinned kind, then endpoint type; there is **no name heuristic**. An endpoint that opts in but resolves to no known kind is tracked but not sampled, and every such endpoint (and every unrecognised kind value) is listed in a startup `WARNING`. Voice endpoints (transcription / TTS engines) have no supported metric dialect - do not enable `runtime_metrics` for them. |
 | `runtime_metrics.path` | string | Scrape target appended to the endpoint URL (default `/metrics`). An absolute URL is honoured too, for engines serving metrics on a separate port. |
+| `busy_queue_depth` | int | Per-host override of `proxy.busy_queue_depth` (Busy grading threshold on the engine's admitted-request count: processing + queued). Unset inherits the fleet default (`8`); `0` never grades THIS host Busy even while the fleet is armed; negative is a boot error. |
 
 Scrapes inherit the endpoint's custom `headers` and resolved `auth` headers, so authenticated backends work without extra configuration.
 
@@ -1072,11 +1079,19 @@ These control startup behaviour and are read before the YAML config is loaded.
 
 ### Proxy
 
+**Validation notes:** env values that parse are validated by the same boot `Validate()` as YAML; unparseable duration/int values are silently ignored (the house pattern for every `OLLA_*` duration/int knob - the YAML equivalent fails boot). The `load_probe` constraints below are enforced only while `load_probe.enabled` is true - validation skips the whole block when it is disabled.
+
 | Variable | Maps to | Notes |
 |---|---|---|
 | `OLLA_PROXY_ENGINE` | `proxy.engine` | `olla` (default) or `sherpa`. |
 | `OLLA_PROXY_PROFILE` | `proxy.profile` | `auto`, `streaming`, `standard`. |
-| `OLLA_PROXY_LOAD_BALANCER` | `proxy.load_balancer` | `least-connections` (default), `priority`, `round-robin`. |
+| `OLLA_PROXY_LOAD_BALANCER` | `proxy.load_balancer` | `least-connections` (default), `priority`, `round-robin`, `least-load`. |
+| `OLLA_PROXY_BUSY_QUEUE_DEPTH` | `proxy.busy_queue_depth` | integer >= 0 (0 = off fleet-wide). Fleet default only - per-endpoint `busy_queue_depth` overrides it and has no env form (endpoints are configured in YAML). |
+| `OLLA_PROXY_LOAD_PROBE_ENABLED` | `proxy.load_probe.enabled` | bool. |
+| `OLLA_PROXY_LOAD_PROBE_TIMEOUT` | `proxy.load_probe.timeout` | Go duration, > 0. |
+| `OLLA_PROXY_LOAD_PROBE_FAN_OUT_BUDGET` | `proxy.load_probe.fan_out_budget` | Go duration, > 0. |
+| `OLLA_PROXY_LOAD_PROBE_HEALTH_PATH` | `proxy.load_probe.health_path` | non-empty path starting with `/`. |
+| `OLLA_PROXY_LOAD_PROBE_ACTIVE_FIELD` | `proxy.load_probe.active_field` | non-empty JSON field name. |
 | `OLLA_PROXY_RESPONSE_TIMEOUT` | `proxy.response_timeout` | Go duration string. |
 | `OLLA_PROXY_READ_TIMEOUT` | `proxy.read_timeout` | Go duration string. |
 | `OLLA_PROXY_RESPONSE_HEADER_TIMEOUT` | `proxy.response_header_timeout` | Go duration string. Max wait for a backend's first response header. |

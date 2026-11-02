@@ -57,16 +57,67 @@ proxy:
   # - "streaming": No buffering, tokens stream immediately, low latency & low memory usage
   # - "standard": Normal HTTP delivery without forced flushing, suitable for REST APIs
   profile: "auto" # Available: auto, streaming, standard
-  load_balancer: "least-connections" # Available: round-robin, least-connections, priority
+  load_balancer: "least-connections" # Available: round-robin, least-connections, priority, least-load
+  # least-load: new conversations (sticky misses) go to the emptiest endpoint
+  # in the top priority tier, measured from the engines directly at
+  # assignment time. Needs the load_probe block below enabled; without the
+  # probe it behaves exactly like "priority". Pinned conversations never
+  # probe and never move. See docs/content/concepts/load-balancing.md.
+  # Assignment-time occupancy probe, used only by load_balancer: "least-load".
+  # It measures how busy each engine is AT THE MOMENT a new conversation needs
+  # a node - by asking the engine itself - never from InfluxDB and never on a
+  # background timer. Requests already pinned by sticky sessions never trigger
+  # a probe, so the cost lands only on a new conversation's first request.
+  load_probe:
+    # Master switch (default false). While false nothing is probed, nothing is
+    # polled, and "least-load" selects exactly like "priority" - byte-identical
+    # behavior to a build without this feature. Setting it true while the
+    # balancer is not "least-load" logs a startup warning and changes nothing.
+    enabled: false
+    # Per-endpoint request budget: how long one engine may take to answer the
+    # probe before it is treated as UNKNOWN. An unknown endpoint is ranked
+    # behind every endpoint that answered (absence is never read as "idle"),
+    # ordered among unknowns by the gateway's own live connection count.
+    timeout: 250ms
+    # Whole-round budget shared by all endpoints probed for one selection
+    # (probes fire in parallel). This is the worst-case latency the probe can
+    # add to a new conversation's first request; healthy engines answer in
+    # ~1-4 ms, so the budget only pays out when an engine is wedged. A
+    # positive value below timeout is a boot error (the round would end
+    # before its own probes' allowance); 0 or negative is not an error - the
+    # probe silently uses max(2 x timeout, 400ms) instead.
+    fan_out_budget: 400ms
+    # Path probed on each endpoint URL for the primary load signal. "/health"
+    # is the radiance/vLLM-standard liveness route and stays tiny (~63 B), so
+    # probing it is effectively free for the engine.
+    health_path: "/health"
+    # JSON number in the health response counting ADMITTED requests -
+    # processing plus queued inside the engine. Radiance reports this exactly
+    # as in_flight. It includes traffic the gateway does not proxy (a direct
+    # client hits the engine and moves this number), which is precisely the
+    # load a gateway-connection-count balancer cannot see. When the field or
+    # the path is missing, the probe falls back to the endpoint's /metrics
+    # gauges (radiance:http_queue_depth, else vllm:num_requests_running +
+    # vllm:num_requests_waiting). If neither yields a reading the endpoint is
+    # UNKNOWN - there is no connection-count fallback reading: it ranks
+    # behind every answered endpoint, ordered among unknowns by the
+    # gateway's own live connection count (see timeout above).
+    active_field: "in_flight"
   # Load-aware Busy steering: a probe-healthy endpoint whose engine queue depth
   # is at/above this value is graded "busy" - it stays routable at weight 0.3, so
   # new conversations steer away from a saturating node before it starts refusing.
-  # 0 = off (default). Needs load_balancer: "priority" to affect selection and
-  # runtime_metrics on the endpoint (queue signal: engine scrape, or the
-  # llm_runtime queue_depth gauge under metrics_source: influx). Measure before
-  # lowering: on a loaded fleet queue_depth >= 8 is routine, and grading at 1-3
-  # spends the healthy tier's weight budget on saturated nodes.
-  busy_queue_depth: 0
+  # The graded number is the engine's ADMITTED count (processing + queued; on
+  # radiance it is exactly /health in_flight), never the waiting queue alone.
+  # This is the FLEET DEFAULT (8); each endpoint may override it with its own
+  # busy_queue_depth (see the endpoints block - unset inherits, 0 turns the
+  # label off for that host only). Affects selection anywhere the priority-style
+  # weighted rotation runs - "priority", and "least-load" ties and probe-off -
+  # and needs runtime_metrics on the endpoint (queue signal: engine scrape, or
+  # the llm_runtime queue_depth gauge under metrics_source: influx). Grading is
+  # inert where that signal is absent, zero, or older than 90s, so the default
+  # is harmless for engines without queue reporting. Busy endpoints stay
+  # routable - lower this only after measuring real load.
+  busy_queue_depth: 8
   # Backend-error failover (opt-in): backend HTTP status codes that rotate the
   # request to the next endpoint BEFORE the first byte reaches the client. A
   # rotated-away refusal is never forwarded; tried endpoints are excluded,
@@ -143,6 +194,7 @@ discovery:
         model_url: "/api/tags"
         health_check_url: "/"
         check_interval: 2s # How often to check when healthy
+        # busy_queue_depth: 4 # Per-host Busy threshold override (unset = inherit proxy.busy_queue_depth; 0 = never grade this host Busy)
         check_timeout: 1s
       - url: "http://localhost:1234"
         name: "local-lm-studio"

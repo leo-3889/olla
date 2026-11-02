@@ -146,7 +146,7 @@
   // Core columns are always on. Their order matters: the mobile CSS in
   // components.css sizes the first four by position.
   const coreColumns: Column[] = [
-    { key: 'name', label: 'Endpoint', sortable: true, sticky: true },
+    { key: 'name', label: 'Endpoint', sortable: true },
     { key: 'status_rank', label: 'Status', sortable: true },
     {
       key: 'success_rate_num',

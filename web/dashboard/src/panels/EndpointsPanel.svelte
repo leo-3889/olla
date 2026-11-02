@@ -91,7 +91,7 @@
   const staticCols = $derived(bootstrap.config.static_metric_columns?.length ? bootstrap.config.static_metric_columns : DEFAULT_UI_CONFIG.static_metric_columns ?? []);
 
   const columns: Column[] = $derived([
-    { key: 'name', label: 'Endpoint', sortable: true, sticky: true },
+    { key: 'name', label: 'Endpoint', sortable: true },
     { key: 'type', label: 'Type', sortable: true },
     { key: 'priority', label: 'Priority', sortable: true, num: true, align: 'right' },
     {

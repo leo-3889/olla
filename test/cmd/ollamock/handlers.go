@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -48,6 +49,10 @@ type serverConfig struct {
 	// tagsCapabilities makes /api/tags carry per-model capabilities, as Ollama 0.30+
 	// does. Off (the default) keeps the pre-existing listing for the main fleet.
 	tagsCapabilities bool
+	// noHealthInFlight drops the in_flight key from /health entirely,
+	// mimicking engines whose admitted load is only readable from /metrics
+	// (halogen-style) so the least-load probe must take its fallback path.
+	noHealthInflight bool
 }
 
 // mockServer is the central state container wired into the HTTP mux.
@@ -55,6 +60,13 @@ type mockServer struct {
 	bstate *behaviourState
 	stats  statsStore
 	cfg    serverConfig
+	// inFlight counts requests the mock has ADMITTED and is still serving
+	// (the handler blocks for the whole generation, TTFT pacing included).
+	// Mirrors radiance's /health "in_flight" - the HTTP-layer admitted count
+	// the least-load probe reads - and counts DIRECT clients too, not just
+	// whatever routes through the gateway under test. That is the property
+	// the e2e scenario needs: gateway-blind engine load must be visible.
+	inFlight atomic.Int64
 }
 
 func newServer(cfg serverConfig) *mockServer {
@@ -76,6 +88,13 @@ func (srv *mockServer) handler() http.Handler {
 
 	// Control plane - always healthy, immune to behaviour.
 	srv.controlHandlers(mux)
+
+	// Engine metrics in the radiance/vLLM gauge shape the gateway's load
+	// probe falls back to. /metrics is deliberately UNWRAPPED: behaviour
+	// injection must never make the probe's fallback read a fault. Contrast
+	// /health just below: it IS wrapped, deliberately - behaviour injection
+	// applies there on purpose (the fail_health tests rely on it).
+	mux.HandleFunc("GET /metrics", srv.handleMetrics)
 
 	// LLM protocol routes.
 	mux.HandleFunc("GET /health", srv.wrap(srv.handleHealth))
@@ -103,16 +122,16 @@ func (srv *mockServer) handler() http.Handler {
 	mux.HandleFunc("POST /predict", srv.wrap(srv.handleTEIPredict))
 	mux.HandleFunc("POST /rerank", srv.wrap(srv.handleTEIRerank))
 	mux.HandleFunc("POST /similarity", srv.wrap(srv.handleTESimilarity))
-	mux.HandleFunc("GET /metrics", srv.wrap(srv.handleTEIMetrics))
+	// TEI GET /metrics is served by the single control-plane metrics handler above.
 
 	// Inference endpoints - streaming handled in streaming.go.
-	mux.HandleFunc("POST /api/chat", srv.wrap(srv.handleOllamaChat))
-	mux.HandleFunc("POST /api/generate", srv.wrap(srv.handleOllamaGenerate))
-	mux.HandleFunc("POST /api/embed", srv.wrap(srv.handleOllamaEmbed))
-	mux.HandleFunc("POST /v1/chat/completions", srv.wrap(srv.handleOpenAIChat))
-	mux.HandleFunc("POST /v1/completions", srv.wrap(srv.handleOpenAICompletion))
-	mux.HandleFunc("POST /api/v1/chat/completions", srv.wrap(srv.handleOpenAIChat))
-	mux.HandleFunc("POST /v1/messages", srv.wrap(srv.handleAnthropicMessages))
+	mux.HandleFunc("POST /api/chat", srv.wrapInference(srv.handleOllamaChat))
+	mux.HandleFunc("POST /api/generate", srv.wrapInference(srv.handleOllamaGenerate))
+	mux.HandleFunc("POST /api/embed", srv.wrapInference(srv.handleOllamaEmbed))
+	mux.HandleFunc("POST /v1/chat/completions", srv.wrapInference(srv.handleOpenAIChat))
+	mux.HandleFunc("POST /v1/completions", srv.wrapInference(srv.handleOpenAICompletion))
+	mux.HandleFunc("POST /api/v1/chat/completions", srv.wrapInference(srv.handleOpenAIChat))
+	mux.HandleFunc("POST /v1/messages", srv.wrapInference(srv.handleAnthropicMessages))
 
 	return mux
 }
@@ -202,7 +221,57 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // --- Health / liveness ---
 
 func (srv *mockServer) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	// Shape-compatible with live radiance: the least-load probe reads
+	// in_flight straight off this body. Fields beyond "status" are additive,
+	// existing health checks only assert the code and the ok status.
+	model := "unknown"
+	if len(srv.cfg.models) > 0 {
+		model = srv.cfg.models[0]
+	}
+	body := map[string]any{
+		"status":    "ok",
+		"model":     model,
+		"queue_cap": 40,
+	}
+	if !srv.cfg.noHealthInflight {
+		body["in_flight"] = srv.inFlight.Load()
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
+// handleMetrics serves the three gauges the gateway probe knows, derived from
+// the same inFlight counter as /health (one truth, two doors):
+// radiance:http_queue_depth = admitted; vLLM pair = running + waiting split.
+func (srv *mockServer) handleMetrics(w http.ResponseWriter, _ *http.Request) {
+	n := srv.inFlight.Load()
+	model := "unknown"
+	if len(srv.cfg.models) > 0 {
+		model = srv.cfg.models[0]
+	}
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+	fmt.Fprintf(w, "# HELP radiance:http_queue_depth Admitted HTTP requests (processing + queued).\n# TYPE radiance:http_queue_depth gauge\n")
+	fmt.Fprintf(w, "radiance:http_queue_depth{model_name=%q,engine=\"0\"} %d\n", model, n)
+	fmt.Fprintf(w, "# HELP vllm:num_requests_running Requests currently running.\n# TYPE vllm:num_requests_running gauge\n")
+	fmt.Fprintf(w, "vllm:num_requests_running{model_name=%q,engine=\"0\"} %d\n", model, n)
+	fmt.Fprintf(w, "# TYPE vllm:num_requests_waiting gauge\n")
+	fmt.Fprintf(w, "vllm:num_requests_waiting{model_name=%q,engine=\"0\"} 0\n", model)
+	// TEI instances advertise their own counters on the same path; ServeMux allows
+	// one pattern per path, so the mock emits both engine shapes in one exposition
+	// body (concatenated HELP/TYPE blocks are valid Prometheus text).
+	srv.writeTEIMetrics(w)
+}
+
+// wrapInference counts the admitted-request window around an inference
+// handler. The wrapped handlers block for the full response (TTFT and token
+// pacing included), so the counter brackets true serving time and releases
+// when the engine would release its slot.
+func (srv *mockServer) wrapInference(inner http.HandlerFunc) http.HandlerFunc {
+	inner = srv.wrap(inner)
+	return func(w http.ResponseWriter, r *http.Request) {
+		srv.inFlight.Add(1)
+		defer srv.inFlight.Add(-1)
+		inner(w, r)
+	}
 }
 
 func (srv *mockServer) handleRoot(w http.ResponseWriter, _ *http.Request) {
@@ -1330,6 +1399,11 @@ func (srv *mockServer) handleTESimilarity(w http.ResponseWriter, r *http.Request
 }
 func (srv *mockServer) handleTEIMetrics(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+	srv.writeTEIMetrics(w)
+}
+
+// writeTEIMetrics appends the TEI counters to a Prometheus text body.
+func (srv *mockServer) writeTEIMetrics(w io.Writer) {
 	fmt.Fprint(w, "# HELP tei_mock_requests_total Mock request counter\n"+
 		"# TYPE tei_mock_requests_total counter\n"+
 		"tei_mock_requests_total 0\n")

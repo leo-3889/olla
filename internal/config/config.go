@@ -25,6 +25,7 @@ const (
 	DefaultProxyProfile      = constants.ConfigurationProxyProfileAuto
 	DefaultProxyEngine       = "olla"
 	DefaultLoadBalancer      = "least-connections"
+	DefaultBusyQueueDepth    = 8
 	DefaultModelRegistryType = "memory"
 	DefaultDiscoveryType     = "static"
 )
@@ -89,7 +90,11 @@ func DefaultConfig() *Config {
 		Proxy: ProxyConfig{
 			Engine:       DefaultProxyEngine,
 			LoadBalancer: DefaultLoadBalancer,
-			Profile:      DefaultProxyProfile,
+			// Busy grading on by default at 8 admitted requests (operator
+			// default 2026-11-02; was 0/off). Inert unless the endpoint
+			// actually reports the queue signal. 0 = off, per-endpoint
+			// busy_queue_depth overrides.
+			Profile: DefaultProxyProfile,
 			// StreamBufferSize is deliberately left at zero here: each proxy
 			// engine defaults it differently (Olla 64KiB, Sherpa 8KiB) via its
 			// own zero-check further down the chain. Hardcoding a value here
@@ -100,7 +105,8 @@ func DefaultConfig() *Config {
 			// Zero, not the old 3 and 500ms: both are deprecated and unused, and a
 			// non-zero default would make "operator set it" undetectable for the
 			// startup warning.
-			Retry: RetryConfig{Enabled: true, NonIdempotent: true},
+			Retry:          RetryConfig{Enabled: true, NonIdempotent: true},
+			BusyQueueDepth: DefaultBusyQueueDepth,
 			// Empty = backend status codes pass through to the client
 			// untouched. Set e.g. [429, 503] to rotate endpoints on
 			// refusals before the first byte is written.
@@ -118,6 +124,20 @@ func DefaultConfig() *Config {
 				KeySources:      []string{"session_header", "first_user_message", "prefix_hash", "auth_header"},
 				PrefixHashBytes: 512,
 				KeyScanBytes:    65536,
+			},
+
+			// Off by default: no probe round is ever issued, so a default run is
+			// byte-identical to a build without least-load dispatch. The budgets
+			// below are sized against the live-fleet measurement of 2026-11-03
+			// (radiance /health answers in ~1.0 ms with 63 B, ~1.1-2.2 ms while 4
+			// generations were mid-flight), so Timeout is ~250x the observed cost
+			// and only pays out on a wedged engine.
+			LoadProbe: LoadProbeConfig{
+				Enabled:      false,
+				Timeout:      250 * time.Millisecond,
+				FanOutBudget: 400 * time.Millisecond,
+				HealthPath:   "/health",
+				ActiveField:  "in_flight",
 			},
 		},
 		Discovery: DiscoveryConfig{
@@ -472,6 +492,37 @@ func applyEnvOverrides(config *Config) {
 	}
 	if val := os.Getenv("OLLA_PROXY_LOAD_BALANCER"); val != "" {
 		config.Proxy.LoadBalancer = val
+	}
+	// Least-load family (fork): balancer choice above, plus the assignment-time
+	// probe and the Busy-label threshold. Same explicit-mapping house style as
+	// every other knob: parseable values are validated by the same Validate()
+	// as YAML, while unparseable duration/int values are silently ignored,
+	// exactly like every existing OLLA_* duration/int knob.
+	if val := os.Getenv("OLLA_PROXY_BUSY_QUEUE_DEPTH"); val != "" {
+		if depth, err := strconv.Atoi(val); err == nil {
+			config.Proxy.BusyQueueDepth = depth
+		}
+	}
+	if val := os.Getenv("OLLA_PROXY_LOAD_PROBE_ENABLED"); val != "" {
+		if enabled, err := strconv.ParseBool(val); err == nil {
+			config.Proxy.LoadProbe.Enabled = enabled
+		}
+	}
+	if val := os.Getenv("OLLA_PROXY_LOAD_PROBE_TIMEOUT"); val != "" {
+		if duration, err := time.ParseDuration(val); err == nil {
+			config.Proxy.LoadProbe.Timeout = duration
+		}
+	}
+	if val := os.Getenv("OLLA_PROXY_LOAD_PROBE_FAN_OUT_BUDGET"); val != "" {
+		if duration, err := time.ParseDuration(val); err == nil {
+			config.Proxy.LoadProbe.FanOutBudget = duration
+		}
+	}
+	if val := os.Getenv("OLLA_PROXY_LOAD_PROBE_HEALTH_PATH"); val != "" {
+		config.Proxy.LoadProbe.HealthPath = val
+	}
+	if val := os.Getenv("OLLA_PROXY_LOAD_PROBE_ACTIVE_FIELD"); val != "" {
+		config.Proxy.LoadProbe.ActiveField = val
 	}
 	if val := os.Getenv("OLLA_PROXY_PROFILE"); val != "" {
 		config.Proxy.Profile = val

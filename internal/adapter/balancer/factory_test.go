@@ -25,7 +25,7 @@ func TestNewFactory(t *testing.T) {
 	}
 
 	// Test default strategies are registered
-	expectedStrategies := []string{DefaultBalancerPriority, DefaultBalancerRoundRobin, DefaultBalancerLeastConnections}
+	expectedStrategies := []string{DefaultBalancerPriority, DefaultBalancerRoundRobin, DefaultBalancerLeastConnections, DefaultBalancerLeastLoad}
 	available := factory.GetAvailableStrategies()
 
 	if len(available) != len(expectedStrategies) {
@@ -292,4 +292,40 @@ func createTestEndpoints(count int, status domain.EndpointStatus) []*domain.Endp
 		}
 	}
 	return endpoints
+}
+
+// TestFactory_SetLoadProber_WiredIntoLeastLoad is the seam gate for the probe
+// wiring: the least-load creator closure must pick up the prober supplied via
+// SetLoadProber. Delete that wiring in app/services/proxy.go and the selector
+// silently degrades to priority - this is what fails then.
+func TestFactory_SetLoadProber_WiredIntoLeastLoad(t *testing.T) {
+	a := createPriorityEndpoint("busy", 11434, domain.StatusHealthy, 100)
+	b := createPriorityEndpoint("idle", 11435, domain.StatusHealthy, 100)
+	prober := &stubProber{loads: map[string]domain.Load{
+		a.URLString: knownLoad(8),
+		b.URLString: knownLoad(0),
+	}}
+
+	factory := NewFactory(NewTestStatsCollector())
+	factory.SetLoadProber(prober)
+	selector, err := factory.Create(DefaultBalancerLeastLoad)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A prober that reached the selector shows up in the choice; the unwired
+	// SWRR path ignores load and would rotate onto the busy node.
+	for range 4 {
+		got, err := selector.Select(context.Background(), []*domain.Endpoint{a, b})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.URLString != b.URLString {
+			t.Fatalf("SetLoadProber never reached the selector: picked %s (load 8) over %s (load 0)",
+				got.URLString, b.URLString)
+		}
+	}
+	if prober.calls != 4 {
+		t.Fatalf("selector built by the factory must probe per Select, calls=%d", prober.calls)
+	}
 }

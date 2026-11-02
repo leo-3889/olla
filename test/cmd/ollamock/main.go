@@ -39,6 +39,7 @@ func main() {
 	tagsCapabilities := flag.Bool("tags-capabilities", false, "emit per-model capabilities in /api/tags, as Ollama 0.30+ does; off by default so the main fleet's listing is unchanged")
 	loaded := flag.String("loaded", "", "comma-separated models /api/ps reports as resident (empty = none)")
 	teiKind := flag.String("tei-kind", teiKindEmbedding, "kind of model a TEI instance reports in /info and serves: embedding, reranker or classifier")
+	noHealthInflight := flag.Bool("no-health-inflight", false, "omit in_flight from the /health JSON (metrics-only-load engine shape); /metrics keeps serving the same counter")
 	flag.Parse()
 
 	if !slices.Contains([]string{teiKindEmbedding, teiKindReranker, teiKindClassifier}, *teiKind) {
@@ -57,6 +58,7 @@ func main() {
 		tagsCapabilities: *tagsCapabilities,
 		loaded:           parseLoaded(*loaded),
 		teiKind:          *teiKind,
+		noHealthInflight: *noHealthInflight,
 	}
 
 	srv := newServer(cfg)

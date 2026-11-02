@@ -51,11 +51,15 @@ type Endpoint struct {
 	RuntimeMetricsKind string
 	// RuntimeMetricsPath overrides the metrics scrape path (an absolute URL
 	// is honoured too); empty means "/metrics".
-	RuntimeMetricsPath     string
-	LastLatency            time.Duration
-	CheckInterval          time.Duration
-	CheckTimeout           time.Duration
-	Priority               int
+	RuntimeMetricsPath string
+	LastLatency        time.Duration
+	CheckInterval      time.Duration
+	CheckTimeout       time.Duration
+	Priority           int
+	// BusyQueueDepth is the per-host override of proxy.busy_queue_depth
+	// (nil = inherit the fleet default). Graded against the engine's
+	// admitted-request count at health-probe grade time.
+	BusyQueueDepth         *int `json:"busy_queue_depth,omitempty"`
 	ConsecutiveFailures    int
 	BackoffMultiplier      int
 	RuntimeMetricsInterval time.Duration

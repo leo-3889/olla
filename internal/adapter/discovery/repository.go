@@ -211,6 +211,7 @@ func (r *StaticEndpointRepository) LoadFromConfig(ctx context.Context, configs [
 			RuntimeMetricsTimeout:  runtimeMetricsTimeout(cfg.RuntimeMetrics),
 			RuntimeMetricsKind:     runtimeMetricsKind(cfg.RuntimeMetrics),
 			RuntimeMetricsPath:     runtimeMetricsPath(cfg.RuntimeMetrics),
+			BusyQueueDepth:         cfg.BusyQueueDepth,
 		}
 
 		if cfg.Auth != nil {
@@ -384,6 +385,10 @@ func (r *StaticEndpointRepository) validateEndpointConfig(cfg config.EndpointCon
 
 	if cfg.CheckInterval < MinHealthCheckInterval {
 		return fmt.Errorf("check_interval too short: minimum %v, got %v", MinHealthCheckInterval, cfg.CheckInterval)
+	}
+
+	if cfg.BusyQueueDepth != nil && *cfg.BusyQueueDepth < 0 {
+		return fmt.Errorf("busy_queue_depth must be >= 0 (0 = never grade this endpoint Busy), got %d", *cfg.BusyQueueDepth)
 	}
 
 	if cfg.CheckTimeout >= cfg.CheckInterval {

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/thushan/olla/internal/adapter/balancer"
+	"github.com/thushan/olla/internal/adapter/balancer/loadprobe"
 	"github.com/thushan/olla/internal/adapter/metrics"
 	"github.com/thushan/olla/internal/adapter/proxy"
 	proxyconfig "github.com/thushan/olla/internal/adapter/proxy/config"
@@ -86,8 +87,10 @@ func (s *ProxyServiceWrapper) Start(ctx context.Context) error {
 		s.discoveryService = discService
 	}
 
-	// Create load balancer
-	balancerFactory := balancer.NewFactory(s.statsCollector)
+	// Create load balancer (load-probe wiring inside: Start sits at the
+	// gocognit ceiling, and the wiring is a factory-construction concern).
+	balancerFactory := s.newBalancerFactory()
+
 	var err error
 	s.loadBalancer, err = balancerFactory.Create(s.config.LoadBalancer)
 	if err != nil {
@@ -300,6 +303,55 @@ func (s *ProxyServiceWrapper) SetDiscoveryService(discoveryService *DiscoverySer
 // SetSecurityService sets the security service dependency
 func (s *ProxyServiceWrapper) SetSecurityService(securityService *SecurityService) {
 	s.securityService = securityService
+}
+
+// newBalancerFactory builds the balancer factory and wires the
+// assignment-time occupancy probe when proxy.load_probe is armed for
+// "least-load". SetLoadProber must precede Create: the registration closure
+// reads the prober there.
+func (s *ProxyServiceWrapper) newBalancerFactory() *balancer.Factory {
+	factory := balancer.NewFactory(s.statsCollector)
+	s.logLoadProbeConfig()
+	if s.config.LoadProbe.Enabled && s.config.LoadBalancer == balancer.DefaultBalancerLeastLoad {
+		factory.SetLoadProber(loadprobe.New(s.config.LoadProbe))
+	}
+	return factory
+}
+
+// logLoadProbeConfig states in ONE line per combination what the assignment-time
+// occupancy probe will actually do, and says so LOUDLY when a knob is inert -
+// the same doctrine as retry_on_status and sticky_sessions key_sources: a
+// silently inert knob reads as "the feature is broken" in the field.
+//
+// Both half-configured shapes warn: load_probe enabled on a balancer that never
+// probes, and "least-load" selected with the probe disabled (it then runs the
+// priority/SWRR path and looks like a balancer that does nothing). Only the
+// armed combination logs the "armed" Info - reporting success for a probe that
+// is wired to nothing is worse than silence.
+//
+// Off by default: with load_probe disabled and a non-least-load balancer
+// nothing is logged and the gateway behaves exactly as a build without the
+// feature. SetLoadProber must run BEFORE the balancer factory's Create (the
+// registration closure reads the prober there).
+func (s *ProxyServiceWrapper) logLoadProbeConfig() {
+	leastLoad := s.config.LoadBalancer == balancer.DefaultBalancerLeastLoad
+	if !s.config.LoadProbe.Enabled {
+		if leastLoad {
+			s.logger.Warn("proxy.load_balancer is \"least-load\" but proxy.load_probe.enabled is false: no occupancy signal exists, so it runs as \"priority\" (SWRR) until load_probe.enabled",
+				"load_balancer", s.config.LoadBalancer)
+		}
+		return
+	}
+	if !leastLoad {
+		s.logger.Warn("proxy.load_probe.enabled has no effect unless proxy.load_balancer is \"least-load\"",
+			"load_balancer", s.config.LoadBalancer)
+		return
+	}
+	s.logger.Info("Load probe armed",
+		"timeout", s.config.LoadProbe.Timeout,
+		"fan_out_budget", s.config.LoadProbe.FanOutBudget,
+		"health_path", s.config.LoadProbe.HealthPath,
+		"active_field", s.config.LoadProbe.ActiveField)
 }
 
 // applyStickySessions wraps the current load balancer with KV-cache affinity routing
