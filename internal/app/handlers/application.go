@@ -15,6 +15,7 @@ import (
 	"github.com/thushan/olla/internal/adapter/security"
 	"github.com/thushan/olla/internal/adapter/translator"
 	"github.com/thushan/olla/internal/adapter/translator/anthropic"
+	"github.com/thushan/olla/internal/app/handlers/health"
 	"github.com/thushan/olla/internal/app/middleware"
 	"github.com/thushan/olla/internal/config"
 	"github.com/thushan/olla/internal/core/domain"
@@ -152,6 +153,10 @@ type Application struct {
 	// throttles holds every rejection-log throttle the application created, so shutdown
 	// can report the tail of a flood that stopped just before it.
 	throttles *logger.ThrottleSet
+	// evaluator computes the overall system status for /internal/status. It is
+	// built from the health config (host or model mode) so the handler stays a
+	// thin dispatcher over the verdict.
+	evaluator health.Evaluator
 	server    *http.Server
 	errCh     chan error
 	StartTime time.Time
@@ -263,6 +268,7 @@ func NewApplication(
 		aliasResolver:      aliasResolver,
 		rejectLog:          newRejectLogs(logger, throttles),
 		throttles:          throttles,
+		evaluator:          health.NewEvaluator(&cfg.Health),
 		server:             server,
 		errCh:              make(chan error, 1),
 		StartTime:          time.Now(),

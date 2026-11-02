@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thushan/olla/internal/app/handlers/health"
 	"github.com/thushan/olla/internal/core/constants"
 	"github.com/thushan/olla/internal/version"
 
@@ -60,6 +61,14 @@ type SystemSummary struct {
 	// previously it reported "0%" on a healthy fresh boot, which coupled with
 	// the legacy status threshold produced a misleading "critical" verdict.
 	HasTraffic bool `json:"has_traffic"`
+	// HealthMode is the computation that produced Status: "host" (the endpoint
+	// fleet, the historical behaviour) or "model" (a configured list of
+	// models/aliases). Always present so clients can tell which verdict they are
+	// looking at.
+	HealthMode string `json:"health_mode"`
+	// Models is the per-model breakdown in model mode. Omitted (nil) in host
+	// mode so the payload is unchanged for the default configuration.
+	Models []health.ModelHealthEntry `json:"models,omitempty"`
 }
 
 type ProxySummary struct {
@@ -126,6 +135,10 @@ type statusSnapshot struct {
 	healthy         []*domain.Endpoint
 	proxyStats      ports.ProxyStats
 	securityStats   ports.SecurityStats
+	// modelStats is the per-model request stats, gathered here so the model
+	// health evaluator can aggregate the configured models' own traffic without
+	// a second collector call.
+	modelStats map[string]ports.ModelStats
 }
 
 func (a *Application) gatherStatusSnapshot(ctx context.Context) (*statusSnapshot, error) {
@@ -144,12 +157,14 @@ func (a *Application) gatherStatusSnapshot(ctx context.Context) (*statusSnapshot
 	var proxyStats ports.ProxyStats
 	var securityStats ports.SecurityStats
 	var connectionStats map[string]int64
+	var modelStats map[string]ports.ModelStats
 
 	if a.statsCollector != nil {
 		endpointStats = a.statsCollector.GetEndpointStats()
 		proxyStats = a.statsCollector.GetProxyStats()
 		securityStats = a.statsCollector.GetSecurityStats()
 		connectionStats = a.statsCollector.GetConnectionStats()
+		modelStats = a.statsCollector.GetModelStats()
 	}
 
 	return &statusSnapshot{
@@ -160,17 +175,18 @@ func (a *Application) gatherStatusSnapshot(ctx context.Context) (*statusSnapshot
 		securityStats:   securityStats,
 		connectionStats: connectionStats,
 		endpointModels:  endpointModelsMap,
+		modelStats:      modelStats,
 	}, nil
 }
 
-func (a *Application) buildStatusResponse(snapshot *statusSnapshot) StatusResponse {
+func (a *Application) buildStatusResponse(ctx context.Context, snapshot *statusSnapshot) StatusResponse {
 	response := StatusResponse{
 		Timestamp: time.Now(),
 		Endpoints: make([]EndpointResponse, len(snapshot.all)),
 	}
 
 	response.Proxy = a.buildProxySummary(a.Config.Proxy)
-	response.System = a.buildSystemSummary(snapshot.all, snapshot.healthy, snapshot.proxyStats, snapshot.securityStats, snapshot.connectionStats, snapshot.endpointStats)
+	response.System = a.buildSystemSummary(ctx, snapshot.all, snapshot.healthy, snapshot.proxyStats, snapshot.securityStats, snapshot.connectionStats, snapshot.endpointStats, snapshot.modelStats)
 	// IDs derive once from the same snapshot so every payload agrees and
 	// colliding siblings stay distinct via positional disambiguators.
 	endpointIDs := buildEndpointIDs(snapshot.all)
@@ -187,7 +203,7 @@ func (a *Application) statusHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := a.buildStatusResponse(snapshot)
+	response := a.buildStatusResponse(r.Context(), snapshot)
 
 	body, err := json.Marshal(response)
 	if err != nil {
@@ -205,7 +221,13 @@ func (a *Application) buildProxySummary(proxyConfig config.ProxyConfig) ProxySum
 	}
 }
 
-func (a *Application) buildSystemSummary(all, healthy []*domain.Endpoint, proxy ports.ProxyStats, security ports.SecurityStats, connections map[string]int64, endpointStats map[string]ports.EndpointStats) SystemSummary {
+// buildSystemSummary assembles the system summary from the evaluator's verdict
+// plus the proxy-wide display values. The verdict itself (healthy/degraded/
+// critical) is computed by the health.Evaluator selected from the health config
+// (host or model mode); this function only renders it and the surrounding
+// display fields, so the two health modes stay independent of the response
+// assembly.
+func (a *Application) buildSystemSummary(ctx context.Context, all, healthy []*domain.Endpoint, proxy ports.ProxyStats, security ports.SecurityStats, connections map[string]int64, endpointStats map[string]ports.EndpointStats, modelStats map[string]ports.ModelStats) SystemSummary {
 	var totalConnections, totalTraffic int64
 
 	for url, conn := range connections {
@@ -215,73 +237,95 @@ func (a *Application) buildSystemSummary(all, healthy []*domain.Endpoint, proxy 
 		}
 	}
 
-	hasTraffic := proxy.TotalRequests > 0
+	// The evaluator is built in NewApplication; the nil-guard keeps hand-
+	// constructed test Applications (which bypass the constructor) working by
+	// falling back to the host evaluator with the standard thresholds.
+	evaluator := a.evaluator
+	if evaluator == nil {
+		evaluator = health.NewHostEvaluator()
+	}
+	// A config that did not populate the success-rate thresholds (e.g. a bare
+	// test config) would make the evaluator treat any traffic as critical, so
+	// fall back to the standard thresholds in that case. Production configs are
+	// validated to be non-zero.
+	thresholds := a.Config.Health.SuccessRate
+	if thresholds.CriticalBelow <= 0 || thresholds.DegradedBelow <= 0 {
+		thresholds = health.DefaultThresholds()
+	}
 
-	var status string
-	if len(all) == 0 {
-		// len(healthy)/len(all) is 0/0 = NaN with zero endpoints, and every NaN
-		// comparison below is false, so both branches below would fall through
-		// to their default healthy case. A proxy with nothing to route to
-		// cannot be healthy regardless of traffic, so this is decided before
-		// the ratio is even computed.
-		status = statusCritical
-	} else {
-		healthyRatio := float64(len(healthy)) / float64(len(all))
-		if hasTraffic {
-			// Dual-threshold verdict: a healthy fleet cannot mask a failing proxy
-			// and high failure rates cannot mask healthy endpoints.
-			systemSuccessRate := float64(proxy.SuccessfulRequests) / float64(proxy.TotalRequests) * 100.0
-			switch {
-			case healthyRatio < 0.5 || systemSuccessRate < 90.0:
-				status = statusCritical
-			case healthyRatio < 0.8 || systemSuccessRate < 95.0:
-				status = statusDegraded
-			default:
-				status = statusHealthy
-			}
+	in := &health.Input{
+		All:           all,
+		Healthy:       healthy,
+		ProxyStats:    proxy,
+		ModelStats:    modelStats,
+		ModelRegistry: a.modelRegistry,
+		AliasResolver: a.aliasResolver,
+		Thresholds:    thresholds,
+		Logger:        a.logger,
+	}
+	result := evaluator.Evaluate(ctx, in)
+
+	// health_mode reports the mode that actually produced the verdict. In model
+	// mode with a real signal that is "model". When the model evaluator had no
+	// signal (e.g. a fresh boot before model discovery has run) a model-based
+	// verdict would be a spurious "critical", so re-run the host evaluator and
+	// report the host verdict instead - the honest label is then "host".
+	healthMode := "host"
+	if evaluator.Mode() == "model" {
+		if result.HasModelSignal {
+			healthMode = "model"
 		} else {
-			// Fresh boot (or no requests yet): the proxy success rate is undefined,
-			// so derive status purely from endpoint health. Without this branch a
-			// perfectly healthy zero-traffic fleet fell through to the legacy
-			// < 90.0 success-rate clause and reported critical.
-			switch {
-			case healthyRatio < 0.5:
-				status = statusCritical
-			case healthyRatio < 0.8:
-				status = statusDegraded
-			default:
-				status = statusHealthy
-			}
+			result = health.NewHostEvaluator().Evaluate(ctx, in)
 		}
 	}
 
-	totalViolations := security.RateLimitViolations + security.SizeLimitViolations
+	// Display values: in model mode with a real signal the success_rate and
+	// has_traffic reflect the configured models' own traffic (result.Scoped);
+	// otherwise (host mode, or the model-mode fallback) they reflect the
+	// proxy-wide totals, preserving the historical display.
+	hasTraffic := proxy.TotalRequests > 0
+	var successRate *float64
+	if proxy.TotalRequests > 0 {
+		rate := float64(proxy.SuccessfulRequests) / float64(proxy.TotalRequests) * 100.0
+		successRate = &rate
+	}
+	if result.Scoped {
+		hasTraffic = result.HasTraffic
+		successRate = result.SuccessRate
+	}
 
 	// No traffic means the success rate is undefined; noTrafficSuccessRate
 	// mirrors the endpoint-level convention in handler_status_endpoints.go and
 	// stops the dashboard rendering a misleading "0%" on a fresh boot.
 	successRateStr := noTrafficSuccessRate
-	if hasTraffic {
-		systemSuccessRate := float64(proxy.SuccessfulRequests) / float64(proxy.TotalRequests) * 100.0
-		successRateStr = format.Percentage(systemSuccessRate)
+	if hasTraffic && successRate != nil {
+		successRateStr = format.Percentage(*successRate)
 	}
 
-	return SystemSummary{
+	summary := SystemSummary{
 		Version:            version.Version,
 		Commit:             version.Commit,
-		Status:             status,
+		Status:             result.Status,
 		EndpointsUp:        format.EndpointsUp(len(healthy), len(all)),
 		SuccessRate:        successRateStr,
 		AvgLatency:         format.Latency(proxy.AverageLatency),
 		ActiveConnections:  totalConnections,
-		SecurityViolations: totalViolations,
+		SecurityViolations: security.RateLimitViolations + security.SizeLimitViolations,
 		TotalTraffic:       format.Bytes(util.SafeUint64(totalTraffic)),
 		TotalRequests:      proxy.TotalRequests,
 		TotalFailures:      proxy.FailedRequests,
 		UptimeHuman:        format.Duration2(time.Since(a.StartTime)),
 		StartTime:          a.StartTime,
 		HasTraffic:         hasTraffic,
+		HealthMode:         healthMode,
 	}
+	// The per-model breakdown is only meaningful when a model verdict was
+	// actually used; in host mode (and the model-mode fallback) it stays
+	// omitted so the default payload is unchanged.
+	if healthMode == "model" && len(result.Models) > 0 {
+		summary.Models = result.Models
+	}
+	return summary
 }
 
 func (a *Application) buildUnifiedEndpoints(all []*domain.Endpoint, statsMap map[string]ports.EndpointStats,
@@ -608,6 +652,16 @@ func hashStatusResponse(resp *StatusResponse) string {
 	hashEtagInt64(h, resp.System.SecurityViolations)
 	hashEtagInt64(h, resp.System.TotalRequests)
 	hashEtagInt64(h, resp.System.TotalFailures)
+	hashEtagString(h, resp.System.HealthMode)
+	for i := range resp.System.Models {
+		m := &resp.System.Models[i]
+		hashEtagString(h, m.Name)
+		hashEtagString(h, m.Status)
+		hashEtagInt64(h, m.TotalRequests)
+		hashEtagInt64(h, m.SuccessfulRequests)
+		hashEtagInt64(h, m.FailedRequests)
+		hashEtagString(h, m.SuccessRate)
+	}
 
 	hashEtagString(h, resp.Security.Status)
 	hashEtagInt64(h, int64(resp.Security.BlockedIPs))

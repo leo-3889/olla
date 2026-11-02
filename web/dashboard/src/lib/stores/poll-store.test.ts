@@ -51,6 +51,7 @@ const SAMPLE_BODY: StatusResponse = {
     total_requests: 0,
     total_failures: 0,
     has_traffic: false,
+    health_mode: 'host',
   },
 };
 

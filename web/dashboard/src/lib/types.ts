@@ -51,6 +51,22 @@ export interface SystemSummary {
   // on a fresh boot, flips true once any proxy request has been counted.
   // When false, success_rate arrives as "N/A" rather than "0%".
   has_traffic: boolean;
+  // The computation that produced status: "host" (the endpoint fleet, the
+  // default) or "model" (a configured list of models/aliases). Always emitted.
+  health_mode: string;
+  // Per-model breakdown, present only in model mode.
+  models?: ModelHealthEntry[];
+}
+
+export interface ModelHealthEntry {
+  name: string;
+  // healthy | unhealthy | unknown
+  status: string;
+  total_requests: number;
+  successful_requests: number;
+  failed_requests: number;
+  // "N/A" when the model has no traffic.
+  success_rate: string;
 }
 
 export interface EndpointModelsResponse {
