@@ -46,6 +46,9 @@
   // response is pending nothing is rendered - no empty-shell pretending.
   const observeData = $derived(bootstrap.observe?.data ?? null);
   const observeDegraded = $derived(bootstrap.observe?.status === 'stale' || bootstrap.observe?.status === 'error');
+  // "error" is not "stale": the sections keep their last good numbers, and
+  // the operator must be able to tell a slow source from a dead one.
+  const observeStatusLabel = $derived(bootstrap.observe?.status === 'error' ? 'source error' : 'stale');
   function maxAgeS(values: Array<number | null | undefined>): number | null {
     const ages = values.filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
     return ages.length > 0 ? Math.max(...ages) : null;
@@ -233,8 +236,11 @@
   const filtering = $derived(isFiltering(endpointFilter.query, endpointFilter.status));
 
   // uptime is now derived client-side from start_time so the ETag stays
-  // stable; the live clock re-renders this each second.
-  const now = $derived(liveNow());
+  // stable; the live clock re-renders this each second. While the poll is
+  // stale/errored the clock freezes at the last good response: the gateway
+  // cannot confirm uptime it never answered for, and a counter that keeps
+  // ticking through an outage is a lie by the minute.
+  const now = $derived(overview.status === 'ok' ? liveNow() : (overview.lastUpdated?.getTime() ?? liveNow()));
   const uptimeText = $derived(sys?.start_time ? fmtUptime(sys.start_time, now) : '—');
 
   // Extra context for the status pill's tooltip, so the operator sees why a
@@ -321,11 +327,11 @@
             {/if}
           {/snippet}
         </StatTile>
-        <StatTile
-          label="Avg latency"
-          value={sys.avg_latency}
-          sub="across all backends"
-        />
+        <StatTile label="Avg latency" sub="across all backends">
+          {#snippet children()}
+            {#if hasTraffic}{sys.avg_latency}{:else}<span class="dash">—</span>{/if}
+          {/snippet}
+        </StatTile>
         <StatTile
           label="Total traffic"
           value={trafficBytes !== null ? fmtBytes(trafficBytes) : sys.total_traffic}
@@ -451,14 +457,16 @@
 
   {/if}
 
-  {#if bootstrap.sectionEnabled('power') && observeData}
-    <ObservePower rows={observeData.power} ageS={maxAgeS(observeData.power.map((r) => r.age_s))} degraded={observeDegraded} />
-  {/if}
-  {#if bootstrap.sectionEnabled('cost') && observeData}
-    <ObserveCost cost={observeData.cost} degraded={observeDegraded} />
-  {/if}
-  {#if bootstrap.sectionEnabled('gpu') && observeData}
-    <ObserveGpu gpus={observeData.gpus} ageS={maxAgeS(observeData.gpus.map((r) => r.age_s))} degraded={observeDegraded} />
+  {#if observeData && (bootstrap.sectionEnabled('power') || bootstrap.sectionEnabled('cost') || bootstrap.sectionEnabled('gpu'))}
+    {#if bootstrap.sectionEnabled('power')}
+      <ObservePower rows={observeData.power} ageS={maxAgeS(observeData.power.map((r) => r.age_s))} degraded={observeDegraded} statusLabel={observeStatusLabel} />
+    {/if}
+    {#if bootstrap.sectionEnabled('cost')}
+      <ObserveCost cost={observeData.cost} degraded={observeDegraded} statusLabel={observeStatusLabel} />
+    {/if}
+    {#if bootstrap.sectionEnabled('gpu')}
+      <ObserveGpu gpus={observeData.gpus} absent={observeData.gpus_absent ?? []} ageS={maxAgeS(observeData.gpus.map((r) => r.age_s))} degraded={observeDegraded} statusLabel={observeStatusLabel} />
+    {/if}
   {/if}
   </div>
 
@@ -466,4 +474,11 @@
        endpoints, so a /internal/status outage must neither stop them starting
        nor grey them. -->
   <RuntimeCards />
+
+  <!-- Outside the .panel-data wrapper on purpose (same invariant as the
+       overview banner above): a correlated outage (overview stale AND
+       observe degraded) must not dim this banner's retry affordance. -->
+  {#if observeData && observeDegraded && (bootstrap.sectionEnabled('power') || bootstrap.sectionEnabled('cost') || bootstrap.sectionEnabled('gpu'))}
+    <StatusBanner store={bootstrap.observe!} />
+  {/if}
 </div>

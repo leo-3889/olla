@@ -10,8 +10,10 @@
     ageS: number | null;
     /** true when the observe store reports stale/error */
     degraded: boolean;
+    /** 'stale' | 'source error' - why degraded, worded for the note */
+    statusLabel?: string;
   }
-  let { rows, ageS, degraded }: Props = $props();
+  let { rows, ageS, degraded, statusLabel = 'stale' }: Props = $props();
 
   function fmt(value: number | null | undefined, digits = 1): string {
     if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
@@ -23,7 +25,7 @@
 <div class="section observe-power">
   <div class="section-head">
     <h2>Power</h2>
-    <span class="section-note observe-src" class:stale={degraded}>ollametrics · {ageText}{#if degraded} (stale){/if}</span>
+    <span class="section-note observe-src" class:stale={degraded}>ollametrics · {ageText}{#if degraded} ({statusLabel}){/if}</span>
   </div>
   <div class="tile-grid" data-state={degraded ? 'stale' : null}>
     {#each rows as row (row.target)}

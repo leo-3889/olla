@@ -25,7 +25,7 @@ type runtimeMetricsProvider interface {
 // must not take the gateway down: it logs and keeps the sampler. The sampler
 // is NOT started in influx mode (its own scrapes would be invisible cost),
 // and the observe collector exists only in influx mode.
-func newRuntimeMetricsSource(ctx context.Context, cfg *config.Config, repository domain.EndpointRepository, log logger.StyledLogger) (runtimeMetricsProvider, *observeCollector) {
+func newRuntimeMetricsSource(ctx context.Context, cfg *config.Config, repository domain.EndpointRepository, log logger.StyledLogger) (runtimeMetricsProvider, *observeCollector, string) {
 	if cfg.MetricsSource.InfluxEnabled() {
 		token := os.Getenv(cfg.MetricsSource.Influx.TokenEnv)
 		if token == "" {
@@ -34,10 +34,13 @@ func newRuntimeMetricsSource(ctx context.Context, cfg *config.Config, repository
 		} else {
 			provider := newInfluxMetricsProvider(cfg.MetricsSource.Influx, token, repository, log)
 			provider.Start(ctx)
-			return provider, newObserveCollector(cfg.MetricsSource.Influx, token, log)
+			return provider, newObserveCollector(cfg.MetricsSource.Influx, token, log), config.MetricsSourceModeInflux
 		}
 	}
 	sampler := newEndpointRuntimeMetricsSampler(repository, log)
 	sampler.Start(ctx)
-	return sampler, nil
+	// The EFFECTIVE mode: an influx intent that fell back (missing token)
+	// reports sampler, so config.json can never advertise sections the
+	// process is not serving.
+	return sampler, nil, config.MetricsSourceModeSampler
 }

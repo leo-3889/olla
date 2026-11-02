@@ -263,4 +263,4 @@ dashboard:
 #       power_attribution:
 #         halogen-395: plug-395
 #         radiance-9700-64: plug-box
-#       gpu_endpoint: radiance-gpus
+#       gpu_endpoints: [radiance-gpus]

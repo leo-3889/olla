@@ -216,15 +216,22 @@ export interface ObserveCostEntry {
   tokens?: number | null;
   period_status?: string | null;
   period_start?: string | null;
+  currency?: string;
+  // Age of the cost SERVICE heartbeat (rollup _time is the period start
+  // and can never express freshness). Null when the heartbeat is unknown.
+  age_s?: number | null;
 }
 
 export interface ObserveCost {
+  /** endpoints whose rollup was rejected by the liveness rules (went dark) */
+  dropped?: string[];
   currency: string;
   hour: Record<string, ObserveCostEntry>;
   day: Record<string, ObserveCostEntry>;
 }
 
 export interface ObserveGpuRow {
+  endpoint: string;
   gpu: string;
   node?: string | null;
   busy_percent?: number | null;
@@ -244,6 +251,9 @@ export interface ObserveResponse {
   power: ObservePowerRow[];
   cost: ObserveCost;
   gpus: ObserveGpuRow[];
+  /** configured gpu_endpoints with zero rows in the window (dead exporter);
+   *  optional for payloads predating the field. */
+  gpus_absent?: string[];
 }
 
 export interface EndpointStatusResponse {

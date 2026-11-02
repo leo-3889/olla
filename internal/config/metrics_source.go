@@ -33,9 +33,11 @@ type InfluxSourceConfig struct {
 	// the meter that measures that endpoint's box. Power is attributed per
 	// meter, never guessed from a device list.
 	PowerAttribution map[string]string `yaml:"power_attribution,omitempty"`
-	// GPUEndpoint is the Influx endpoint tag carrying GPU device series
-	// (e.g. radiance-gpus). Empty disables the GPU section.
-	GPUEndpoint string `yaml:"gpu_endpoint,omitempty"`
+	// GPUEndpoints are the Influx endpoint tags carrying GPU device series
+	// (one per GPU exporter target, e.g. [radiance-gpus, radiance-gpus-128]).
+	// Grouping is endpoint+gpu because device tags collide across boxes.
+	// Empty disables the GPU section.
+	GPUEndpoints []string `yaml:"gpu_endpoints,omitempty"`
 }
 
 const (

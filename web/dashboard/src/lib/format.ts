@@ -95,9 +95,8 @@ export function fmtDuration(ms: number): string {
   if (!Number.isFinite(ms) || ms < 0) ms = 0;
   const s = ms / 1000;
   if (s < 60) {
-    const whole = Math.floor(s);
-    // Match the Go path: 0..9 render as a single digit, no "0" prefix.
-    return `${whole < 10 ? whole : whole}s`;
+    // Match the Go path: single digit, no zero padding.
+    return `${Math.floor(s)}s`;
   }
   if (s < 3600) return `${Math.floor(s / 60)}m`;
   if (s < 86400) return `${Math.floor(s / 3600)}h`;
@@ -153,6 +152,11 @@ export function fmtUptime(iso: string | null | undefined, nowMs: number = Date.n
 // doesn't silently render "53 years ago".
 function parseIso(iso: string | null | undefined): number | null {
   if (!iso || typeof iso !== 'string') return null;
+  // Enforce the guard the leniency note promises: full ISO-8601 date-time
+  // WITH a timezone. Date.parse accepts locale junk and zone-less strings
+  // (interpreted in the browser's local zone), which would silently render
+  // "53 years ago" for a malformed payload.
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/.test(iso)) return null;
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return null;
   return t;

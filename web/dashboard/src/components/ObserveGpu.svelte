@@ -1,15 +1,20 @@
 <script lang="ts">
-  // GPU device cards from ollametrics' device-target series (endpoint tag
-  // metrics_source.influx.gpu_endpoint). A GPU the exporter reports as
-  // absent is shown as absent - never as a zero-utilisation device.
+  // GPU device cards from ollametrics' device-target series (endpoint tags
+  // in metrics_source.influx.gpu_endpoints, one per node). A GPU the
+  // exporter reports as absent is shown as absent - never as a
+  // zero-utilisation device.
   import type { ObserveGpuRow } from '../lib/types';
 
   interface Props {
     gpus: ObserveGpuRow[];
+    /** configured gpu_endpoints with zero rows - dead exporter (F2) */
+    absent: string[];
     ageS: number | null;
     degraded: boolean;
+    /** 'stale' | 'source error' - why degraded, worded for the note */
+    statusLabel?: string;
   }
-  let { gpus, ageS, degraded }: Props = $props();
+  let { gpus, absent, ageS, degraded, statusLabel = 'stale' }: Props = $props();
 
   function fmt(value: number | null | undefined, digits = 0): string {
     if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
@@ -29,14 +34,14 @@
 <div class="section observe-gpu">
   <div class="section-head">
     <h2>GPUs</h2>
-    <span class="section-note observe-src" class:stale={degraded}>ollametrics · {ageText}{#if degraded} (stale){/if}</span>
+    <span class="section-note observe-src" class:stale={degraded}>ollametrics · {ageText}{#if degraded} ({statusLabel}){/if}</span>
   </div>
   <div class="tile-grid" data-state={degraded ? 'stale' : null}>
-    {#each gpus as row (row.gpu)}
+    {#each gpus as row (row.endpoint + ':' + row.gpu)}
       {@const usage = pct(row.vram_used_bytes, row.vram_total_bytes)}
       <div class="gpu" class:absent={row.present === 0}>
         <div class="gpu-head">
-          <span class="gpu-name">GPU {row.gpu}{#if row.node}&nbsp;· {row.node}{/if}</span>
+          <span class="gpu-name" title={row.node ? row.endpoint + ' · ' + row.node : row.endpoint}>GPU {row.gpu}&nbsp;· {row.endpoint}</span>
           {#if row.present === 0}<span class="chip">absent</span>{/if}
         </div>
         {#if row.present === 0}
@@ -51,12 +56,21 @@
         {/if}
       </div>
     {/each}
+    {#each absent as ep (ep)}
+      <div class="gpu nodead">
+        <div class="gpu-head">
+          <span class="gpu-name" title={ep}>{ep}</span>
+          <span class="chip">no data</span>
+        </div>
+        <div class="gpu-absent">no rows in the last 5m - exporter down?</div>
+      </div>
+    {/each}
   </div>
 </div>
 
 <style>
   .gpu { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--bg-elevated, transparent); }
-  .gpu.absent { opacity: 0.6; }
+  .gpu.absent, .gpu.nodead { opacity: 0.6; }
   .gpu-head { display: flex; gap: 6px; align-items: center; }
   .gpu-name { font-weight: 600; }
   .gpu-row { display: flex; justify-content: space-between; margin-top: 6px; color: var(--text-dim); }

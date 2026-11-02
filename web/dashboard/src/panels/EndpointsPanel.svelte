@@ -137,9 +137,11 @@
     return `ep-${stableId(row.id ?? row.url ?? row.name)}`;
   }
 
-  function runtimeNumber(metrics: EndpointRuntimeMetrics | undefined, value: unknown): number | null {
+// --- metric envelope helpers -----------------------------------------
+  // All presentation semantics arrive in the payload (unit/scope/note/
+  // attach_to); the panel formats, it does not interpret.
 
-function envMetric(metrics: EndpointRuntimeMetrics | undefined, key: string) {
+  function envMetric(metrics: EndpointRuntimeMetrics | undefined, key: string) {
     return metrics?.metrics?.find((m) => m.key === key);
   }
 
@@ -231,7 +233,7 @@ function envMetric(metrics: EndpointRuntimeMetrics | undefined, key: string) {
     }
     return title;
   }
-
+</script>
 
 <div
   id="panel-endpoints"
