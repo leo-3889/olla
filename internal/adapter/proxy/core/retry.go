@@ -262,16 +262,13 @@ func (g *statusGateWriter) Write(b []byte) (int, error) {
 	return g.next.Write(b)
 }
 
-// deferred reports the status code of a response currently held by the gate.
+// deferred reports the status code of a response currently held by the gate
+// (written to the gate, not yet committed to the client). Proxy engines reach
+// it through IsRefusalHeld to suppress success accounting for a refusal the
+// gate is holding: the retry loop may rotate this response, so booking a
+// success for it would mask the refusal signal from circuit breakers and
+// model stats.
 func (g *statusGateWriter) deferred() (int, bool) {
-	return g.code, g.pending
-}
-
-// Deferred is the exported accessor used by proxy engines to suppress success
-// accounting for a refusal the gate is holding (the retry loop may rotate
-// this response, so booking a success for it would mask the refusal signal
-// from circuit breakers and model stats).
-func (g *statusGateWriter) Deferred() (int, bool) {
 	return g.code, g.pending
 }
 

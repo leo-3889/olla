@@ -58,3 +58,4 @@ test/regression/tmp/
 # deployed site config (real MACs/IPs live outside the repo)
 scripts/shepherd-watch/shepherd-watch.yaml
 __pycache__/
+.gocache/

@@ -175,9 +175,6 @@ func (s *Service) proxyToSingleEndpoint(ctx context.Context, w http.ResponseWrit
 		s.RecordUpstreamError(ctx, endpoint, resolvedModel, resp.StatusCode, duration, int64(bytesWritten))
 	} else if !held {
 		s.RecordSuccess(endpoint, resolvedModel, duration.Milliseconds(), int64(bytesWritten))
-	}
-
-	if !held {
 		s.PublishEvent(core.ProxyEvent{
 			Type:      core.EventTypeProxySuccess,
 			RequestID: stats.RequestID,

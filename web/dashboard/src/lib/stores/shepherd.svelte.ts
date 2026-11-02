@@ -58,6 +58,51 @@ export interface ShepherdStore {
   revertConfig(): Promise<void>;
 }
 
+/**
+ * Shared config-mutation path for saveConfig (POST) and revertConfig (DELETE).
+ *
+ * Both endpoints share one response contract, so they share one handler:
+ * success returns the full status payload (refresh from server truth), 409
+ * means the watcher dir is not writable, and 400 arrives in two shapes - a
+ * per-field {"errors":{field:reason}} map or a generic {"error":"text"}.
+ * `body` omitted => no body and no Content-Type (the DELETE shape).
+ */
+async function mutate(method: 'POST' | 'DELETE', url: string, body?: ShepherdEditable): Promise<void> {
+  saving = true;
+  saveErrors = null;
+  saveBanner = null;
+  dirNotWritable = false;
+  try {
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    const resp = await fetch(url, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    if (resp.status === 409) {
+      dirNotWritable = true;
+      return;
+    }
+    if (resp.status === 400) {
+      const payload = (await resp.json()) as { errors?: Record<string, string>; error?: string };
+      if (payload.errors) {
+        saveErrors = payload.errors;
+      } else if (payload.error) {
+        saveBanner = payload.error;
+      }
+      return;
+    }
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const refreshed = (await resp.json()) as ShepherdResponse;
+    poll.refreshWith(refreshed);
+  } catch (e) {
+    lastMutationError = e instanceof Error ? e.message : String(e);
+  } finally {
+    saving = false;
+  }
+}
+
 export const shepherd: ShepherdStore = {
   get name() {
     return poll.name;
@@ -121,68 +166,9 @@ export const shepherd: ShepherdStore = {
     }
   },
   async saveConfig(payload: ShepherdEditable): Promise<void> {
-    saving = true;
-    saveErrors = null;
-    saveBanner = null;
-    dirNotWritable = false;
-    try {
-      const resp = await fetch(CONFIG_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (resp.status === 409) {
-        dirNotWritable = true;
-        return;
-      }
-      if (resp.status === 400) {
-        const body = (await resp.json()) as { errors?: Record<string, string>; error?: string };
-        if (body.errors) {
-          saveErrors = body.errors;
-        } else if (body.error) {
-          saveBanner = body.error;
-        }
-        return;
-      }
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const body = (await resp.json()) as ShepherdResponse;
-      poll.refreshWith(body);
-    } catch (e) {
-      lastMutationError = e instanceof Error ? e.message : String(e);
-    } finally {
-      saving = false;
-    }
+    await mutate('POST', CONFIG_URL, payload);
   },
   async revertConfig(): Promise<void> {
-    saving = true;
-    saveErrors = null;
-    saveBanner = null;
-    dirNotWritable = false;
-    try {
-      const resp = await fetch(CONFIG_URL, {
-        method: 'DELETE',
-        headers: { Accept: 'application/json' },
-      });
-      if (resp.status === 409) {
-        dirNotWritable = true;
-        return;
-      }
-      if (resp.status === 400) {
-        const body = (await resp.json()) as { errors?: Record<string, string>; error?: string };
-        if (body.errors) {
-          saveErrors = body.errors;
-        } else if (body.error) {
-          saveBanner = body.error;
-        }
-        return;
-      }
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const body = (await resp.json()) as ShepherdResponse;
-      poll.refreshWith(body);
-    } catch (e) {
-      lastMutationError = e instanceof Error ? e.message : String(e);
-    } finally {
-      saving = false;
-    }
+    await mutate('DELETE', CONFIG_URL);
   },
 };

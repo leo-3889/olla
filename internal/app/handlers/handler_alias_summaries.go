@@ -8,18 +8,25 @@ import (
 	"github.com/thushan/olla/internal/core/domain"
 )
 
-// healthyEndpointMap returns a set of healthy endpoint URLs, or nil when the
-// repository is unavailable.
-func (a *Application) healthyEndpointMap(ctx context.Context) map[string]bool {
-	healthy, err := a.repository.GetHealthy(ctx)
+// endpointMaps returns the healthy-endpoint URL set and the URL-to-name map
+// from a single repository pass. GetHealthy is only a Status filter of
+// GetAll's slice, so calling both was two RLocks plus two full-slice copies
+// per models request. A nil healthy map means the repository failed; callers
+// bail out on it.
+func (a *Application) endpointMaps(ctx context.Context) (healthy map[string]bool, names map[string]string) {
+	endpoints, err := a.repository.GetAll(ctx)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
-	m := make(map[string]bool, len(healthy))
-	for _, ep := range healthy {
-		m[ep.URLString] = true
+	healthy = make(map[string]bool, len(endpoints))
+	names = make(map[string]string, len(endpoints))
+	for _, ep := range endpoints {
+		names[ep.URLString] = ep.Name
+		if ep.Status == domain.StatusHealthy {
+			healthy[ep.URLString] = true
+		}
 	}
-	return m
+	return healthy, names
 }
 
 // liveModelIndex indexes unified models by native name / canonical ID, keeping
@@ -82,13 +89,12 @@ func (a *Application) appendAliasesToModelResponse(ctx context.Context, response
 	if a.aliasResolver == nil {
 		return response
 	}
-	healthyMap := a.healthyEndpointMap(ctx)
+	healthyMap, epNames := a.endpointMaps(ctx)
 	if healthyMap == nil {
 		return response
 	}
 
 	index := buildLiveModelIndex(unifiedModels, healthyMap)
-	epNames := a.endpointNameMap(ctx)
 
 	switch resp := response.(type) {
 	case converter.UnifiedModelResponse:
@@ -135,15 +141,6 @@ func (a *Application) aliasOpenAIData() []converter.OpenAIModelData {
 	return out
 }
 
-func (a *Application) endpointNameMap(ctx context.Context) map[string]string {
-	endpoints, _ := a.repository.GetAll(ctx)
-	m := make(map[string]string, len(endpoints))
-	for _, ep := range endpoints {
-		m[ep.URLString] = ep.Name
-	}
-	return m
-}
-
 func resolveEndpointNames(urls []string, epNames map[string]string) []string {
 	seen := make(map[string]struct{}, len(urls))
 	out := make([]string, 0, len(urls))
@@ -184,13 +181,12 @@ func (a *Application) appendAliasModelSummaries(ctx context.Context, allModels [
 	if err != nil || len(unified) == 0 {
 		return allModels
 	}
-	healthyMap := a.healthyEndpointMap(ctx)
+	healthyMap, epNames := a.endpointMaps(ctx)
 	if healthyMap == nil {
 		return allModels
 	}
 
 	index := buildLiveModelIndex(unified, healthyMap)
-	epNames := a.endpointNameMap(ctx)
 
 	for _, name := range a.aliasResolver.Names() {
 		carriers := a.aliasResolver.GetActualModels(name)

@@ -81,22 +81,16 @@ func (b *BaseProxyComponents) IncrementRequests() {
 	atomic.AddInt64(&b.Stats.TotalRequests, 1)
 }
 
-// DeferredStatusReporter is implemented by response writers that can report
-// a status code currently held (not yet committed to the client). The proxy
-// engines use this to suppress success accounting (circuit breaker, model
-// stats) for a refusal the gate is holding: the retry loop may rotate that
-// response to the next endpoint, in which case booking a success here would
-// mask the refusal signal from the circuit breaker and model-level stats.
-type DeferredStatusReporter interface {
-	Deferred() (int, bool)
-}
-
 // IsRefusalHeld reports whether w is a gate currently holding a refusal.
 // Proxy engines call this to skip cb.RecordSuccess and RecordSuccess for
-// attempts whose response the gate will rotate away.
+// attempts whose response the gate will rotate away: booking a success for a
+// refusal that is about to be discarded would mask the signal the circuit
+// breaker and the model-level stats depend on. The assertion is structural on
+// purpose - statusGateWriter is the only implementation and lives in this
+// package, so a named interface plus an exported accessor is ceremony.
 func IsRefusalHeld(w interface{ Header() http.Header }) bool {
-	if d, ok := w.(DeferredStatusReporter); ok {
-		_, held := d.Deferred()
+	if d, ok := w.(interface{ deferred() (int, bool) }); ok {
+		_, held := d.deferred()
 		return held
 	}
 	return false

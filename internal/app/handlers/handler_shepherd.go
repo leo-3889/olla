@@ -148,15 +148,26 @@ type shepherdYAML struct {
 	} `yaml:"nodes"`
 }
 
-func shepherdConfigFrom(dir string) (ShepherdConfig, bool) {
-	var out ShepherdConfig
+// readShepherdYAML reads and parses the watcher YAML once per request.
+// readable is false when the file is missing or unparseable; cfg still
+// carries whatever the parser managed to fill in, which is what the trigger
+// defaults are built from (a half-read YAML yields half-filled defaults, the
+// same as before - the overrides layer is what has to be trustworthy).
+func readShepherdYAML(dir string) (cfg shepherdYAML, readable bool) {
 	raw, err := os.ReadFile(filepath.Join(dir, shepherdYAMLFile))
 	if err != nil {
-		return out, false
+		return cfg, false
 	}
-	var cfg shepherdYAML
-	if err := yaml.Unmarshal(raw, &cfg); err != nil {
-		return out, false
+	return cfg, yaml.Unmarshal(raw, &cfg) == nil
+}
+
+// shepherdConfigFrom maps the allow-listed YAML fields onto the published
+// shape. An unreadable file publishes nothing: the caller reports
+// ConfigReadable=false and the zero config goes out with it.
+func shepherdConfigFrom(cfg shepherdYAML, readable bool) ShepherdConfig {
+	var out ShepherdConfig
+	if !readable {
+		return out
 	}
 	out.IdleShutdownSeconds = cfg.IdleSeconds
 	out.WakeWindowSeconds = cfg.WakeDemandWindow
@@ -164,7 +175,7 @@ func shepherdConfigFrom(dir string) (ShepherdConfig, bool) {
 		out.NodeName = cfg.Nodes[0].Name
 		out.MACMasked = maskMAC(cfg.Nodes[0].MAC)
 	}
-	return out, true
+	return out
 }
 
 // validateWakeWindow / validateKeepAsleep return "" when the value is legal
@@ -198,11 +209,7 @@ func validateKeepAsleep(list []string) string {
 // YAML value always wins on any doubt. The overrides file is machine-written
 // by the POST handler; a hand-edit that names unknown keys simply has no
 // effect (the two keys are the whole contract).
-func (a *Application) shepherdTriggersFrom(dir string) (editable, defaults ShepherdTriggers) {
-	var yamlCfg shepherdYAML
-	if raw, err := os.ReadFile(filepath.Join(dir, shepherdYAMLFile)); err == nil {
-		_ = yaml.Unmarshal(raw, &yamlCfg) // fields we need are typed; a bad file yields zero defaults
-	}
+func (a *Application) shepherdTriggersFrom(dir string, yamlCfg shepherdYAML) (editable, defaults ShepherdTriggers) {
 	defaults.WakeWindowSeconds = yamlCfg.WakeDemandWindow
 	if len(yamlCfg.Nodes) > 0 {
 		defaults.KeepAsleepIfUp = yamlCfg.Nodes[0].KeepAsleepIfUp
@@ -220,12 +227,11 @@ func (a *Application) shepherdTriggersFrom(dir string) (editable, defaults Sheph
 	}
 	if v, ok := doc["wake_window_seconds"]; ok {
 		var n int
-		switch reason := "not an int"; {
-		case json.Unmarshal(v, &n) != nil:
+		if json.Unmarshal(v, &n) != nil {
+			a.logger.Info("shepherd override ignored: wake_window_seconds not an int")
+		} else if reason := validateWakeWindow(n); reason != "" {
 			a.logger.Info("shepherd override ignored: wake_window_seconds " + reason)
-		case validateWakeWindow(n) != "":
-			a.logger.Info("shepherd override ignored: wake_window_seconds " + validateWakeWindow(n))
-		default:
+		} else {
 			editable.WakeWindowSeconds = n
 		}
 	}
@@ -352,8 +358,9 @@ func (a *Application) shepherdPayload() ShepherdResponse {
 		return ShepherdResponse{}
 	}
 	state, dryRun := shepherdStateFrom(dir)
-	editable, defaults := a.shepherdTriggersFrom(dir)
-	cfg, readable := shepherdConfigFrom(dir)
+	yamlCfg, readable := readShepherdYAML(dir)
+	editable, defaults := a.shepherdTriggersFrom(dir, yamlCfg)
+	cfg := shepherdConfigFrom(yamlCfg, readable)
 	return ShepherdResponse{
 		Available:      true,
 		Enabled:        fileExists(filepath.Join(dir, shepherdFlagFile)),

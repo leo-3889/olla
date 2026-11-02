@@ -77,12 +77,12 @@ func TestAliasUnionCapabilities_TwoCarriersOneVision(t *testing.T) {
 
 	app.repository = &mockEndpointRepo{
 		endpoints: []*domain.Endpoint{
-			{Name: "node-a", URLString: "http://node-a:8000"},
-			{Name: "node-b", URLString: "http://node-b:8000"},
+			{Name: "node-a", URLString: "http://node-a:8000", Status: domain.StatusHealthy},
+			{Name: "node-b", URLString: "http://node-b:8000", Status: domain.StatusHealthy},
 		},
 		healthy: []*domain.Endpoint{
-			{Name: "node-a", URLString: "http://node-a:8000"},
-			{Name: "node-b", URLString: "http://node-b:8000"},
+			{Name: "node-a", URLString: "http://node-a:8000", Status: domain.StatusHealthy},
+			{Name: "node-b", URLString: "http://node-b:8000", Status: domain.StatusHealthy},
 		},
 	}
 
@@ -92,7 +92,7 @@ func TestAliasUnionCapabilities_TwoCarriersOneVision(t *testing.T) {
 		Data:   []converter.UnifiedModelData{},
 	}
 	result := app.appendAliasesToModelResponse(ctx, resp, unifiedModels)
-	_ = healthyMap // used by healthyEndpointMap path
+	_ = healthyMap // used by the endpointMaps path
 
 	unified, ok := result.(converter.UnifiedModelResponse)
 	assert.True(t, ok, "response must remain UnifiedModelResponse")
@@ -138,10 +138,10 @@ func TestAliasUnionCapabilities_StampedCarrierCounts(t *testing.T) {
 
 	app.repository = &mockEndpointRepo{
 		endpoints: []*domain.Endpoint{
-			{Name: "halogen-395", URLString: "http://halogen:8731"},
+			{Name: "halogen-395", URLString: "http://halogen:8731", Status: domain.StatusHealthy},
 		},
 		healthy: []*domain.Endpoint{
-			{Name: "halogen-395", URLString: "http://halogen:8731"},
+			{Name: "halogen-395", URLString: "http://halogen:8731", Status: domain.StatusHealthy},
 		},
 	}
 
@@ -223,12 +223,12 @@ func TestAliasUnion_StatusModels(t *testing.T) {
 	app := &Application{aliasResolver: aliasResolver, logger: styledLog, modelRegistry: mockReg}
 	app.repository = &mockEndpointRepo{
 		endpoints: []*domain.Endpoint{
-			{Name: "node-a", URLString: "http://node-a:8000"},
-			{Name: "node-b", URLString: "http://node-b:8000"},
+			{Name: "node-a", URLString: "http://node-a:8000", Status: domain.StatusHealthy},
+			{Name: "node-b", URLString: "http://node-b:8000", Status: domain.StatusHealthy},
 		},
 		healthy: []*domain.Endpoint{
-			{Name: "node-a", URLString: "http://node-a:8000"},
-			{Name: "node-b", URLString: "http://node-b:8000"},
+			{Name: "node-a", URLString: "http://node-a:8000", Status: domain.StatusHealthy},
+			{Name: "node-b", URLString: "http://node-b:8000", Status: domain.StatusHealthy},
 		},
 	}
 
@@ -314,12 +314,12 @@ func TestAliasInjection_SkippedWhenEndpointFilterActive(t *testing.T) {
 
 	app.repository = &mockEndpointRepo{
 		endpoints: []*domain.Endpoint{
-			{Name: "node-a", URLString: "http://node-a:8000"},
-			{Name: "node-b", URLString: "http://node-b:8000"},
+			{Name: "node-a", URLString: "http://node-a:8000", Status: domain.StatusHealthy},
+			{Name: "node-b", URLString: "http://node-b:8000", Status: domain.StatusHealthy},
 		},
 		healthy: []*domain.Endpoint{
-			{Name: "node-a", URLString: "http://node-a:8000"},
-			{Name: "node-b", URLString: "http://node-b:8000"},
+			{Name: "node-a", URLString: "http://node-a:8000", Status: domain.StatusHealthy},
+			{Name: "node-b", URLString: "http://node-b:8000", Status: domain.StatusHealthy},
 		},
 	}
 
