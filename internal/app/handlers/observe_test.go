@@ -24,6 +24,8 @@ type stubObserveQuerier struct {
 	dayRows   []map[string]any
 	svcRows   []map[string]any
 	err       error
+	gpuErr    error // fail ONLY the gpu (llm_runtime) query
+	hourErr   error // fail ONLY the hour cost query
 }
 
 func (s *stubObserveQuerier) query(_ context.Context, flux string) ([]map[string]any, error) {
@@ -33,6 +35,10 @@ func (s *stubObserveQuerier) query(_ context.Context, flux string) ([]map[string
 		return nil, s.err
 	}
 	switch {
+	case strings.Contains(flux, "llm_runtime") && s.gpuErr != nil:
+		return nil, s.gpuErr
+	case strings.Contains(flux, "period==\"hour\"") && s.hourErr != nil:
+		return nil, s.hourErr
 	case strings.Contains(flux, "llm_host_power"):
 		return s.powerRows, nil
 	case strings.Contains(flux, "period==\"hour\""):
@@ -417,4 +423,61 @@ func TestFluxStringSetEscaping(t *testing.T) {
 	assert.Equal(t, `"radiance-gpus","a.b"`, fluxStringSet([]string{"radiance-gpus", "a.b"}))
 	// Go's %q emits \x01; Flux only parses \uXXXX.
 	assert.Equal(t, `"a\u0001b"`, fluxStringSet([]string{"a\x01b"}))
+}
+
+// P2a: a FAILED gpu query must disclose every configured endpoint as
+// absent - the success branch's seen-based computation never runs, and an
+// empty grid with an empty absent list reads as a healthy small fleet.
+func TestObserveGpuQueryFailureDisclosesAll(t *testing.T) {
+	now := time.Date(2026, 10, 17, 9, 0, 0, 0, time.UTC)
+	cfg := observeConfig()
+	cfg.GPUEndpoints = []string{"radiance-gpus", "radiance-gpus-128"}
+	stub := &stubObserveQuerier{gpuErr: errors.New("influx flux 500")}
+	c := &observeCollector{cfg: cfg, client: stub, now: func() time.Time { return now }, ttl: observeTTL}
+	p, err := c.payload(context.Background())
+	require.NoError(t, err, "a partial failure degrades the payload, it does not 503")
+	assert.Empty(t, p.GPUs)
+	assert.Equal(t, []string{"radiance-gpus", "radiance-gpus-128"}, p.GPUsAbsent)
+}
+
+// P2a: a failed cost period is named in cost.errors - the UI distinguishes
+// "query failed" from "no rollups yet" only if the payload says which.
+func TestObserveCostPeriodErrorMarker(t *testing.T) {
+	now := time.Date(2026, 10, 17, 9, 30, 0, 0, time.UTC)
+	dayRow := map[string]any{"endpoint": "live-a", "currency": "EUR", "period": "day", "_field": "total_cost", "_value": 3.5, "_time": now.Truncate(24 * time.Hour).UTC().Format(time.RFC3339Nano)}
+	stub := &stubObserveQuerier{hourErr: errors.New("influx flux 500"), dayRows: []map[string]any{dayRow}}
+	c := &observeCollector{cfg: observeConfig(), client: stub, now: func() time.Time { return now }, ttl: observeTTL}
+	p, err := c.payload(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"hour"}, p.Cost.Errors)
+	assert.Contains(t, p.Cost.Day, "live-a", "the surviving period still renders")
+}
+
+// P2b: the collect context inherits the request context, so closing a tab
+// aborts in-flight polls with context.Canceled. Memoizing that as a
+// negative-cache hit blacked the observe surface for EVERY client for
+// TTL/2 while Influx was healthy.
+func TestObserveNegativeCacheIgnoresClientAbort(t *testing.T) {
+	clock := time.Date(2026, 10, 17, 9, 0, 0, 0, time.UTC)
+	stub := &stubObserveQuerier{err: context.Canceled}
+	c := &observeCollector{cfg: observeConfig(), client: stub, now: func() time.Time { return clock }, ttl: observeTTL}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := c.payload(ctx)
+	require.Error(t, err)
+	abortedCalls := stub.calls
+	stub.err = nil
+	_, err = c.payload(context.Background())
+	require.NoError(t, err, "one closed tab must not serve 503 to healthy clients")
+	assert.Greater(t, stub.calls, abortedCalls)
+
+	// Real server-side failures DO memoize (the guard is abort-specific).
+	stub2 := &stubObserveQuerier{err: errors.New("influx flux 500")}
+	c2 := &observeCollector{cfg: observeConfig(), client: stub2, now: func() time.Time { return clock }, ttl: observeTTL}
+	_, err = c2.payload(context.Background())
+	require.Error(t, err)
+	calls := stub2.calls
+	_, err = c2.payload(context.Background())
+	require.Error(t, err)
+	assert.Equal(t, calls, stub2.calls, "genuine failures keep the negative cache")
 }

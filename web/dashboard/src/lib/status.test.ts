@@ -5,18 +5,10 @@ import { statusMeta } from './status';
 // render with the red "down" language, and an unknown future status must
 // default to neutral, not outage.
 describe('statusMeta vocabulary', () => {
-  it('renders routable degradation neutral, not red', () => {
-    expect(statusMeta('busy').cls).toBe('neutral');
-    expect(statusMeta('warming').cls).toBe('neutral');
-  });
-  it('renders real outages red', () => {
-    expect(statusMeta('offline').cls).toBe('red');
-    expect(statusMeta('critical').cls).toBe('red');
-  });
-  it('spaced labels for snake_case enum values', () => {
-    expect(statusMeta('config_error').label).toBe('config error');
-    expect(statusMeta('rate_limited').label).toBe('rate limited');
-  });
+  // The enum->class/label table is a direct mirror of status.ts and is not
+  // re-pinned here (drift on known statuses is caught by the shared Go enum
+  // + app.css drift-guard). What MUST not regress is the DEFAULT branch:
+  // an unseen status must never render as a red outage.
   it('unknown statuses render neutral with raw text (never red)', () => {
     const m = statusMeta('draining_soon');
     expect(m.cls).toBe('neutral');

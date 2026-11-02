@@ -88,9 +88,11 @@
 <div class="section observe-cost">
   <div class="section-head">
     <h2>Cost</h2>
-    <span class="section-note observe-src" class:stale={degraded}>ollametrics · {ageText}{#if degraded} ({statusLabel}){/if}{#if cost?.dropped?.length} · no current rollup: {cost.dropped.join(', ')}{/if}</span>
+    <span class="section-note observe-src" class:stale={degraded}>ollametrics · {ageText}{#if degraded} ({statusLabel}){/if}{#if cost?.errors?.length}{' · '}cost query failed: {cost.errors.join(', ')}{/if}{#if cost?.dropped?.length}{' · '}no current rollup: {cost.dropped.join(', ')}{/if}</span>
   </div>
-  {#if rows.length === 0}
+  {#if rows.length === 0 && cost?.errors?.length}
+    <p class="observe-empty" data-state="degraded">cost query failed ({cost.errors.join(', ')}) - values below, if any, are from the cached payload</p>
+  {:else if rows.length === 0}
     <p class="observe-empty">no cost rollups in the queried window yet</p>
   {:else}
     <div data-state={degraded ? 'stale' : null}>

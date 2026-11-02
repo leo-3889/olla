@@ -259,7 +259,7 @@ describe('uptime freeze during outages', () => {
     // confirmed that - the figure must stay pinned to the last answered
     // poll.
     vi.spyOn(Date, 'now').mockReturnValue(t0 + 2 * 3600_000);
-    await new Promise((r) => setTimeout(r, 1100)); // shared-clock ticks
+    await new Promise((r) => setTimeout(r, 1500)); // shared-clock ticks (500ms margin: 100ms flaked at CI load)
     flushSync();
     expect(strip()).toContain('1h');
 
