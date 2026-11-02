@@ -171,3 +171,37 @@ func TestStickySessionWrapper_EmptyModel_RoutesAndPins(t *testing.T) {
 	assert.GreaterOrEqual(t, stats.Insertions, uint64(1))
 	assert.GreaterOrEqual(t, stats.Hits, uint64(1))
 }
+
+// TestStickySessionWrapper_Stats_ReportsOutcomesAndPerEndpointSessions pins the
+// per-node observability the aggregate ttlcache counters cannot give: outcome
+// labels (hit/miss/bypass/no_key), the key source that produced them, and the
+// live session count per pinned endpoint.
+func TestStickySessionWrapper_Stats_ReportsOutcomesAndPerEndpointSessions(t *testing.T) {
+	t.Parallel()
+
+	w := makeWrapper(t, defaultStickyConfig())
+	ep1 := makeEndpoint("ep1", "http://backend1:8080")
+	ep2 := makeEndpoint("ep2", "http://backend2:8080")
+
+	ctx1, _ := injectKey(context.Background(), "out-key:llama3", "session_header")
+	chosen, err := w.Select(ctx1, []*domain.Endpoint{ep1, ep2}) // miss -> pin
+	require.NoError(t, err)
+
+	ctx2, _ := injectKey(context.Background(), "out-key:llama3", "session_header")
+	_, err = w.Select(ctx2, []*domain.Endpoint{ep1, ep2}) // hit
+	require.NoError(t, err)
+
+	outcome := &StickyOutcome{}
+	ctxNoKey := context.WithValue(context.Background(), constants.ContextStickyOutcomeKey, outcome)
+	_, err = w.Select(ctxNoKey, []*domain.Endpoint{ep1}) // enabled, no key
+	require.NoError(t, err)
+	require.Equal(t, "no_key", outcome.Result)
+
+	stats := w.Stats()
+	assert.Equal(t, uint64(1), stats.Results["miss"])
+	assert.Equal(t, uint64(1), stats.Results["hit"])
+	assert.Equal(t, uint64(1), stats.Results["no_key"])
+	assert.Equal(t, uint64(2), stats.Sources["session_header"])
+	assert.Equal(t, uint64(1), stats.Sources["none"])
+	assert.Equal(t, 1, stats.SessionsByEndpoint[chosen.URLString], "the pinned node must own the live session")
+}

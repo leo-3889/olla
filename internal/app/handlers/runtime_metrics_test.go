@@ -931,3 +931,29 @@ func envNum(t *testing.T, m *EndpointRuntimeMetrics, key, part string) *float64 
 	}
 	return metric.value(part)
 }
+
+func TestRuntimeMetricsSampler_QueueDepthFor(t *testing.T) {
+	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
+	s := newEndpointRuntimeMetricsSampler(nil, nil)
+	s.now = func() time.Time { return now }
+	ep := &domain.Endpoint{URLString: "http://engine:8000", RuntimeMetricsEnabled: true}
+
+	_, ok := s.QueueDepthFor(ep)
+	assert.False(t, ok, "no sample yet = not known")
+
+	depth := 7.0
+	s.states[ep.URLString] = &runtimeMetricsState{available: true, sampledAt: now.Add(-15 * time.Second), QueueDepth: &depth}
+	q, ok := s.QueueDepthFor(ep)
+	assert.True(t, ok)
+	assert.Equal(t, 7.0, q)
+
+	s.states[ep.URLString].stale = true
+	_, ok = s.QueueDepthFor(ep)
+	assert.False(t, ok, "stale samples must not steer routing")
+	s.states[ep.URLString].stale = false
+	s.states[ep.URLString].sampledAt = now.Add(-2 * time.Minute)
+	_, ok = s.QueueDepthFor(ep)
+	assert.False(t, ok, "samples older than 90s must not steer routing")
+
+	assert.False(t, func() bool { _, ok := s.QueueDepthFor(nil); return ok }(), "nil endpoint is not known")
+}

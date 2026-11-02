@@ -314,21 +314,30 @@ func (s StickySessionConfig) Validate() error {
 
 // ProxyConfig holds proxy-specific configuration
 type ProxyConfig struct {
-	ProfileFilter         *domain.FilterConfig `yaml:"profile_filter,omitempty"`
-	Engine                string               `yaml:"engine"`
-	LoadBalancer          string               `yaml:"load_balancer"`
-	Profile               string               `yaml:"profile"`
-	StickySessions        StickySessionConfig  `yaml:"sticky_sessions"`
-	ConnectionTimeout     time.Duration        `yaml:"connection_timeout"`
-	ConnectionKeepAlive   time.Duration        `yaml:"connection_keep_alive"`
-	ResponseTimeout       time.Duration        `yaml:"response_timeout"`
-	ReadTimeout           time.Duration        `yaml:"read_timeout"`
-	ResponseHeaderTimeout time.Duration        `yaml:"response_header_timeout"`
-	TLSHandshakeTimeout   time.Duration        `yaml:"tls_handshake_timeout"`
-	RetryBackoff          time.Duration        `yaml:"retry_backoff"` // Deprecated: unused, set proxy.retry instead. TODO: Removal: v0.1.0
-	StreamBufferSize      int                  `yaml:"stream_buffer_size"`
-	MaxRetries            int                  `yaml:"max_retries"` // Deprecated: unused, set proxy.retry instead. TODO: Removal: v0.1.0
-	Retry                 RetryConfig          `yaml:"retry"`
+	ProfileFilter  *domain.FilterConfig `yaml:"profile_filter,omitempty"`
+	Engine         string               `yaml:"engine"`
+	LoadBalancer   string               `yaml:"load_balancer"`
+	Profile        string               `yaml:"profile"`
+	StickySessions StickySessionConfig  `yaml:"sticky_sessions"`
+	// BusyQueueDepth arms load-aware Busy steering: a probe-healthy endpoint
+	// whose engine queue depth is at or above this value is graded Busy
+	// (routable, SWRR weight 0.3) so NEW conversations steer away from a
+	// saturating node before it starts refusing. 0 = off (default): the
+	// graded ladder stays inert and dispatch behaves as healthy-only.
+	// Requires runtime_metrics on the endpoint (the queue depth signal comes
+	// from the engine scrape; under metrics_source influx no live sampler
+	// exists and grading stays inert by design).
+	BusyQueueDepth        int           `yaml:"busy_queue_depth"`
+	ConnectionTimeout     time.Duration `yaml:"connection_timeout"`
+	ConnectionKeepAlive   time.Duration `yaml:"connection_keep_alive"`
+	ResponseTimeout       time.Duration `yaml:"response_timeout"`
+	ReadTimeout           time.Duration `yaml:"read_timeout"`
+	ResponseHeaderTimeout time.Duration `yaml:"response_header_timeout"`
+	TLSHandshakeTimeout   time.Duration `yaml:"tls_handshake_timeout"`
+	RetryBackoff          time.Duration `yaml:"retry_backoff"` // Deprecated: unused, set proxy.retry instead. TODO: Removal: v0.1.0
+	StreamBufferSize      int           `yaml:"stream_buffer_size"`
+	MaxRetries            int           `yaml:"max_retries"` // Deprecated: unused, set proxy.retry instead. TODO: Removal: v0.1.0
+	Retry                 RetryConfig   `yaml:"retry"`
 }
 
 // RetryConfig controls failover between endpoints for a single request. Only
@@ -753,7 +762,7 @@ func (c *HealthConfig) Validate() error {
 	case critical == 0 && degraded == 0:
 		// Unset: the standard defaults apply.
 	case critical == 0 || degraded == 0:
-		return fmt.Errorf("health.success_rate: critical_below and degraded_below must both be set or both left empty")
+		return errors.New("health.success_rate: critical_below and degraded_below must both be set or both left empty")
 	case critical <= 0 || critical > 100:
 		return fmt.Errorf("health.success_rate.critical_below must be between 0 and 100, got %g", critical)
 	case degraded <= 0 || degraded > 100:

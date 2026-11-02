@@ -391,6 +391,37 @@ func (s *influxSeries) envelope() []RuntimeMetric {
 	return out
 }
 
+// loadReaderMaxSampleAge mirrors the sampler's rule: the health checker
+// grades Busy from the queue signal only when it is fresher than this.
+const loadReaderMaxSampleAge = 90 * time.Second
+
+// QueueDepthFor implements health.LoadReader for load-aware Busy grading
+// under metrics_source influx mode: the freshest sampled queue_depth gauge
+// for the endpoint. States are keyed by endpoint Name (the Influx endpoint
+// tag), deleted when an endpoint leaves the tracked set, and "not known"
+// for absent, zero-time, >90s-old, or queue-less samples - the probe
+// verdict stays ungraded rather than steering on old data.
+func (p *influxMetricsProvider) QueueDepthFor(endpoint *domain.Endpoint) (float64, bool) {
+	if p == nil || endpoint == nil {
+		return 0, false
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	st := p.states[endpoint.Name]
+	if st == nil || st.newest.IsZero() {
+		return 0, false
+	}
+	if p.now().Sub(st.newest) > loadReaderMaxSampleAge {
+		return 0, false
+	}
+	for _, m := range st.metrics {
+		if m.Key == runtimeMetricKeyQueueDepth && m.Current != nil {
+			return *m.Current, true
+		}
+	}
+	return 0, false
+}
+
 func (s *influxSeries) hasGaugeThroughput() bool {
 	for _, field := range []string{"decode_tokens_per_second", "prefill_tokens_per_second"} {
 		if _, ok := s.last[field]; ok {

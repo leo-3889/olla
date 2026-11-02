@@ -106,38 +106,67 @@ func TestStickySessionWrapper_Hit(t *testing.T) {
 	assert.Equal(t, "hit", outcome2.Result)
 }
 
-func TestStickySessionWrapper_Repin(t *testing.T) {
+func TestStickySessionWrapper_BlipKeepsPinAndReturnsHome(t *testing.T) {
 	t.Parallel()
 
 	w := makeWrapper(t, defaultStickyConfig())
 	ep1 := makeEndpoint("ep1", "http://backend1:8080")
 	ep2 := makeEndpoint("ep2", "http://backend2:8080")
 
-	const stickyKey = "sess-repin:llama3"
+	const stickyKey = "sess-blip:llama3"
 
-	// Pin to ep1.
+	// Pin to one backend.
 	ctx1, _ := injectKey(context.Background(), stickyKey, "session_header")
 	first, err := w.Select(ctx1, []*domain.Endpoint{ep1, ep2})
 	require.NoError(t, err)
 
-	// Remove pinned backend from routable set — simulate it going offline.
-	remaining := []*domain.Endpoint{ep1, ep2}
-	for i, ep := range remaining {
-		if ep.URLString == first.URLString {
-			remaining[i] = remaining[len(remaining)-1]
-			remaining = remaining[:len(remaining)-1]
-			break
-		}
+	// Blip: the pinned backend goes non-routable. The turn must ride out on
+	// the survivor AND the pin must survive - the old behaviour overwrote the
+	// pin (repin), so one blip migrated every conversation on the node and
+	// none returned: a self-inflicted fleet-wide KV cold start.
+	pinned, survivor := ep1, ep2
+	if first.URLString == ep2.URLString {
+		pinned, survivor = ep2, ep1
 	}
+	pinned.Status = domain.StatusOffline
 
 	ctx2, outcome2 := injectKey(context.Background(), stickyKey, "session_header")
-	second, err := w.Select(ctx2, remaining)
+	second, err := w.Select(ctx2, []*domain.Endpoint{ep1, ep2})
 	require.NoError(t, err)
+	assert.Equal(t, survivor.URLString, second.URLString, "bypass must serve on the surviving twin")
+	assert.Equal(t, "bypass", outcome2.Result)
 
-	assert.NotEqual(t, first.URLString, second.URLString, "repin should select a different backend")
-	assert.Equal(t, "repin", outcome2.Result)
+	// Recovery: the conversation routes home to its KV-warm node.
+	pinned.Status = domain.StatusHealthy
+	ctx3, outcome3 := injectKey(context.Background(), stickyKey, "session_header")
+	third, err := w.Select(ctx3, []*domain.Endpoint{ep1, ep2})
+	require.NoError(t, err)
+	assert.Equal(t, pinned.URLString, third.URLString, "the pin must survive the blip and route home on recovery")
+	assert.Equal(t, "hit", outcome3.Result)
 }
 
+func TestStickySessionWrapper_PurgeEvictsOnlyFleetRemovals(t *testing.T) {
+	t.Parallel()
+
+	w := makeWrapper(t, defaultStickyConfig())
+	ep1 := makeEndpoint("ep1", "http://backend1:8080")
+	ep2 := makeEndpoint("ep2", "http://backend2:8080")
+
+	ctx, _ := injectKey(context.Background(), "purge-key:llama3", "session_header")
+	_, err := w.Select(ctx, []*domain.Endpoint{ep1, ep2})
+	require.NoError(t, err)
+
+	// Blip: pinned endpoint unhealthy but STILL REGISTERED -> pin kept.
+	ep1.Status = domain.StatusOffline
+	ep2.Status = domain.StatusOffline
+	w.PurgeDeadEndpoints([]*domain.Endpoint{ep1, ep2})
+	assert.Equal(t, 1, w.store.Len(), "unhealthy members of the registry keep their pins (blips are ridden out)")
+
+	// Registry removal: the endpoint is gone from the fleet -> pin evicted.
+	other := makeEndpoint("ep3", "http://backend3:8080")
+	w.PurgeDeadEndpoints([]*domain.Endpoint{other})
+	assert.Equal(t, 0, w.store.Len(), "pins pointing outside the registry are evicted")
+}
 func TestStickySessionWrapper_NoKey(t *testing.T) {
 	t.Parallel()
 
@@ -152,7 +181,7 @@ func TestStickySessionWrapper_NoKey(t *testing.T) {
 	chosen, err := w.Select(ctx, []*domain.Endpoint{ep1})
 	require.NoError(t, err)
 	assert.Equal(t, ep1.URLString, chosen.URLString)
-	assert.Equal(t, "disabled", outcome.Result)
+	assert.Equal(t, "no_key", outcome.Result)
 	assert.Equal(t, "none", outcome.Source)
 }
 

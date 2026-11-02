@@ -124,6 +124,10 @@ func registerServices(manager *services.ServiceManager, cfg *config.Config, logg
 		}
 		if disc, err := registry.GetDiscovery(); err == nil {
 			http.SetDiscoveryService(disc)
+			// Load-aware Busy steering: the health checker reads engine queue
+			// depth from the HTTP app's runtime-metrics sampler.
+			// proxy.busy_queue_depth, 0 (default) = grading off.
+			disc.SetLoadAwareness(float64(cfg.Proxy.BusyQueueDepth), http)
 		}
 		if sec, err := registry.GetSecurity(); err == nil {
 			http.SetSecurityService(sec)

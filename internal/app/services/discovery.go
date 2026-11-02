@@ -107,19 +107,25 @@ func (s *DiscoveryService) Start(ctx context.Context) error {
 
 	s.healthChecker = health.NewHTTPHealthCheckerWithDefaults(s.endpointRepo, s.logger)
 
-	// Purge sticky session entries for any backend that goes offline. The purgeFn is
-	// nil when sticky sessions are disabled, making this callback a cheap no-op then.
+	// Evict sticky session entries for backends that LEFT THE FLEET. The purgeFn
+	// is nil when sticky sessions are disabled, making this callback a cheap
+	// no-op then. NOTE the GetAll: the wrapper's contract is registry
+	// membership, not health. Passing GetRoutable here meant every unhealthy
+	// transition deleted every pin to that node - a blip purged the whole
+	// node's KV affinity, and the conversation never came back. Health blips
+	// are now ridden out by the sticky wrapper (bypass outcome, pin kept);
+	// only config removal is unambiguous enough to evict.
 	s.healthChecker.SetUnhealthyCallback(health.UnhealthyCallbackFunc(func(ctx context.Context, _ *domain.Endpoint) {
 		fn := s.purgeDeadFn.Load()
 		if fn == nil {
 			return
 		}
-		routable, err := s.endpointRepo.GetRoutable(ctx)
+		registered, err := s.endpointRepo.GetAll(ctx)
 		if err != nil {
-			s.logger.Warn("Failed to fetch routable endpoints for sticky session purge", "error", err)
+			s.logger.Warn("Failed to fetch registered endpoints for sticky session purge", "error", err)
 			return
 		}
-		(*fn)(routable)
+		(*fn)(registered)
 	}))
 
 	if err := s.healthChecker.StartChecking(ctx); err != nil {
@@ -281,6 +287,15 @@ func (s *DiscoveryService) RefreshEndpoints(ctx context.Context) error {
 // SetStatsService sets the stats service dependency
 func (s *DiscoveryService) SetStatsService(statsService *StatsService) {
 	s.statsService = statsService
+}
+
+// SetLoadAwareness arms load-aware Busy grading on the health checker
+// (proxy.busy_queue_depth, reader = runtime-metrics sampler). threshold <= 0
+// is inert. Safe before Start(): the checker instance is fixed at construction.
+func (s *DiscoveryService) SetLoadAwareness(threshold float64, reader health.LoadReader) {
+	if s.healthChecker != nil {
+		s.healthChecker.SetLoadAwareness(threshold, reader)
+	}
 }
 
 // SetPurgeDeadEndpointsFn registers a function to call with the current routable

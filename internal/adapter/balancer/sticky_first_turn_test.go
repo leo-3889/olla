@@ -187,3 +187,31 @@ func TestStickyKey_FirstTurnSkippedWhenBodyNotBuffered(t *testing.T) {
 	assert.Equal(t, "auth_header", source)
 	assert.Contains(t, key, "auth:")
 }
+
+func TestStickyKey_FirstTurnFoldsSystemPromptIntoKey(t *testing.T) {
+	t.Parallel()
+
+	cfg := firstTurnConfig("first_user_message")
+	req, _ := http.NewRequest(http.MethodPost, "/", nil)
+
+	// Two agents share a fixed opener ("continue" — the fixed-job / wa-bot
+	// class). Turn-alone hashing collides and re-flocks every such
+	// conversation onto one node; the system-prompt fingerprint separates
+	// them.
+	a := agentBody(t, "You are agent A. "+strings.Repeat("a", 100),
+		map[string]string{"role": "user", "content": "continue"})
+	b := agentBody(t, "You are agent B. "+strings.Repeat("b", 100),
+		map[string]string{"role": "user", "content": "continue"})
+
+	keyA, _ := ComputeStickyKey(req, "qwen4exp", cfg, a)
+	keyB, _ := ComputeStickyKey(req, "qwen4exp", cfg, b)
+	assert.NotEqual(t, keyA, keyB, "the same opener on two different agents must not share a pin")
+
+	// Byte-identical agent+opener stays ONE pin: from the gateway's view the
+	// requests are indistinguishable, and no key can separate them (documented
+	// residue, strictly better than the prefix_hash design).
+	a2 := agentBody(t, "You are agent A. "+strings.Repeat("a", 100),
+		map[string]string{"role": "user", "content": "continue"})
+	keyA2, _ := ComputeStickyKey(req, "qwen4exp", cfg, a2)
+	assert.Equal(t, keyA, keyA2)
+}
