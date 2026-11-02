@@ -8,7 +8,7 @@
 > **Supported**:
 > 
 > - `least-connections` _(default)_ - Routes to least busy endpoint
-> - `priority` - Routes to highest priority endpoint
+> - `priority` - Routes to the highest priority tier, rotating evenly inside it
 > - `round-robin` - Cycles through endpoints evenly
 > 
 > **Environment Variable**: `OLLA_PROXY_LOAD_BALANCER`
@@ -30,14 +30,30 @@ Load balancing determines which backend endpoint receives each incoming request.
 
 ### Priority (Recommended)
 
-Priority-based selection routes to the highest-priority healthy endpoint first.
+Priority-based selection routes to the highest-priority routable endpoints first and spreads traffic evenly inside that tier.
 
 **How it works:**
 
 1. Endpoints assigned priority values (0-100, higher = preferred)
-2. Selects from highest priority tier only
-3. Within same priority, uses weighted random selection
+2. Selects from highest priority tier only (routable endpoints: Healthy, Busy, Warming)
+3. Within the tier, smooth weighted round-robin over the endpoints' status weights
+   (Healthy 1.0, Busy 0.3, Warming 0.1): each pass adds a candidate's weight to its
+   credit, the highest credit is served, the winner pays the tier's total weight
 4. Automatically falls back to lower priorities if higher ones fail
+
+The tie-break is **deterministic**. Two equal-weight twins alternate exactly - 1 000
+requests split 500/500 - and a 1.0/0.3/0.1 tier distributes 10/3/1 over a 14-request
+period, interleaved so the light node is never queued back to back. Rotation state is
+per-selector and keyed by endpoint URL, so aliases whose top tier contains the same
+endpoint share one queue, and an endpoint that returns from an outage pays back its
+deficit and settles back to an even share.
+
+This replaces a weighted **random** draw, which clumped: with two healthy twins at
+priority 100 a burst landed wherever the coin flips fell (live fleet: 7 288 requests on
+one node against 1 040 on the other over one gateway lifetime), and
+[Sticky Sessions](sticky-sessions.md) then locked the clump in for the affinity TTL.
+Pair the rotation with conversation-level sticky keys to get an even queue for new
+conversations and KV-cache affinity for every turn after the first.
 
 **Best for:**
 

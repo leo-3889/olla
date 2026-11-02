@@ -476,39 +476,6 @@ func TestPrioritySelector_TrafficWeightDistribution(t *testing.T) {
 	}
 }
 
-func TestPrioritySelector_SeedingConsistency(t *testing.T) {
-	// This test ensures that weighted selection isn't completely deterministic
-	// but also not completely random (should have some consistency)
-
-	endpoints := []*domain.Endpoint{
-		createPriorityEndpoint("a", 11434, domain.StatusHealthy, 100),
-		createPriorityEndpoint("b", 11435, domain.StatusHealthy, 100),
-	}
-
-	// Run multiple times to see if we get some variation
-	results := make([]string, 20)
-
-	for i := range 20 {
-		selector := NewPrioritySelector(NewTestStatsCollector())
-		endpoint, _ := selector.Select(context.Background(), endpoints)
-		results[i] = endpoint.Name
-	}
-
-	// Should have some variation (not all same)
-	firstResult := results[0]
-	hasVariation := false
-	for _, result := range results[1:] {
-		if result != firstResult {
-			hasVariation = true
-			break
-		}
-	}
-
-	if !hasVariation {
-		t.Error("No variation in weighted selection - may be too deterministic")
-	}
-}
-
 func createPriorityEndpoint(name string, port int, status domain.EndpointStatus, priority int) *domain.Endpoint {
 	testURL, _ := url.Parse(fmt.Sprintf("http://localhost:%d", port))
 	healthURL, _ := url.Parse(fmt.Sprintf("http://localhost:%d/health", port))
