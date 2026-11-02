@@ -131,11 +131,11 @@ type SecurityViolation struct {
 // the payload's KEY ORDER changes (consumers parse by name; the status ETag
 // rotates once on the deploy, then is stable).
 type StatusResponse struct {
-	Proxy     ProxySummary       `json:"proxy"`
-	System    SystemSummary      `json:"system"`
-	Security  SecuritySummary    `json:"security"`
-	Endpoints []EndpointResponse `json:"endpoints"`
 	Timestamp time.Time          `json:"timestamp"`
+	Proxy     ProxySummary       `json:"proxy"`
+	Endpoints []EndpointResponse `json:"endpoints"`
+	Security  SecuritySummary    `json:"security"`
+	System    SystemSummary      `json:"system"`
 }
 
 type statusSnapshot struct {

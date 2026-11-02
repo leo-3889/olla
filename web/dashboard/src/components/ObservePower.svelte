@@ -6,6 +6,10 @@
 
   interface Props {
     rows: ObservePowerRow[];
+    /** configured plugs with zero rows (dead meter / failed query) - the
+     *  payload's power_absent: an empty grid over a live config reads as
+     *  "no plugs attributed", so name each one. */
+    absent?: string[];
     /** max age_s over the visible rows, for the source freshness stamp */
     ageS: number | null;
     /** true when the observe store reports stale/error */
@@ -13,7 +17,7 @@
     /** 'stale' | 'source error' - why degraded, worded for the note */
     statusLabel?: string;
   }
-  let { rows, ageS, degraded, statusLabel = 'stale' }: Props = $props();
+  let { rows, absent = [], ageS, degraded, statusLabel = 'stale' }: Props = $props();
 
   function fmt(value: number | null | undefined, digits = 1): string {
     if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
@@ -40,6 +44,15 @@
         <div class="meter-meta">{row.device_name ?? '—'}{#if row.node}&nbsp;· {row.node}{/if} · {fmt(row.temp_c)} °C</div>
       </div>
     {/each}
+    {#each absent as target (target)}
+      <div class="meter absent">
+        <div class="meter-head">
+          <span class="meter-name" title={target}>{target}</span>
+          <span class="chip">no data</span>
+        </div>
+        <div class="meter-meta">no rows in the last 5m - meter offline?</div>
+      </div>
+    {/each}
   </div>
 </div>
 
@@ -50,7 +63,7 @@
     padding: 10px 12px;
     background: var(--bg-elevated, transparent);
   }
-  .meter.off { opacity: 0.6; }
+  .meter.off, .meter.absent { opacity: 0.6; }
   .meter-head { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
   .meter-name { font-weight: 600; }
   .meter-watts { font-size: 1.4em; margin-top: 4px; }

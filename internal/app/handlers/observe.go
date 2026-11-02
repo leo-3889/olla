@@ -107,7 +107,14 @@ type ObservePayload struct {
 	// 2 of 5 GPUs reads as a healthy small fleet. The UI must render an
 	// explicit "no data" card per entry.
 	GPUsAbsent []string `json:"gpus_absent"`
-	Schema     int      `json:"schema"`
+	// PowerAbsent is the plug twin of GPUsAbsent: configured
+	// metrics_source.influx.power_attribution targets with ZERO rows in the
+	// 5m window (dead Shelly / stopped telegraf), and on a failed power
+	// query every configured target (nothing was verified). An empty power
+	// section over a live config reads as "no plugs attributed" - the very
+	// config fact the section exists to surface.
+	PowerAbsent []string `json:"power_absent"`
+	Schema      int      `json:"schema"`
 }
 
 func newEmptyObservePayload(source string, now time.Time) *ObservePayload {
@@ -119,6 +126,7 @@ func newEmptyObservePayload(source string, now time.Time) *ObservePayload {
 		Cost:        observeCost{Currency: "EUR", Hour: map[string]*observeCostEntry{}, Day: map[string]*observeCostEntry{}, Dropped: []string{}, Errors: []string{}},
 		GPUs:        []observeGpuRow{},
 		GPUsAbsent:  []string{},
+		PowerAbsent: []string{},
 	}
 }
 
@@ -217,6 +225,11 @@ func (o *observeCollector) collect(ctx context.Context) (*ObservePayload, error)
 		rows, err := o.client.query(cycleCtx, fmt.Sprintf(`from(bucket:%q) |> range(start:-5m) |> filter(fn:(r)=>r._measurement=="llm_host_power") |> filter(fn:(r)=>contains(set:[%s], value:r.power_target_id)) |> last()`, o.cfg.Bucket, fluxStringSet(targets)))
 		if err != nil {
 			fail("power", err)
+			// Nothing was seen: every attributed plug is unverified. The
+			// success branch computes PowerAbsent from seen rows; on an
+			// errored query an empty list would claim "all plugs healthy,
+			// none configured".
+			payload.PowerAbsent = append(payload.PowerAbsent, targets...)
 		} else {
 			type meterGroup struct {
 				fields map[string]float64
@@ -254,6 +267,9 @@ func (o *observeCollector) collect(ctx context.Context) (*ObservePayload, error)
 			for _, target := range targets {
 				group := groups[target]
 				if group == nil {
+					// Configured plug, zero rows in the window: disclose it
+					// (dead meter) rather than render a short grid.
+					payload.PowerAbsent = append(payload.PowerAbsent, target)
 					continue
 				}
 				row := observePowerRow{Target: target, Endpoint: labelForTarget[target], DeviceName: group.device, Node: group.node}

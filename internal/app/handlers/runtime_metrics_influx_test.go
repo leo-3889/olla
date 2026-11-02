@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ type stubFluxQuerier struct {
 	counterMeanRows []map[string]any
 	counterMaxRows  []map[string]any
 	err             error
+	legErrs         map[string]error // fail ONE leg: "last","gaugeMean","gaugeMax","counterMean","counterMax"
 }
 
 func (s *stubFluxQuerier) query(_ context.Context, flux string) ([]map[string]any, error) {
@@ -27,16 +29,32 @@ func (s *stubFluxQuerier) query(_ context.Context, flux string) ([]map[string]an
 	if s.err != nil {
 		return nil, s.err
 	}
+	legError := func(leg string) error { return s.legErrs[leg] }
 	switch {
 	case strings.Contains(flux, "|> last()"):
+		if e := legError("last"); e != nil {
+			return nil, e
+		}
 		return s.lastRows, nil
 	case strings.Contains(flux, "decode_tokens_per_second") && strings.Contains(flux, "fn:mean"):
+		if e := legError("gaugeMean"); e != nil {
+			return nil, e
+		}
 		return s.gaugeMeanRows, nil
 	case strings.Contains(flux, "decode_tokens_per_second") && strings.Contains(flux, "fn:max"):
+		if e := legError("gaugeMax"); e != nil {
+			return nil, e
+		}
 		return s.gaugeMaxRows, nil
 	case strings.Contains(flux, "fn:mean"):
+		if e := legError("counterMean"); e != nil {
+			return nil, e
+		}
 		return s.counterMeanRows, nil
 	default:
+		if e := legError("counterMax"); e != nil {
+			return nil, e
+		}
 		return s.counterMaxRows, nil
 	}
 }
@@ -54,6 +72,7 @@ func newProviderForTest(stub *stubFluxQuerier, endpoints []*domain.Endpoint, now
 		now:        now,
 		states:     map[string]*influxEndpointState{},
 		firstSee:   map[string]time.Time{},
+		legFailing: map[string]bool{},
 	}
 }
 
@@ -249,4 +268,61 @@ func TestInfluxProviderQueueDepthFor(t *testing.T) {
 	assert.False(t, ok)
 	_, ok = provider.QueueDepthFor(nil)
 	assert.False(t, ok)
+}
+
+type influxLegLogEntry struct {
+	msg  string
+	args []any
+}
+
+type influxLegLogger struct {
+	mockStyledLogger
+	warns []influxLegLogEntry
+	infos []influxLegLogEntry
+}
+
+func (l *influxLegLogger) Warn(msg string, args ...any) {
+	l.warns = append(l.warns, influxLegLogEntry{msg, args})
+}
+func (l *influxLegLogger) Info(msg string, args ...any) {
+	l.infos = append(l.infos, influxLegLogEntry{msg, args})
+}
+
+// A PARTIAL cycle failure (one window leg dies while last() lives) used to be
+// fully silent: the all-fail warn only covers the total case, so blanked
+// avg/max columns were indistinguishable from an idle engine. Legs are now
+// logged on transition, once - the cycle runs every 10s.
+func TestInfluxProviderPartialLegLoggedOnTransition(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	ep := &domain.Endpoint{Name: "ep1", URLString: "http://ep1:8000", Type: "openai-compatible", RuntimeMetricsKind: "radiance", Status: domain.StatusHealthy, RuntimeMetricsEnabled: true}
+	stub := &stubFluxQuerier{
+		lastRows: []map[string]any{influxRow("ep1", "queue_depth", 3.0, now.Add(-30*time.Second))},
+		legErrs:  map[string]error{"gaugeMean": errors.New("gateway timeout")},
+	}
+	provider := newProviderForTest(stub, []*domain.Endpoint{ep}, func() time.Time { return now })
+	rec := &influxLegLogger{}
+	provider.logger = rec
+
+	provider.refresh(context.Background())
+	provider.refresh(context.Background())
+	legWarns := 0
+	for _, w := range rec.warns {
+		if strings.Contains(w.msg, "query leg failing") {
+			legWarns++
+			assert.Contains(t, fmt.Sprint(w.args...), "gaugeMean")
+		}
+	}
+	assert.Equal(t, 1, legWarns, "a persistently failing leg is logged on transition, not per cycle")
+
+	// Recovery is disclosed once.
+	stub.legErrs["gaugeMean"] = nil
+	provider.refresh(context.Background())
+	provider.refresh(context.Background())
+	recoveries := 0
+	for _, i := range rec.infos {
+		if strings.Contains(i.msg, "query leg recovered") {
+			recoveries++
+		}
+	}
+	assert.Equal(t, 1, recoveries)
 }

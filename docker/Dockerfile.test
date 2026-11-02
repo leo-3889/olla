@@ -30,6 +30,24 @@ RUN bun install --frozen-lockfile
 COPY web/dashboard/ ./
 RUN bun run build
 
+# ---- Stage 1a: test gate -----------------------------------------------------
+# This file is what deploys use (docker build -f docker/Dockerfile.test), and
+# until now a deploy build proved only that the code COMPILES. The suite now
+# runs inside the deploy: a red test aborts the image build.
+#   * `-count=1` defeats the test cache (a cached green is not a green).
+#   * `-buildvcs=false`: .git is not in the build context.
+#   * No `-race` here: the deploy gate trades race detection for a ~2-minute
+#     build. The dev gate command (go test -race -short ./...) and upstream CI
+#     keep `-race`.
+# The dist copy is required by go:embed in the dashboard package - tests of
+# that package cannot compile without the stage-0 output.
+FROM golang:1.24.13-bookworm AS test
+ENV CGO_ENABLED=0
+WORKDIR /src
+COPY . .
+COPY --from=webbuild /src/internal/app/handlers/dashboard/dist ./internal/app/handlers/dashboard/dist
+RUN go vet -buildvcs=false ./... && go test -count=1 -buildvcs=false ./...
+
 # ---- Stage 1: compile -------------------------------------------------------
 FROM golang:1.24.13-bookworm AS build
 # CGO_ENABLED=0 is required: the golang image is glibc-based, but the runtime
@@ -44,6 +62,10 @@ COPY . .
 # built one. This is what makes "edit dashboard source, rebuild image"
 # actually reach the browser.
 COPY --from=webbuild /src/internal/app/handlers/dashboard/dist ./internal/app/handlers/dashboard/dist
+# The suite is the gate: pulling one file from the test stage makes BuildKit
+# build that stage (unreferenced stages are skipped), so no image exists unless
+# `go vet` and `go test` passed for this exact source.
+COPY --from=test /src/go.mod /tmp/test-gate/go.mod
 # -trimpath keeps the binary reproducible; -s -w strips symbols to shrink it.
 RUN go build -trimpath -ldflags "-s -w" -o /app/olla .
 
