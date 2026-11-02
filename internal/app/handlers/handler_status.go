@@ -54,12 +54,16 @@ type SystemSummary struct {
 	TotalRequests      int64     `json:"total_requests"`
 	TotalFailures      int64     `json:"total_failures"`
 	// HasTraffic lets the dashboard branch on the no-traffic state without
-	// parsing SuccessRate. Always present (not omitempty): it is derivable from
-	// TotalRequests, which is itself always emitted, so every payload carries
-	// an explicit true/false. SuccessRate becomes "N/A" when this is false,
-	// mirroring the endpoint-level convention in handler_status_endpoints.go;
-	// previously it reported "0%" on a healthy fresh boot, which coupled with
-	// the legacy status threshold produced a misleading "critical" verdict.
+	// parsing SuccessRate. Always present (not omitempty). In host mode - and
+	// in model mode while the model verdict has no signal yet - it is exactly
+	// TotalRequests > 0. In model mode with a live model-scoped verdict it
+	// instead reflects the CONFIGURED MODELS' own traffic, so it can be false
+	// while TotalRequests (proxy-wide) is non-zero: it is NOT derivable from
+	// TotalRequests in that mode. SuccessRate becomes "N/A" when this is
+	// false, mirroring the endpoint-level convention in
+	// handler_status_endpoints.go; previously it reported "0%" on a healthy
+	// fresh boot, which coupled with the legacy status threshold produced a
+	// misleading "critical" verdict.
 	HasTraffic bool `json:"has_traffic"`
 	// HealthMode is the computation that produced Status: "host" (the endpoint
 	// fleet, the historical behaviour) or "model" (a configured list of
@@ -78,19 +82,20 @@ type ProxySummary struct {
 }
 
 type EndpointResponse struct {
-	AvgLatencyMs  *int64                 `json:"avg_latency_ms,omitempty"`
-	NextCheckAt   *time.Time             `json:"next_check_at,omitempty"`
-	HealthCheckAt *time.Time             `json:"health_check_at,omitempty"`
-	Models        EndpointModelsResponse `json:"models"`
-	Name          string                 `json:"name"`
-	Status        string                 `json:"status"`
-	SuccessRate   string                 `json:"success_rate"`
-	AvgLatency    string                 `json:"avg_latency"`
-	Traffic       string                 `json:"traffic"`
-	LastCheck     string                 `json:"last_check"`
-	NextCheck     string                 `json:"next_check"`
-	Issues        string                 `json:"issues"`
-	URL           string                 `json:"url"`
+	RuntimeMetrics *EndpointRuntimeMetrics `json:"runtime_metrics,omitempty"`
+	AvgLatencyMs   *int64                  `json:"avg_latency_ms,omitempty"`
+	NextCheckAt    *time.Time              `json:"next_check_at,omitempty"`
+	HealthCheckAt  *time.Time              `json:"health_check_at,omitempty"`
+	Models         EndpointModelsResponse  `json:"models"`
+	Name           string                  `json:"name"`
+	Status         string                  `json:"status"`
+	SuccessRate    string                  `json:"success_rate"`
+	AvgLatency     string                  `json:"avg_latency"`
+	Traffic        string                  `json:"traffic"`
+	LastCheck      string                  `json:"last_check"`
+	NextCheck      string                  `json:"next_check"`
+	Issues         string                  `json:"issues"`
+	URL            string                  `json:"url"`
 	// ID is a stable, opaque identifier derived from the SANITISED endpoint
 	// URL via buildEndpointIDs; see handler_status_endpoints.go.
 	ID          string `json:"id"`
@@ -359,6 +364,12 @@ func (a *Application) buildUnifiedEndpoints(all []*domain.Endpoint, statsMap map
 		}
 
 		endpoints[i] = EndpointResponse{
+			RuntimeMetrics: func() *EndpointRuntimeMetrics {
+				if a.runtimeMetrics == nil {
+					return nil
+				}
+				return a.runtimeMetrics.Snapshot(endpoint)
+			}(),
 			Name:        endpoint.Name,
 			Status:      endpoint.Status.String(),
 			Priority:    endpoint.Priority,
@@ -680,7 +691,9 @@ func hashStatusResponse(resp *StatusResponse) string {
 // change on every poll; NextCheckAt/HealthCheckAt are skipped too - they
 // advance on every health-check tick (30s, see internal/adapter/health)
 // regardless of whether the endpoint's status actually changed, which
-// churned this ETag under zero traffic and defeated caching.
+// churned this ETag under zero traffic and defeated caching. The runtime
+// metrics contribution is hashed values-only for the same reason (see
+// hashEndpointRuntimeMetrics).
 func hashEndpointResponse(h hash.Hash, ep *EndpointResponse) {
 	hashEtagString(h, ep.ID)
 	hashEtagString(h, ep.Name)
@@ -696,6 +709,7 @@ func hashEndpointResponse(h hash.Hash, ep *EndpointResponse) {
 	hashEtagInt64(h, ep.MinLatencyMs)
 	hashEtagInt64(h, ep.MaxLatencyMs)
 	hashEtagInt64Ptr(h, ep.AvgLatencyMs)
+	hashEndpointRuntimeMetrics(h, ep.RuntimeMetrics)
 	hashEtagTime(h, ep.Models.LastUpdated)
 	hashEtagInt64(h, ep.Models.Count)
 }

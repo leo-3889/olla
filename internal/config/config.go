@@ -234,12 +234,23 @@ func (c *Config) Validate() error {
 		log.Printf("WARNING: server.rate_limits.burst_size is 0 — all requests will be throttled immediately")
 	}
 
+	// Endpoints that opt into runtime metrics but resolve to no sampleable
+	// kind (generic type, no pinned kind) are tracked but never sampled. Warn
+	// at startup instead of letting the dashboard show unexplained dashes.
+	for _, w := range c.RuntimeKindWarnings() {
+		log.Printf("WARNING: %s", w)
+	}
+
 	if err := c.Translators.Validate(); err != nil {
 		return fmt.Errorf("translators config invalid: %w", err)
 	}
 
 	if err := c.Health.Validate(); err != nil {
 		return fmt.Errorf("health config invalid: %w", err)
+	}
+
+	if err := c.MetricsSource.Validate(); err != nil {
+		return fmt.Errorf("metrics_source config invalid: %w", err)
 	}
 
 	if err := c.Server.Cors.Validate(); err != nil {

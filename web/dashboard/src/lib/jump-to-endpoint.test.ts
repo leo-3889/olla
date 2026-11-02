@@ -2,19 +2,31 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vite
 import { jumpToEndpoint, jumpToEndpointKey, flashRow } from './jump-to-endpoint';
 import { stableId } from './dom-id';
 import { navigation } from './stores/navigation.svelte';
+import { endpoints } from './stores/endpoints.svelte';
 
-// The cold deep-link path branches on endpoints.hasData. The real store is a
-// module singleton that none of these tests start, so by default we report
-// hasData=true to exercise the fast DOM-poll path that the existing tests
-// cover; the cold-link test flips this to false via the same holder.
-const epStore = vi.hoisted<{ hasData: boolean }>(() => ({ hasData: true }));
-vi.mock('./stores/endpoints.svelte', () => ({
-  endpoints: {
-    get hasData() {
-      return epStore.hasData;
-    },
-  },
-}));
+// These tests cover the fast DOM-poll path, which the helper only takes when
+// the endpoints store already has data. `vi.mock` intercepts nothing under the
+// Bun runtime the repo gates on, so the store's hasData is earned the same way
+// the panels earn it: one successful poll through global.fetch. The cold
+// deep-link path (hasData false) needs a store that has NEVER fetched, which a
+// primed singleton can no longer provide - that case lives in
+// jump-to-endpoint.cold.test.ts, where the module registry starts empty.
+async function primeEndpoints(): Promise<void> {
+  global.fetch = vi.fn(async () =>
+    jsonResponse({ endpoints: [], total_count: 0, healthy_count: 0, routable_count: 0 })
+  );
+  endpoints.refresh();
+  await vi.waitFor(() => expect(endpoints.hasData).toBe(true));
+}
+
+function jsonResponse(body: unknown) {
+  return {
+    status: 200,
+    ok: true,
+    headers: { get: () => null },
+    json: async () => body,
+  };
+}
 
 // jsdom doesn't implement scrollIntoView; stub it so the helper doesn't throw
 // and so the tests can assert it was actually called.
@@ -22,11 +34,11 @@ beforeAll(() => {
   Element.prototype.scrollIntoView = vi.fn();
 });
 
-beforeEach(() => {
+beforeEach(async () => {
   document.body.innerHTML = '';
   navigation.set('overview');
   history.replaceState(null, '', '#overview');
-  epStore.hasData = true;
+  await primeEndpoints();
   // scrollIntoView is stubbed once in beforeAll; clear the call log so each
   // test's "was called / was not called" assertion sees only its own jumps.
   vi.mocked(Element.prototype.scrollIntoView).mockClear();
@@ -131,51 +143,6 @@ describe('jumpToEndpoint', () => {
     const p = jumpToEndpoint('no-such-row');
     // Well past the full retry window (~8 x 50ms).
     await vi.advanceTimersByTimeAsync(1000);
-    await p;
-    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
-  });
-
-  it('cold deep-link: waits for the endpoints store first refresh, then reveals', async () => {
-    // Mirrors a fresh tab landing on #endpoints/<id>: the EndpointsPanel store
-    // hasn't fetched yet so hasData is false and the row cannot exist. The
-    // helper must wait for the first refresh (hasData flips true) and only
-    // then run the DOM poll that finds and focuses the row. The fast 8x50ms
-    // retry alone would expire before the fetch lands.
-    vi.useFakeTimers();
-    const rawId = 'cold-deep-link';
-    const domId = `ep-${stableId(rawId)}`;
-    const row = document.createElement('tr');
-    row.id = domId;
-    row.tabIndex = -1;
-
-    epStore.hasData = false;
-    const p = jumpToEndpoint(rawId);
-
-    // Past the old fast-path budget (8 x 50ms = 400ms). Under the old logic
-    // the helper would have given up here; under the new cold-wait it is still
-    // blocked on hasData and has not touched the DOM.
-    await vi.advanceTimersByTimeAsync(500);
-    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
-
-    // First refresh lands: hasData flips and the row mounts. The DOM poll
-    // immediately following should find and reveal it.
-    document.body.append(row);
-    epStore.hasData = true;
-    await vi.advanceTimersByTimeAsync(80);
-    await p;
-
-    expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({ block: 'center' });
-    expect(document.activeElement).toBe(row);
-    expect(row.classList.contains('ep-flash')).toBe(true);
-  });
-
-  it('cold deep-link: gives up after the ~3s budget if no refresh ever lands', async () => {
-    vi.useFakeTimers();
-    epStore.hasData = false;
-    const p = jumpToEndpoint('no-refresh');
-    // Just past the cold budget. Use a generous nudge so we don't land on the
-    // exact boundary and race the last poll tick.
-    await vi.advanceTimersByTimeAsync(3200);
     await p;
     expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
   });

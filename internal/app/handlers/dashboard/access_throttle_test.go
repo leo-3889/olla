@@ -106,7 +106,7 @@ func TestRegisterRoutes_ShutdownFlushReportsPendingSummary(t *testing.T) {
 	rec := &warnRecorder{}
 	set := &logger.ThrottleSet{}
 	reg := router.NewRouteRegistry(rec)
-	require.True(t, RegisterRoutes(reg, loopbackConfig(), rec, http.NotFoundHandler(), set))
+	require.True(t, RegisterRoutes(reg, loopbackConfig(), rec, http.NotFoundHandler(), set, nil))
 
 	mux := http.NewServeMux()
 	reg.WireUp(mux)

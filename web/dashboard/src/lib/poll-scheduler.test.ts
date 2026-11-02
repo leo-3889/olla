@@ -16,6 +16,37 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe('pollScheduler dynamic intervals', () => {
+  it('re-arms with the resolver value on the next tick (dashboard.polling takes effect live)', async () => {
+    const { pollScheduler } = await import('./poll-scheduler');
+
+    let interval = 1000;
+    let calls = 0;
+    pollScheduler.register('dyn', () => interval, async () => {
+      calls++;
+    });
+    pollScheduler.start();
+    pollScheduler.start('dyn');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toBe(1);
+
+    // A config change lands; the CURRENT pending timer still uses the old
+    // cadence, but the re-arm after this tick must use the new one.
+    interval = 10_000;
+    await vi.advanceTimersByTimeAsync(1200); // old 1000ms cadence fires
+    expect(calls).toBe(2);
+
+    // Nothing on the old cadence any more...
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(calls).toBe(2);
+    // ...and the new cadence ticks.
+    await vi.advanceTimersByTimeAsync(11_000);
+    expect(calls).toBe(3);
+
+    pollScheduler.stop();
+  });
+});
+
 describe('pollScheduler.refresh', () => {
   it('a burst of manual refreshes leaves exactly one live recurring chain', async () => {
     const { pollScheduler } = await import('./poll-scheduler');
@@ -207,5 +238,62 @@ describe('pollScheduler per-job start/stop', () => {
     expect(tick).toHaveBeenCalledTimes(1);
 
     pollScheduler.stop();
+  });
+});
+
+// The hidden-tab policy is half of the polling budget: jobs slow down 4x
+// (BACKGROUND_BACKOFF) while the document is hidden and fire an immediate
+// burst the moment it becomes visible again. Nothing pinned either behaviour,
+// so a refactor could just as well have kept full foreground cadence at
+// 4x the battery/network cost - or lost the burst and left a returning user
+// staring at stale data for a full (already throttled) interval.
+describe('pollScheduler background backoff and visibility burst', () => {
+  it('throttles hidden jobs to 4x interval and bursts immediately on return to visible', async () => {
+    const visDesc = Object.getOwnPropertyDescriptor(document, 'visibilityState');
+    let hidden = true;
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => (hidden ? 'hidden' : 'visible'),
+    });
+    try {
+      const { pollScheduler } = await import('./poll-scheduler');
+
+      let calls = 0;
+      const tick = vi.fn(async () => {
+        calls++;
+      });
+      pollScheduler.register('job', 1000, tick);
+      pollScheduler.start();
+      pollScheduler.start('job');
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(calls).toBe(1); // immediate tick on activation
+
+      // Hidden: cadence is 1000 * BACKGROUND_BACKOFF(4) = 4000ms (+/- jitter).
+      // A full foreground interval plus margin must fire NOTHING...
+      const before = calls;
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(calls - before).toBe(0);
+      // ...while the backoff window (plus its widest jitter) fires exactly one.
+      await vi.advanceTimersByTimeAsync(3500); // total 5000 > 4000 * 1.1
+      expect(calls - before).toBe(1);
+
+      // Return to the foreground: immediate burst, no wait for the timer.
+      hidden = false;
+      const atReturn = calls;
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(calls - atReturn).toBe(1);
+
+      // And the job is back on foreground cadence: one tick per interval.
+      const afterBurst = calls;
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(calls - afterBurst).toBe(1);
+
+      pollScheduler.stop();
+    } finally {
+      if (visDesc) Object.defineProperty(document, 'visibilityState', visDesc);
+      else delete (document as unknown as Record<string, unknown>).visibilityState;
+    }
   });
 });

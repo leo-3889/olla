@@ -48,7 +48,7 @@
   --border-strong: #a89f80;
   --text: #23261f;
   --text-dim: #5c5a49;
-  --text-faint: #6d6a58;
+  --text-faint: #5f5c4b;
   --accent: #0d6b60;
   --accent-soft: #d9ece7;
   --link: #0d6b60;
@@ -60,7 +60,10 @@
   --amber-bg: #f1e4bf;
   --red: #a3241c;
   --red-bg: #f3dcd8;
-  --neutral: #8c8871;
+  /* AA: used as normal-size text/glyph colour on bg, elevated AND inset
+     (row hover) surfaces; #686554 is the lightest olive that clears 4.5:1
+     on all three (min 4.60 on inset). contrast.test.ts pins this. */
+  --neutral: #686554;
 
   --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas,
     'Liberation Mono', monospace;
@@ -103,7 +106,7 @@
     --amber-bg: #3a2c0e;
     --red: #e5695f;
     --red-bg: #3a1815;
-    --neutral: #5c716c;
+    --neutral: #6f8983;
   }
 }
 
@@ -117,7 +120,7 @@
   --border-strong: #a89f80;
   --text: #23261f;
   --text-dim: #5c5a49;
-  --text-faint: #6d6a58;
+  --text-faint: #5f5c4b;
   --accent: #0d6b60;
   --accent-soft: #d9ece7;
   --link: #0d6b60;
@@ -128,7 +131,7 @@
   --amber-bg: #f1e4bf;
   --red: #a3241c;
   --red-bg: #f3dcd8;
-  --neutral: #8c8871;
+  --neutral: #686554;
 }
 
 :root[data-theme='dark'] {
@@ -152,7 +155,7 @@
   --amber-bg: #3a2c0e;
   --red: #e5695f;
   --red-bg: #3a1815;
-  --neutral: #5c716c;
+  --neutral: #6f8983;
 }
 
 /* ============================================================

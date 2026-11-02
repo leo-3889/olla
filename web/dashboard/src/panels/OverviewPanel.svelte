@@ -1,6 +1,10 @@
 <script lang="ts">
   import { overview } from '../lib/stores/overview.svelte';
   import { endpoints } from '../lib/stores/endpoints.svelte';
+  import { bootstrap } from '../lib/stores/bootstrap.svelte';
+  import ObservePower from '../components/ObservePower.svelte';
+  import ObserveCost from '../components/ObserveCost.svelte';
+  import ObserveGpu from '../components/ObserveGpu.svelte';
   import StatTile from '../components/StatTile.svelte';
   import StatusBanner from '../components/StatusBanner.svelte';
   import StatusTag from '../components/StatusTag.svelte';
@@ -26,6 +30,7 @@
   } from '../lib/herd';
   import { getNow as liveNow } from '../lib/clock.svelte';
   import type { EndpointSummary } from '../lib/types';
+  import { statusMeta, statusRank } from '../lib/status';
 
   const sys = $derived(overview.data?.system);
   const proxy = $derived(overview.data?.proxy);
@@ -34,6 +39,17 @@
   // without a second fetch.
   const sec = $derived(overview.data?.security);
   const loading = $derived(overview.status === 'loading');
+
+  // Observe sections (power/cost/GPU) ride their OWN store: they render even
+  // when the status poll failed, and only appear when the dashboard manifest
+  // enables them (metrics_source.mode=influx). While the first observe
+  // response is pending nothing is rendered - no empty-shell pretending.
+  const observeData = $derived(bootstrap.observe?.data ?? null);
+  const observeDegraded = $derived(bootstrap.observe?.status === 'stale' || bootstrap.observe?.status === 'error');
+  function maxAgeS(values: Array<number | null | undefined>): number | null {
+    const ages = values.filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+    return ages.length > 0 ? Math.max(...ages) : null;
+  }
 
   // endpoints_up arrives as a pre-formatted "x/y" string; split for the tile.
   const upTotal = $derived(sys?.endpoints_up ?? '/');
@@ -186,12 +202,7 @@
 
   // Default sort is unhealthy-first: an ops glance view should surface the
   // backends that need attention before the ones already fine.
-  function statusRank(s: string): number {
-    if (s === 'offline' || s === 'critical') return 0;
-    if (s === 'degraded' || s === 'unhealthy') return 1;
-    if (s === 'healthy') return 2;
-    return 3;
-  }
+
 
   // avg_latency_ms is the API's numeric average PROXY latency field - never
   // derive it from response_time (last HEALTH-CHECK probe latency, a
@@ -236,12 +247,6 @@
     return out;
   }
 
-  function statusGlyph(s: string): string {
-    return s === 'healthy' ? '●' : s === 'degraded' || s === 'unhealthy' ? '◐' : '○';
-  }
-  function statusCls(s: string): string {
-    return s === 'healthy' ? 'green' : s === 'degraded' || s === 'unhealthy' ? 'amber' : 'red';
-  }
 
   // Identity resolution lives here (the panel knows the row's id/url/name
   // fallback chain); everything else - panel swap, hash push, the bounded
@@ -279,7 +284,7 @@
       </div>
     </div>
     <div class="section">
-      <div class="section-head"><h3>Herd at a glance</h3></div>
+      <div class="section-head"><h2>Herd at a glance</h2></div>
       {#each Array(4) as _, i}<div class="skeleton row-skel"></div>{/each}
     </div>
   {:else if sys}
@@ -287,7 +292,7 @@
       <div class="tile-grid">
         <StatTile label="System status">
           {#snippet children()}
-            <span class="glyph g-{statusCls(sys.status)}" aria-hidden="true">{statusGlyph(sys.status)}</span>
+            <span class="glyph g-{statusMeta(sys.status).cls}" aria-hidden="true">{statusMeta(sys.status).glyph}</span>
             {sys.status}
           {/snippet}
           {#snippet subSnippet()}
@@ -384,7 +389,7 @@
 
     <div class="section">
       <div class="section-head">
-        <h3>Herd at a glance</h3>
+        <h2>Herd at a glance</h2>
         <span class="section-note">click a name to jump to its endpoint detail · sorted unhealthy first by default</span>
       </div>
       <div class="herd-controls">
@@ -408,7 +413,7 @@
               onclick={() => jumpToEndpoint(endpointIdentity(e))}
               title="Open {e.name} in the Endpoints panel"
             >
-              <span class="glyph g-{statusCls(e.status)}" aria-hidden="true">{statusGlyph(e.status)}</span>
+              <span class="glyph g-{statusMeta(e.status).cls}" aria-hidden="true">{statusMeta(e.status).glyph}</span>
               <span class="txt">{e.name}</span>
             </button>
           </td>
@@ -444,6 +449,16 @@
       {/if}
     </div>
 
+  {/if}
+
+  {#if bootstrap.sectionEnabled('power') && observeData}
+    <ObservePower rows={observeData.power} ageS={maxAgeS(observeData.power.map((r) => r.age_s))} degraded={observeDegraded} />
+  {/if}
+  {#if bootstrap.sectionEnabled('cost') && observeData}
+    <ObserveCost cost={observeData.cost} degraded={observeDegraded} />
+  {/if}
+  {#if bootstrap.sectionEnabled('gpu') && observeData}
+    <ObserveGpu gpus={observeData.gpus} ageS={maxAgeS(observeData.gpus.map((r) => r.age_s))} degraded={observeDegraded} />
   {/if}
   </div>
 

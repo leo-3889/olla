@@ -76,6 +76,7 @@ export interface EndpointModelsResponse {
 
 export interface EndpointResponse {
   avg_latency_ms?: number;
+  runtime_metrics?: EndpointRuntimeMetrics;
   next_check_at?: string;
   health_check_at?: string;
   models: EndpointModelsResponse;
@@ -127,6 +128,122 @@ export interface EndpointSummary {
   min_latency_ms: number;
   max_latency_ms: number;
   active_connections: number;
+  // Optional backend-native runtime telemetry. Older Olla versions and
+  // backends without a supported metrics adapter omit this object entirely;
+  // individual measurements may also be absent when a backend cannot supply
+  // them. `current` is the latest sample; `avg`/`max` cover the 10-minute
+  // reporting window. `stale` means Olla retained a previous scrape after the
+  // collector stopped receiving fresh data, so the UI must not present its
+  // values as live measurements.
+  runtime_metrics?: EndpointRuntimeMetrics;
+}
+
+export interface EnvelopeMetric {
+  // Wire keys: generation_tps | prefill_tps | cache_hit_percent |
+  // kv_cache_usage_percent | queue_depth | requests_running | spec_accept_percent.
+  // Unknown future keys MUST render (raw) rather than throw.
+  key: string;
+  // tok_s | percent | count today; unknown units render the number as-is.
+  unit: string;
+  current?: number;
+  avg?: number;
+  max?: number;
+  // "engine" marks an engine-wide batch aggregate; the note then carries the
+  // full caveat text. The provider states semantics - the UI never infers.
+  scope?: string;
+  // e.g. spec_accept_percent attaches to the generation_tps cell.
+  attach_to?: string;
+  note?: string;
+}
+
+export interface EndpointRuntimeMetrics {
+  sampled_at?: string;
+  available_since?: string;
+  stale?: boolean;
+  // Backend dialect the values were parsed for (vllm | llamacpp | radiance).
+  kind?: string;
+  // Who produced the numbers: "sampler" (olla scraping the engine) or
+  // "ollametrics" (the canonical InfluxDB series). Optional so payloads from
+  // older backends still parse.
+  source?: 'sampler' | 'ollametrics';
+  // Seconds between the newest underlying sample and the response.
+  source_age_s?: number;
+  // Absent metric = the backend does not publish that signal.
+  metrics?: EnvelopeMetric[];
+}
+
+// --- /internal/ui/config.json (dashboard manifest) ---------------------
+
+export interface UIConfigSection {
+  id: string;
+  enabled: boolean;
+  reason?: string;
+}
+
+export interface UIConfigMetricColumn {
+  key: string;
+  label: string;
+  unit: string;
+  window: boolean;
+}
+
+export interface UIConfig {
+  schema: number;
+  metrics_source: 'sampler' | 'influx' | string;
+  poll_ms: { overview: number; endpoints: number; models: number; observe: number };
+  sections: UIConfigSection[];
+  runtime_metric_columns: UIConfigMetricColumn[];
+}
+
+// --- /internal/ui/observe.json (power / cost / gpu) --------------------
+
+export interface ObservePowerRow {
+  target: string;
+  endpoint: string;
+  device_name?: string | null;
+  node?: string | null;
+  watts?: number | null;
+  temp_c?: number | null;
+  meter_valid?: number | null;
+  overpower?: number | null;
+  output_on?: number | null;
+  age_s?: number | null;
+}
+
+export interface ObserveCostEntry {
+  cost?: number | null;
+  energy_kwh?: number | null;
+  tokens?: number | null;
+  period_status?: string | null;
+  period_start?: string | null;
+}
+
+export interface ObserveCost {
+  currency: string;
+  hour: Record<string, ObserveCostEntry>;
+  day: Record<string, ObserveCostEntry>;
+}
+
+export interface ObserveGpuRow {
+  gpu: string;
+  node?: string | null;
+  busy_percent?: number | null;
+  mem_activity_percent?: number | null;
+  socket_power_watts?: number | null;
+  edge_temp_c?: number | null;
+  vram_used_bytes?: number | null;
+  vram_total_bytes?: number | null;
+  present?: number | null;
+  age_s?: number | null;
+}
+
+export interface ObserveResponse {
+  schema: number;
+  generated_at: string;
+  source: string;
+  power: ObservePowerRow[];
+  cost: ObserveCost;
+  gpus: ObserveGpuRow[];
 }
 
 export interface EndpointStatusResponse {

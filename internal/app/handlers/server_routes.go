@@ -110,7 +110,10 @@ func (a *Application) mountDashboard() {
 	if !a.Config.Dashboard.Enabled {
 		return
 	}
-	dashboard.RegisterRoutes(a.routeRegistry, a.Config.Dashboard, a.logger, dashboardHandlerFactory(), a.throttles)
+	dashboard.RegisterRoutes(a.routeRegistry, a.Config.Dashboard, a.logger, dashboardHandlerFactory(), a.throttles, map[string]http.Handler{
+		uiConfigRoute:  http.HandlerFunc(a.uiConfigHandler),
+		uiObserveRoute: http.HandlerFunc(a.observeHandler),
+	})
 }
 
 // translatorRejectWriter returns the writer that formats a security rejection in the

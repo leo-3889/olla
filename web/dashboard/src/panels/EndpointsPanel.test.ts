@@ -206,3 +206,330 @@ describe('EndpointsPanel banner isolation from panel dim', () => {
     expect(banner!.parentElement).toBe(panel);
   });
 });
+
+
+describe("EndpointsPanel runtime metrics", () => {
+  // The panel consumes the self-describing envelope: every presentation
+  // semantic (unit, window caveat, engine note, attachment, source) arrives
+  // in the payload. Fixtures below are the shapes the Go providers emit.
+  const BATCH_NOTE = "Engine throughput (batch-aggregate across concurrent requests), not per-stream speed";
+  const CACHE_NOTE = "avg over last 10m";
+
+  // Cells in column order (DEFAULT_UI_CONFIG): Gen, Prefill, Cache hit, KV used, Queue depth.
+  function cell(index: number): { text: string; title: string } {
+    const el = document.querySelectorAll(".runtime-metric")[index]!;
+    return {
+      text: el.textContent!.replace(/\s+/g, " ").trim(),
+      title: el.getAttribute("title") ?? "",
+    };
+  }
+
+  const base = {
+    status: "healthy",
+    priority: 100,
+    success_rate: "99.0%",
+    request_count: 40,
+    model_count: 1,
+    min_latency_ms: 10,
+    max_latency_ms: 90,
+  };
+
+  it("renders fresh current/avg/max values and hides stale or unsupported values", async () => {
+    component = mount(EndpointsPanel, { target: document.body });
+    flushSync();
+
+    await refreshWithEndpoint({
+      ...base,
+      name: "runtime-node",
+      type: "vllm",
+      runtime_metrics: {
+        source: "sampler",
+        sampled_at: "2026-09-24T20:00:00Z",
+        available_since: "2026-09-24T14:32:10Z",
+        metrics: [
+          { key: "generation_tps", unit: "tok_s", current: 70.06, avg: 62, max: 91 },
+          { key: "prefill_tps", unit: "tok_s", current: 502, avg: 440, max: 690 },
+          { key: "cache_hit_percent", unit: "percent", current: 98.1, avg: 96.8, note: CACHE_NOTE },
+          { key: "kv_cache_usage_percent", unit: "percent", current: 37 },
+          { key: "queue_depth", unit: "count", current: 6 },
+          { key: "requests_running", unit: "count", current: 3 },
+          { key: "spec_accept_percent", unit: "percent", current: 61.4, avg: 60.2, attach_to: "generation_tps" },
+        ],
+      },
+    });
+
+    expect([...document.querySelectorAll(".runtime-current")].map((el) => el.textContent!.trim())).toEqual([
+      "70.1 tok/s", "502 tok/s", "98.1%", "37.0%", "6",
+    ]);
+    expect([...document.querySelectorAll(".runtime-summary")].map((el) => el.textContent!.trim())).toEqual([
+      "avg 62 · max 91", "avg 440 · max 690", "avg 96.8%", "3 running",
+    ]);
+    expect(document.querySelector(".runtime-metric")!.getAttribute("title")).toContain("avg/max over last 10m");
+
+    await refreshWithEndpoint({
+      ...base,
+      name: "runtime-node-stale",
+      type: "vllm",
+      runtime_metrics: {
+        source: "sampler",
+        stale: true,
+        sampled_at: "2026-09-24T20:00:00Z",
+        metrics: [
+          { key: "generation_tps", unit: "tok_s", current: 70.06 },
+          { key: "queue_depth", unit: "count", current: 6 },
+          { key: "requests_running", unit: "count", current: 3 },
+          { key: "spec_accept_percent", unit: "percent", current: 61.4 },
+        ],
+      },
+    });
+    expect([...document.querySelectorAll(".runtime-metric .dash")]).toHaveLength(5);
+    expect(document.querySelector(".runtime-metric")!.getAttribute("title")).toContain("stale");
+  });
+
+  it("shows queue depth with its running sub-line and folds spec acceptance into the Gen tooltip", async () => {
+    component = mount(EndpointsPanel, { target: document.body });
+    flushSync();
+
+    await refreshWithEndpoint({
+      ...base,
+      name: "radiance-qfn",
+      type: "radiance",
+      runtime_metrics: {
+        source: "sampler",
+        kind: "radiance",
+        sampled_at: "2026-10-05T09:00:00Z",
+        available_since: "2026-10-05T08:00:00Z",
+        metrics: [
+          { key: "generation_tps", unit: "tok_s", current: 288.4, note: BATCH_NOTE },
+          { key: "prefill_tps", unit: "tok_s", current: 1904, note: BATCH_NOTE },
+          { key: "kv_cache_usage_percent", unit: "percent", current: 96.5 },
+          { key: "queue_depth", unit: "count", current: 8 },
+          { key: "requests_running", unit: "count", current: 7 },
+          { key: "spec_accept_percent", unit: "percent", current: 55.3, avg: 54.1, attach_to: "generation_tps" },
+        ],
+      },
+    });
+
+    expect(cell(4).text).toBe("8 7 running");
+    expect(cell(4).title).toContain("Queue depth");
+    expect(cell(4).title).toContain("sampled 2026-10-05T09:00:00Z");
+
+    // The batch caveat belongs on both rate cells; the acceptance figure only
+    // explains generation, so it never rides on prefill or the other columns.
+    expect(cell(0).title).toContain(BATCH_NOTE);
+    expect(cell(0).title).toContain("Speculative decode acceptance: 55.3% (avg 54.1)");
+    expect(cell(1).title).toContain(BATCH_NOTE);
+    expect(cell(1).title).not.toContain("Speculative decode");
+    expect(cell(2).title).not.toContain(BATCH_NOTE);
+    expect(cell(3).title).not.toContain(BATCH_NOTE);
+  });
+
+  it("drops the average from the acceptance tooltip when the engine reports a gauge only", async () => {
+    component = mount(EndpointsPanel, { target: document.body });
+    flushSync();
+
+    await refreshWithEndpoint({
+      ...base,
+      name: "radiance-gauge",
+      type: "radiance",
+      runtime_metrics: {
+        source: "sampler",
+        kind: "radiance",
+        sampled_at: "2026-10-05T09:00:00Z",
+        metrics: [
+          { key: "generation_tps", unit: "tok_s", current: 300, note: BATCH_NOTE },
+          { key: "spec_accept_percent", unit: "percent", current: 55.3, attach_to: "generation_tps" },
+        ],
+      },
+    });
+
+    expect(cell(0).title).toContain("Speculative decode acceptance: 55.3%");
+    expect(cell(0).title).not.toContain("(avg");
+  });
+
+  it("keeps the batch caveat without an acceptance figure the engine never emitted", async () => {
+    component = mount(EndpointsPanel, { target: document.body });
+    flushSync();
+
+    await refreshWithEndpoint({
+      ...base,
+      name: "radiance-no-spec",
+      type: "radiance",
+      runtime_metrics: {
+        source: "sampler",
+        kind: "radiance",
+        sampled_at: "2026-10-05T09:00:00Z",
+        metrics: [
+          { key: "generation_tps", unit: "tok_s", current: 300, note: BATCH_NOTE },
+          { key: "queue_depth", unit: "count", current: 0 },
+        ],
+      },
+    });
+
+    expect(cell(0).title).toContain(BATCH_NOTE);
+    expect(cell(0).title).not.toContain("Speculative decode");
+    // A genuine zero backlog stays visible rather than collapsing to a dash.
+    expect(cell(4).text).toBe("0 — running");
+  });
+
+  it("dashes the queue column for a backend whose metrics carry no queue gauge", async () => {
+    component = mount(EndpointsPanel, { target: document.body });
+    flushSync();
+
+    await refreshWithEndpoint({
+      ...base,
+      name: "halogen-395",
+      type: "vllm",
+      runtime_metrics: {
+        source: "sampler",
+        sampled_at: "2026-10-05T09:00:00Z",
+        available_since: "2026-10-05T08:00:00Z",
+        metrics: [
+          { key: "generation_tps", unit: "tok_s", current: 47.2, avg: 44, max: 51 },
+          { key: "cache_hit_percent", unit: "percent", current: 99.6, avg: 98.4, note: CACHE_NOTE },
+        ],
+      },
+    });
+
+    expect(cell(4).text).toBe("—");
+    expect(cell(4).title).toContain("Queue depth: unsupported by this backend");
+    expect(cell(4).title).toContain("source sampler");
+    // A single-stream backend must not inherit the batch caveat either.
+    expect(cell(0).title).not.toContain(BATCH_NOTE);
+    expect(cell(0).title).not.toContain("Speculative decode");
+  });
+
+  it("dashes the queue column when the backend reports no runtime metrics at all", async () => {
+    component = mount(EndpointsPanel, { target: document.body });
+    flushSync();
+
+    await refreshWithEndpoint({ ...base, name: "ollama-1", type: "ollama" });
+
+    expect(cell(4).text).toBe("—");
+    expect(cell(4).title).toBe("Queue depth: unsupported by this backend");
+  });
+
+  it("hides queue depth and acceptance while the scrape is stale", async () => {
+    component = mount(EndpointsPanel, { target: document.body });
+    flushSync();
+
+    await refreshWithEndpoint({
+      ...base,
+      name: "radiance-stale",
+      type: "radiance",
+      runtime_metrics: {
+        source: "sampler",
+        kind: "radiance",
+        stale: true,
+        sampled_at: "2026-10-05T08:55:00Z",
+        metrics: [
+          { key: "generation_tps", unit: "tok_s", current: 288.4, note: BATCH_NOTE },
+          { key: "queue_depth", unit: "count", current: 8 },
+          { key: "requests_running", unit: "count", current: 7 },
+          { key: "spec_accept_percent", unit: "percent", current: 55.3, avg: 54.1, attach_to: "generation_tps" },
+        ],
+      },
+    });
+
+    expect(cell(4).text).toBe("—");
+    expect(cell(4).title).toContain("stale (last sampled 2026-10-05T08:55:00Z)");
+    // Frozen figures are never presented as live measurements.
+    expect(cell(0).title).toContain("stale");
+    expect(cell(0).title).not.toContain("Speculative decode");
+  });
+
+  it("surfaces the provider's own caveat and provenance stamp", async () => {
+    component = mount(EndpointsPanel, { target: document.body });
+    flushSync();
+
+    // The ollametrics provider labels engine gauges with their derivation
+    // and identifies itself with the age of the newest underlying point.
+    const influxNote = "engine rate gauge, 1m windows over 10m (ollametrics)";
+    await refreshWithEndpoint({
+      ...base,
+      name: "influx-fed",
+      type: "radiance",
+      runtime_metrics: {
+        source: "ollametrics",
+        source_age_s: 12,
+        sampled_at: "2026-10-13T09:00:00Z",
+        metrics: [
+          { key: "generation_tps", unit: "tok_s", current: 310.5, avg: 300, max: 320, note: influxNote },
+        ],
+      },
+    });
+
+    expect(cell(0).title).toContain(influxNote);
+    expect(cell(0).title).toContain("source ollametrics (12s old)");
+    // The stamp rides every cell of the payload, not just the reported one.
+    expect(cell(1).title).toContain("source ollametrics (12s old)");
+  });
+
+  it("marks fresh-but-absent gauge columns unsupported instead of implying hidden samples", async () => {
+    component = mount(EndpointsPanel, { target: document.body });
+    flushSync();
+
+    await refreshWithEndpoint({
+      ...base,
+      name: "halogen-no-queue",
+      type: "halogen",
+      runtime_metrics: {
+        source: "sampler",
+        kind: "llamacpp",
+        sampled_at: "2026-10-05T09:00:00Z",
+        metrics: [
+          { key: "cache_hit_percent", unit: "percent", current: 55, avg: 50, note: CACHE_NOTE },
+        ],
+      },
+    });
+    // Fresh payload, no KV gauge published: the tooltip must say so plainly.
+    expect(cell(3).text).toBe("—");
+    expect(cell(3).title).toContain("KV-cache utilisation: unsupported by this backend");
+    expect(cell(2).title).toContain("avg over last 10m");
+    expect(cell(2).title).not.toContain("max");
+  });
+
+  it("renders an unknown unit as a bare number instead of throwing", async () => {
+    component = mount(EndpointsPanel, { target: document.body });
+    flushSync();
+
+    await refreshWithEndpoint({
+      ...base,
+      name: "future-backend",
+      type: "vllm",
+      runtime_metrics: {
+        sampled_at: "2026-10-05T09:00:00Z",
+        metrics: [
+          { key: "generation_tps", unit: "bytes_per_s", current: 1234 },
+        ],
+      },
+    });
+
+    // The metric's own unit wins over the column's declared unit, and an
+    // unrecognised unit degrades to the bare number instead of throwing.
+    expect(cell(0).text).toBe("1234");
+    expect(cell(0).title).not.toContain("source ");
+  });
+
+  it("renders an ms-unit metric with the latency format", async () => {
+    component = mount(EndpointsPanel, { target: document.body });
+    flushSync();
+
+    await refreshWithEndpoint({
+      ...base,
+      name: "latency-backend",
+      type: "vllm",
+      runtime_metrics: {
+        sampled_at: "2026-10-05T09:00:00Z",
+        metrics: [
+          { key: "generation_tps", unit: "ms", current: 412, avg: 500, max: 1500 },
+        ],
+      },
+    });
+
+    // No panel edit was needed: a dialect that declares a latency column
+    // gets the shared duration formatting (412ms, and 1.5s for the max).
+    expect(cell(0).text).toContain("412ms");
+    expect(cell(0).text).toContain("avg 500ms · max 1.5s");
+  });
+});

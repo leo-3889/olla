@@ -329,8 +329,13 @@ func TestExpandWithFile(t *testing.T) {
 	t.Run("file_permission_denied", func(t *testing.T) {
 		// chmod-based permission denial is not reliably enforceable on Windows.
 		// The process owner can still read files they own regardless of mode bits.
+		// Root ignores mode bits the same way, which is the case inside the
+		// test containers (the gate images run as root).
 		if isWindows() {
 			t.Skip("permission simulation not supported on Windows")
+		}
+		if os.Geteuid() == 0 {
+			t.Skip("permission simulation not enforced for root")
 		}
 		f := writeTemp(t, "secret")
 		require.NoError(t, os.Chmod(f, 0o000))

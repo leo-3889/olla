@@ -22,9 +22,11 @@ function applyModeToDom(mode: ThemeMode): void {
 }
 
 function readStored(): ThemeMode {
-  // Storage throws in private windows and when site data is blocked.
+  if (typeof localStorage === 'undefined') return 'auto';
   try {
-    if (typeof localStorage === 'undefined') return 'auto';
+    // Safari private mode / storage denial makes even the localStorage GETTER
+    // or getItem throw SecurityError - a typeof guard does not cover that, and
+    // an uncaught throw here kills module init and white-screens the SPA.
     const v = localStorage.getItem(STORAGE_KEY);
     return MODES.includes(v as ThemeMode) ? (v as ThemeMode) : 'auto';
   } catch {
@@ -99,21 +101,27 @@ class ThemeStore {
   set(mode: ThemeMode): void {
     if (!MODES.includes(mode)) return;
     this.#mode = mode;
-    try {
-      if (typeof localStorage !== 'undefined') {
+    // DOM first: the visible theme must change even when persistence is
+    // denied (private mode), and a throwing localStorage.setItem used to
+    // escape AFTER #mode flipped but BEFORE applyModeToDom - leaving the
+    // reactive state, the DOM and the caller's click handler all disagreeing.
+    applyModeToDom(mode);
+    if (typeof localStorage !== 'undefined') {
+      try {
         if (mode === 'auto') localStorage.removeItem(STORAGE_KEY);
         else localStorage.setItem(STORAGE_KEY, mode);
+      } catch {
+        // Session-only theme for this client; nothing else to do.
       }
-    } catch {
-      // Unpersisted choice still applies for this session.
     }
-    applyModeToDom(mode);
   }
 
-  /** Detaches the matchMedia listener. Call on app teardown to avoid leaks. */
-  destroy(): void {
-    this.#media?.removeEventListener('change', this.#onSystemChange);
-  }
+  // No destroy(): this is a module singleton that outlives every component,
+  // and App.svelte used to call destroy() from its $effect cleanup - which
+  // runs on dev HMR / unmount while nothing ever re-armed the listener, so
+  // the OS-follow feature silently died for the rest of the page's life.
+  // The listener lives exactly as long as the singleton: the page.'
+
 }
 
 export const theme: ThemeStore = new ThemeStore();

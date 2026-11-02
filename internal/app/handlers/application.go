@@ -153,6 +153,16 @@ type Application struct {
 	// throttles holds every rejection-log throttle the application created, so shutdown
 	// can report the tail of a flood that stopped just before it.
 	throttles *logger.ThrottleSet
+	// runtimeMetrics serves the engine-runtime tiles of the dashboard and
+	// the Prometheus re-export. It deliberately lives at the handler
+	// boundary: dashboard and Prometheus callers share one cached view, and
+	// no browser ever needs network access to a backend directly. Backed by
+	// the in-process sampler or, with metrics_source.mode=influx, by the
+	// ollametrics InfluxDB reader.
+	runtimeMetrics runtimeMetricsProvider
+	// observe serves power/cost/GPU data for the dashboard; non-nil only
+	// in influx mode (only that backend holds the data).
+	observe *observeCollector
 	// evaluator computes the overall system status for /internal/status. It is
 	// built from the health config (host or model mode) so the handler stays a
 	// thin dispatcher over the verdict.
@@ -249,7 +259,7 @@ func NewApplication(
 	// The Factory.GetAnthropicSupport method provides the required functionality
 	profileLookup := profileFactory
 
-	return &Application{
+	app := &Application{
 		Config:             cfg,
 		logger:             logger,
 		proxyService:       proxyService,
@@ -272,7 +282,9 @@ func NewApplication(
 		server:             server,
 		errCh:              make(chan error, 1),
 		StartTime:          time.Now(),
-	}, nil
+	}
+	app.runtimeMetrics, app.observe = newRuntimeMetricsSource(ctx, cfg, repository, logger)
+	return app, nil
 }
 
 // GetRouteRegistry returns the route registry for wiring up routes

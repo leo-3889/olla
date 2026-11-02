@@ -1,5 +1,6 @@
 import { flushSync, mount, unmount } from 'svelte';
 import { describe, it, expect, afterEach, beforeAll, vi } from 'vitest';
+import { endpoints } from '../lib/stores/endpoints.svelte';
 import { models } from '../lib/stores/models.svelte';
 import { navigation } from '../lib/stores/navigation.svelte';
 import { stableId } from '../lib/dom-id';
@@ -30,14 +31,17 @@ beforeAll(() => {
 
 // The shared jump helper now consults endpoints.hasData before DOM-polling for
 // the target row (cold deep-link wait). These tests pre-plant the row and
-// exercise the fast path, so report hasData=true to bypass the cold wait.
-vi.mock('../lib/stores/endpoints.svelte', () => ({
-  endpoints: {
-    get hasData() {
-      return true;
-    },
-  },
-}));
+// exercise the fast path, so the store is given one successful poll to make
+// hasData true. A vi.mock of the store would not do it: `vi.mock` intercepts
+// nothing under the Bun runtime the repo gates on, so the tests would drive the
+// real singleton while believing they drove a stub with data.
+async function primeEndpoints(): Promise<void> {
+  global.fetch = vi.fn(async () =>
+    jsonResponse({ endpoints: [], total_count: 0, healthy_count: 0, routable_count: 0 })
+  );
+  endpoints.refresh();
+  await vi.waitFor(() => expect(endpoints.hasData).toBe(true));
+}
 
 let component: ReturnType<typeof mount> | undefined;
 afterEach(() => {
@@ -158,6 +162,8 @@ describe('ModelsPanel endpoint pill click-through', () => {
     const pills = [...document.querySelectorAll<HTMLButtonElement>('button.pill-link')];
     expect(pills.length).toBe(2);
 
+    await primeEndpoints();
+
     // Click the second pill (sid-bbb). The jump must target idB, NOT idA - a
     // name-keyed lookup would resolve both to whichever row sorts first.
     pills[1]!.click();
@@ -216,6 +222,7 @@ describe('ModelsPanel endpoint pill click-through', () => {
 
     const pills = [...document.querySelectorAll<HTMLButtonElement>('button.pill-link')];
     expect(pills.length).toBe(2);
+    await primeEndpoints();
 
     // Click BEFORE the target row exists - mirroring the first-nav race where
     // EndpointsPanel's fetch hasn't resolved yet.

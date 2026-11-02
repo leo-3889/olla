@@ -5,7 +5,10 @@
 import type { StatusResponse } from '../types';
 import { createPollStore } from './poll-store.svelte';
 import { history } from './history.svelte';
+import { bootstrap } from './bootstrap.svelte';
 
+// Fallback cadence; the live cadence follows dashboard.polling through the
+// bootstrap manifest and is re-read on every re-arm.
 const OVERVIEW_INTERVAL_MS = 5000;
 
 // Data endpoint (not a SPA asset), so it lives at /internal/status regardless
@@ -16,7 +19,7 @@ const URL = '/internal/status';
 export const overview = createPollStore<StatusResponse>({
   name: 'overview',
   url: URL,
-  intervalMs: OVERVIEW_INTERVAL_MS,
+  intervalMs: () => bootstrap.config.poll_ms.overview || OVERVIEW_INTERVAL_MS,
   onTick: (_data, ok) => {
     if (ok) {
       // overview.data is the live snapshot on both paths: just-set on 200,

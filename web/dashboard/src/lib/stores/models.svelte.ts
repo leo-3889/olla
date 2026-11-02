@@ -9,6 +9,7 @@
 // to a later change.
 import type { ModelStatusResponse } from '../types';
 import { createPollStore } from './poll-store.svelte';
+import { bootstrap } from './bootstrap.svelte';
 
 const MODELS_INTERVAL_MS = 15000;
 // detailed=true (not =1): the handler compares against the literal "true".
@@ -18,5 +19,5 @@ const STATUS_URL = '/internal/status/models?detailed=true&group=family';
 export const models = createPollStore<ModelStatusResponse>({
   name: 'models',
   url: STATUS_URL,
-  intervalMs: MODELS_INTERVAL_MS,
+  intervalMs: () => bootstrap.config.poll_ms.models || MODELS_INTERVAL_MS,
 });

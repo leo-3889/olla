@@ -38,6 +38,9 @@ type Config struct {
 	Server        ServerConfig        `yaml:"server"`
 	Proxy         ProxyConfig         `yaml:"proxy"`
 	Engineering   EngineeringConfig   `yaml:"engineering"`
+	// MetricsSource selects the dashboard runtime-metric backend
+	// (sampler | influx reading the ollametrics InfluxDB).
+	MetricsSource MetricsSourceConfig `yaml:"metrics_source,omitempty"`
 }
 
 // CorsConfig controls browser cross-origin access to the Olla API.
@@ -148,6 +151,27 @@ type DashboardConfig struct {
 	// /internal/metrics or poll /internal/health from hosts the policy would
 	// reject. The field ships now so that later change needs no config migration.
 	GateInternalAPI bool `yaml:"gate_internal_api"`
+
+	// Polling overrides the embedded dashboard's client poll intervals. Zero
+	// values mean "unset" and keep the dashboard's own defaults; the values
+	// are advisory (a client may be closed and reopened), so they are not
+	// validated beyond being non-negative.
+	Polling DashboardPollingConfig `yaml:"polling,omitempty"`
+}
+
+// DashboardPollingConfig carries optional poll-interval overrides for the
+// embedded dashboard. They are published verbatim (converted to ms) on
+// /internal/ui/config.json and the UI applies them to its stores.
+type DashboardPollingConfig struct {
+	// OverviewInterval is how often the overview/health poll runs (default 5s).
+	OverviewInterval time.Duration `yaml:"overview_interval,omitempty"`
+	// EndpointsInterval is how often the endpoints poll runs (default 5s).
+	EndpointsInterval time.Duration `yaml:"endpoints_interval,omitempty"`
+	// ModelsInterval is how often the models poll runs (default 15s).
+	ModelsInterval time.Duration `yaml:"models_interval,omitempty"`
+	// ObserveInterval is how often the power/cost/GPU rollups poll (default 10s).
+	// These are Influx rollup queries, so a much slower cadence is reasonable.
+	ObserveInterval time.Duration `yaml:"observe_interval,omitempty"`
 }
 
 // ParsedCIDRs returns the CIDR nets populated by AccessPolicyConfig.Validate.
@@ -306,7 +330,25 @@ type AuthConfig struct {
 	Type         string `yaml:"type,omitempty"`
 }
 
-// EndpointConfig holds configuration for an AI inference endpoint
+// RuntimeMetricsConfig opts an endpoint into Prometheus exposition sampling
+// of its own inference engine.
+type RuntimeMetricsConfig struct {
+	Enabled  bool          `yaml:"enabled"`
+	Interval time.Duration `yaml:"interval"`
+	Timeout  time.Duration `yaml:"timeout"`
+	// Kind pins the metric dialect ("vllm", "llamacpp", "radiance") for
+	// endpoints whose type alone does not identify it, e.g. a radiance
+	// backend registered as openai-compatible. Omit only when the type
+	// identifies the backend; there is no name heuristic - an endpoint
+	// whose type resolves to no known kind is tracked but not sampled.
+	Kind string `yaml:"kind,omitempty"`
+	// Path overrides the metrics scrape target path (default "/metrics").
+	// An absolute URL is honoured too, for engines serving metrics on a
+	// separate port.
+	Path string `yaml:"path,omitempty"`
+}
+
+// EndpointConfig holds configuration for an AI inference endpoint.
 type EndpointConfig struct {
 	ModelFilter *domain.FilterConfig `yaml:"model_filter,omitempty"`
 	Auth        *AuthConfig          `yaml:"auth,omitempty"`
@@ -314,15 +356,16 @@ type EndpointConfig struct {
 	// Priority uses a pointer so nil means "omitted in config" rather than explicitly zero.
 	// This lets applyEndpointDefaults distinguish "user set 0" from "user said nothing",
 	// since 0 is a valid, lower-than-default priority value.
-	Priority       *int          `yaml:"priority"`
-	URL            string        `yaml:"url"`
-	Name           string        `yaml:"name"`
-	Type           string        `yaml:"type"`
-	HealthCheckURL string        `yaml:"health_check_url"`
-	ModelURL       string        `yaml:"model_url"`
-	CheckInterval  time.Duration `yaml:"check_interval"`
-	CheckTimeout   time.Duration `yaml:"check_timeout"`
-	PreservePath   bool          `yaml:"preserve_path"`
+	Priority       *int                  `yaml:"priority"`
+	URL            string                `yaml:"url"`
+	Name           string                `yaml:"name"`
+	Type           string                `yaml:"type"`
+	HealthCheckURL string                `yaml:"health_check_url"`
+	ModelURL       string                `yaml:"model_url"`
+	CheckInterval  time.Duration         `yaml:"check_interval"`
+	CheckTimeout   time.Duration         `yaml:"check_timeout"`
+	RuntimeMetrics *RuntimeMetricsConfig `yaml:"runtime_metrics,omitempty"`
+	PreservePath   bool                  `yaml:"preserve_path"`
 }
 
 // LoggingConfig holds logging configuration

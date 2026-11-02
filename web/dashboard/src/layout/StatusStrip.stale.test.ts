@@ -1,89 +1,117 @@
 import { flushSync, mount, unmount } from 'svelte';
-import { describe, it, expect, afterEach, vi } from 'vitest';
-import type { SystemSummary, EndpointResponse, PollStatus } from '../lib/types';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { endpoints } from '../lib/stores/endpoints.svelte';
+import { overview } from '../lib/stores/overview.svelte';
+import StatusStrip from './StatusStrip.svelte';
+import type { EndpointResponse, SystemSummary } from '../lib/types';
 
 // C6 regression: StatusStrip read overview.data without consulting
-// overview.status, so during an outage it displayed confident numbers while
-// the panels below reported unreachable. The fix surfaces a stale/error
-// indicator on the strip when overview.status is 'stale' or 'error', reusing
-// the data-state pattern the panels already use.
+// overview.status, so during an outage it displayed confident numbers while the
+// panels below reported unreachable. The fix surfaces a stale/error indicator
+// on the strip when overview.status is 'stale' or 'error', reusing the
+// data-state pattern the panels already use.
 //
-// The overview store's `status` is closure-private with no setter, so this
-// test substitutes a controllable fake store to exercise the component's
-// reaction to each status value in isolation.
+// The strip is driven through the real overview store rather than a substituted
+// fake: `vi.mock` intercepts nothing under the Bun runtime the repo gates on
+// (`bun run test`), so a mocked store silently left every assertion looking at
+// the real one. Injecting payloads through global.fetch is how every other
+// panel test feeds the same singletons, and the store's own status machine then
+// produces the stale/error transitions the strip has to react to.
 
-interface Holder {
-  status: PollStatus;
-  sys: SystemSummary;
-  endpoints: EndpointResponse[];
+let component: ReturnType<typeof mount> | undefined;
+afterEach(() => {
+  if (component) unmount(component);
+  component = undefined;
+  document.body.innerHTML = '';
+  vi.useRealTimers();
+});
+
+function jsonResponse(body: unknown) {
+  return {
+    status: 200,
+    ok: true,
+    headers: { get: () => null },
+    json: async () => body,
+  };
 }
 
-const holder = vi.hoisted<Holder>(() => ({
-  status: 'ok',
-  sys: {
+// `version` doubles as the refresh sentinel: the store is a module singleton, so
+// waiting on status alone can resolve on the PREVIOUS test's payload.
+function system(version: string, overrides: Partial<SystemSummary> = {}): SystemSummary {
+  return {
     status: 'healthy',
     endpoints_up: '2/2',
     success_rate: '99.0%',
     avg_latency: '20ms',
     total_traffic: '0',
     uptime: '0s',
-    version: 'v0.0.29',
+    version,
     commit: 'abc',
-    start_time: new Date().toISOString(),
+    start_time: '2026-10-05T08:00:00Z',
     active_connections: 0,
     security_violations: 0,
     total_requests: 0,
     total_failures: 0,
     has_traffic: false,
     health_mode: 'host',
-  },
-  endpoints: [],
-}));
+    ...overrides,
+  };
+}
 
-vi.mock('../lib/stores/overview.svelte', () => ({
-  overview: {
-    get data() {
-      return { system: holder.sys, endpoints: holder.endpoints };
-    },
-    get status() {
-      return holder.status;
-    },
-  },
-}));
+function endpoint(name: string, status: string): EndpointResponse {
+  return {
+    name,
+    status,
+    url: `http://${name}:11434`,
+    id: `id-${name}`,
+    success_rate: '0%',
+    avg_latency: '0ms',
+    traffic: '0',
+    last_check: '',
+    next_check: '',
+    issues: '',
+    priority: 0,
+    connections: 0,
+    requests: 0,
+    min_latency_ms: 0,
+    max_latency_ms: 0,
+    models: { last_updated: '', count: 0 },
+  };
+}
 
-// The strip no longer reads the endpoints store (it was pausable, which is
-// what made the degraded reason go stale). Keep the mock minimal so a stray
-// reference inside the component surfaces as an explicit error rather than a
-// silent undefined.
-vi.mock('../lib/stores/endpoints.svelte', () => ({
-  endpoints: {
-    get data() {
-      throw new Error('StatusStrip must not read the endpoints store');
-    },
-  },
-}));
+async function pollSystem(sys: SystemSummary, endpointList: EndpointResponse[] = []): Promise<void> {
+  global.fetch = vi.fn(async () =>
+    jsonResponse({ timestamp: '2026-10-05T09:00:00Z', system: sys, endpoints: endpointList })
+  );
+  overview.refresh();
+  await vi.waitFor(() => expect(overview.data?.system.version).toBe(sys.version));
+  flushSync();
+}
 
-// Imported after the mocks are registered.
-const StatusStripModule = await import('./StatusStrip.svelte');
-const StatusStrip = StatusStripModule.default;
+// A dropped poll: the store keeps the last known-good payload and escalates
+// error -> stale once the last success ages past 3x the 5s overview interval.
+async function failPoll(): Promise<void> {
+  global.fetch = vi.fn(async () => {
+    throw new Error('ECONNREFUSED');
+  });
+  overview.refresh();
+  await vi.waitFor(() => expect(overview.status === 'stale' || overview.status === 'error').toBe(true));
+  flushSync();
+}
 
-let component: ReturnType<typeof mount> | undefined;
-afterEach(() => {
-  if (component) unmount(component);
-  document.body.innerHTML = '';
-  holder.status = 'ok';
-  holder.endpoints = [];
-  holder.sys.has_traffic = false;
-  holder.sys.total_requests = 0;
-  holder.sys.success_rate = '99.0%';
-  holder.sys.status = 'healthy';
-});
+function mountStrip(): void {
+  component = mount(StatusStrip, { target: document.body });
+  flushSync();
+}
 
 describe('StatusStrip staleness indicator', () => {
-  it('shows a stale indicator when overview.status is "stale" with data present', () => {
-    holder.status = 'stale';
-    component = mount(StatusStrip, { target: document.body });
-    flushSync();
+  it('shows a stale indicator when overview.status is "stale" with data present', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    await pollSystem(system('stale-probe'));
+    vi.advanceTimersByTime(20_000);
+    await failPoll();
+    expect(overview.status).toBe('stale');
+    mountStrip();
 
     const strip = document.querySelector('.status-strip');
     expect(strip).toBeTruthy();
@@ -92,22 +120,24 @@ describe('StatusStrip staleness indicator', () => {
     expect(strip!.getAttribute('data-state')).toBe('stale');
     // A visible stale marker is surfaced, not just an attribute.
     expect(strip!.querySelector('[data-stale]')!.textContent!.trim().length).toBeGreaterThan(0);
+    // The frozen figures stay on screen - greyed, not blanked.
+    expect(strip!.querySelector('.system-status dd')!.textContent).toContain('healthy');
   });
 
-  it('shows an error indicator when overview.status is "error"', () => {
-    holder.status = 'error';
-    component = mount(StatusStrip, { target: document.body });
-    flushSync();
+  it('shows an error indicator when overview.status is "error"', async () => {
+    await pollSystem(system('error-probe'));
+    await failPoll();
+    expect(overview.status).toBe('error');
+    mountStrip();
 
     const strip = document.querySelector('.status-strip')!;
     expect(strip.getAttribute('data-state')).toBe('error');
     expect(strip.querySelector('[data-stale]')).toBeTruthy();
   });
 
-  it('shows no staleness marker when overview.status is "ok"', () => {
-    holder.status = 'ok';
-    component = mount(StatusStrip, { target: document.body });
-    flushSync();
+  it('shows no staleness marker when overview.status is "ok"', async () => {
+    await pollSystem(system('ok-probe'));
+    mountStrip();
 
     const strip = document.querySelector('.status-strip')!;
     expect(strip.getAttribute('data-state')).toBeNull();
@@ -122,44 +152,55 @@ describe('StatusStrip degraded reason', () => {
   // the lifetime of the dashboard). When that field is absent the strip must
   // stay silent rather than fabricate a count.
 
-  it('derives the offline count from overview.data.endpoints (fresh payload)', () => {
-    holder.status = 'ok';
-    holder.sys.status = 'degraded';
-    holder.endpoints = [
-      { name: 'a', status: 'offline', url: 'u1', id: 'e1', success_rate: '0%', avg_latency: '0ms', traffic: '0', last_check: '', next_check: '', issues: '', priority: 0, connections: 0, requests: 0, min_latency_ms: 0, max_latency_ms: 0, models: { last_updated: '', count: 0 } },
-      { name: 'b', status: 'healthy', url: 'u2', id: 'e2', success_rate: '100%', avg_latency: '0ms', traffic: '0', last_check: '', next_check: '', issues: '', priority: 0, connections: 0, requests: 0, min_latency_ms: 0, max_latency_ms: 0, models: { last_updated: '', count: 0 } },
-      { name: 'c', status: 'critical', url: 'u3', id: 'e3', success_rate: '0%', avg_latency: '0ms', traffic: '0', last_check: '', next_check: '', issues: '', priority: 0, connections: 0, requests: 0, min_latency_ms: 0, max_latency_ms: 0, models: { last_updated: '', count: 0 } },
-    ];
-    component = mount(StatusStrip, { target: document.body });
-    flushSync();
+  it('derives the offline count from overview.data.endpoints (fresh payload)', async () => {
+    // The endpoints store is deliberately loaded FIRST with a different, larger
+    // offline count. A strip that still consulted it - directly or by accident -
+    // would report 5, so the exact figure proves the source is the overview
+    // payload. (It also replaces the old "throw if the endpoints store is read"
+    // guard, which only worked because of a store mock the runner ignores.)
+    global.fetch = vi.fn(async () =>
+      jsonResponse({
+        endpoints: [
+          endpoint('down-a', 'offline'),
+          endpoint('down-b', 'offline'),
+          endpoint('down-c', 'critical'),
+          endpoint('down-d', 'offline'),
+          endpoint('down-e', 'offline'),
+        ],
+        total_count: 5,
+        healthy_count: 0,
+        routable_count: 0,
+      })
+    );
+    endpoints.refresh();
+    await vi.waitFor(() => expect(endpoints.data?.endpoints).toHaveLength(5));
 
-    // Two of three endpoints are offline/critical; the strip surfaces that
-    // as the degraded reason, sourced from the always-fresh overview payload.
+    await pollSystem(
+      system('degraded-probe', { status: 'degraded' }),
+      [endpoint('a', 'offline'), endpoint('b', 'healthy'), endpoint('c', 'critical')]
+    );
+    mountStrip();
+
+    // Two of three overview endpoints are offline/critical; the strip surfaces
+    // that as the degraded reason.
     const reason = document.querySelector('.status-strip .status-reason');
     expect(reason?.textContent?.trim()).toBe('2 offline');
   });
 
-  it('suppresses the reason when the overview payload has no endpoints array', () => {
-    holder.status = 'ok';
-    holder.sys.status = 'degraded';
-    holder.endpoints = [];
-    component = mount(StatusStrip, { target: document.body });
-    flushSync();
+  it('suppresses the reason when the overview payload has no endpoints array', async () => {
+    await pollSystem(system('degraded-empty', { status: 'degraded' }));
+    mountStrip();
 
     // No endpoint data to count from - the strip stays quiet rather than
-    // show a fabricated or stale count.
+    // show a fabricated or stale count (the endpoints store above still holds
+    // five offline rows, so silence also proves it is not the fallback).
     const reason = document.querySelector('.status-strip .status-reason');
     expect(reason).toBeNull();
   });
 
-  it('stays quiet when degraded but every listed endpoint is healthy', () => {
-    holder.status = 'ok';
-    holder.sys.status = 'degraded';
-    holder.endpoints = [
-      { name: 'a', status: 'healthy', url: 'u1', id: 'e1', success_rate: '100%', avg_latency: '0ms', traffic: '0', last_check: '', next_check: '', issues: '', priority: 0, connections: 0, requests: 0, min_latency_ms: 0, max_latency_ms: 0, models: { last_updated: '', count: 0 } },
-    ];
-    component = mount(StatusStrip, { target: document.body });
-    flushSync();
+  it('stays quiet when degraded but every listed endpoint is healthy', async () => {
+    await pollSystem(system('degraded-healthy', { status: 'degraded' }), [endpoint('a', 'healthy')]);
+    mountStrip();
 
     const reason = document.querySelector('.status-strip .status-reason');
     expect(reason).toBeNull();
@@ -176,13 +217,9 @@ describe('StatusStrip response-rate cell', () => {
     return [...cells].find((c) => c.querySelector('dt')?.textContent?.trim() === 'Resp. rate') ?? null;
   }
 
-  it('renders a no-data dash when has_traffic is false', () => {
-    holder.status = 'ok';
-    holder.sys.has_traffic = false;
-    holder.sys.total_requests = 0;
-    holder.sys.success_rate = 'N/A';
-    component = mount(StatusStrip, { target: document.body });
-    flushSync();
+  it('renders a no-data dash when has_traffic is false', async () => {
+    await pollSystem(system('no-traffic', { has_traffic: false, total_requests: 0, success_rate: 'N/A' }));
+    mountStrip();
 
     const cell = respRateCell();
     expect(cell).toBeTruthy();
@@ -191,13 +228,9 @@ describe('StatusStrip response-rate cell', () => {
     expect(dd.textContent).not.toContain('N/A');
   });
 
-  it('renders the live success_rate when has_traffic is true', () => {
-    holder.status = 'ok';
-    holder.sys.has_traffic = true;
-    holder.sys.total_requests = 50;
-    holder.sys.success_rate = '97.5%';
-    component = mount(StatusStrip, { target: document.body });
-    flushSync();
+  it('renders the live success_rate when has_traffic is true', async () => {
+    await pollSystem(system('with-traffic', { has_traffic: true, total_requests: 50, success_rate: '97.5%' }));
+    mountStrip();
 
     const cell = respRateCell();
     expect(cell).toBeTruthy();

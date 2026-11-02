@@ -346,6 +346,7 @@ discovery:
 | `static.endpoints[].model_url` | string | No | Model discovery path (optional, uses profile default if not specified) |
 | `static.endpoints[].check_interval` | duration | No | Health check interval (default: `5s`) |
 | `static.endpoints[].check_timeout` | duration | No | Health check timeout (default: `2s`) |
+| `static.endpoints[].runtime_metrics` | object | No | Opt-in server-side `/metrics` sampler (see below) |
 | `static.endpoints[].model_filter` | object | No | Model filtering for this endpoint |
 | `static.endpoints[].auth` | object | No | Outbound authentication credentials (see below) |
 | `static.endpoints[].headers` | map[string]string | No | Custom outbound headers applied on every forwarded request |
@@ -452,6 +453,67 @@ Filter models at the endpoint level during discovery. See [Filter Concepts](filt
 |-------|------|-------------|
 | `model_filter.include` | []string | Models to include (glob patterns) |
 | `model_filter.exclude` | []string | Models to exclude (glob patterns) |
+
+#### Endpoint Runtime Metrics (`runtime_metrics:`)
+
+Olla can sample each backend's Prometheus `/metrics` endpoint server-side and surface a compact, capability-aware runtime view (generation/prefill throughput, prompt-cache hit rate, KV-cache utilisation) beside the endpoint. The browser never contacts the backend metrics endpoint directly; Olla caches one snapshot per endpoint and shares it between the dashboard API and the Olla Prometheus output. The data is also included in `/internal/status`, `/internal/status/endpoints`, and `/internal/metrics`, and status ETags change when the metrics change.
+
+This is **opt-in and disabled by default**. Add a `runtime_metrics` block to an endpoint to enable it:
+
+```yaml
+discovery:
+  static:
+    endpoints:
+      - url: "http://vllm.local:8000"
+        name: "vllm-qwen38"
+        type: "vllm"
+        runtime_metrics:
+          enabled: true     # required to turn the sampler on for this endpoint
+          interval: 10s     # how often to scrape this endpoint (default: 10s)
+          timeout: 3s       # per-scrape HTTP timeout (default: 3s)
+          kind: radiance    # metric dialect override (default: auto-detect)
+          path: /metrics    # scrape target path (or absolute URL)
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `runtime_metrics.enabled` | bool | Turn the sampler on for this endpoint. When the whole `runtime_metrics` block is absent the sampler is disabled for the endpoint. |
+| `runtime_metrics.interval` | duration | How often to scrape the endpoint's `/metrics` (default: `10s`). |
+| `runtime_metrics.timeout` | duration | Per-scrape HTTP timeout (default: `3s`). |
+| `runtime_metrics.kind` | string | Metric dialect: `vllm`, `llamacpp` (also accepted: `halogen`), or `radiance`. Pin it when the endpoint `type` alone does not identify the engine - e.g. a radiance backend registered as `openai-compatible`. Resolution is pinned kind, then endpoint type; there is **no name heuristic**. An endpoint that opts in but resolves to no known kind is tracked but not sampled, and every such endpoint (and every unrecognised kind value) is listed in a startup `WARNING`. |
+| `runtime_metrics.path` | string | Scrape target appended to the endpoint URL (default `/metrics`). An absolute URL is honoured too, for engines serving metrics on a separate port. |
+
+Scrapes inherit the endpoint's custom `headers` and resolved `auth` headers, so authenticated backends work without extra configuration.
+
+**Exposed signals.** Generation and incremental-prefill throughput report the current value (latest sample), the average over the 10-minute reporting window, and the maximum within that window. Cache hit reports the current value and the window average. KV-cache usage is current-only. Signals the backend does not publish are omitted (rendered as `—` in the dashboard and absent from Prometheus). While a backend's counters keep publishing but stop moving (an idle engine), the *current* throughput values are dropped rather than frozen: the last measured rate is not presented as a live one.
+
+**Stale-data policy.** A failed scrape marks the last good snapshot *stale* and keeps its timestamp; the stale snapshot is retained while the endpoint keeps a routable status (`healthy`, `busy`, or `warming` - the states that still receive traffic). Endpoints that are not routable, opted out, or no longer resolve to a dialect serve no snapshot at all. In the dashboard, stale values render as `—` with a tooltip carrying the last sample time, rather than displaying the last known numbers. An *availability epoch* restarts when the endpoint becomes unavailable or when the backend's counters reset, which clears the reporting window so averages never mix data across a restart.
+
+**Supported backends and metric mappings.** vLLM, Halogen/llama.cpp, and Radiance endpoints are sampled. The sampler reads the backend's Prometheus exposition at `<endpoint><runtime_metrics.path>` (default `/metrics`) and maps counters as follows:
+
+| Signal | vLLM | Halogen / llama.cpp | Radiance |
+|--------|------|---------------------|----------|
+| Generation throughput | `vllm:generation_tokens_total` / `vllm:request_decode_time_seconds_sum` | `llamacpp:tokens_predicted_total` / `llamacpp:tokens_predicted_seconds_total` | `radiance:decode_tokens_total` / `radiance:engine_step_seconds_decode_total` |
+| Prefill throughput | `vllm:request_prefill_kv_computed_tokens_sum` / `vllm:request_prefill_time_seconds_sum` | `llamacpp:prompt_tokens_total` / `llamacpp:prompt_seconds_total` | `radiance:prefill_tokens_total` / `radiance:engine_step_seconds_prefill_total` |
+| Cache hit | `vllm:prefix_cache_hits_total` / `vllm:prefix_cache_queries_total` | `halogen:prompt_tokens_cached_total` / (`halogen:prompt_tokens_cached_total` + `llamacpp:prompt_tokens_total`) | `vllm:gpu_prefix_cache_hit_rate` gauge (preferred - the series ollametrics canonicalises; `radiance:linear_prefix_cache_hit_rate` fallback) |
+| KV-cache usage | `vllm:kv_cache_usage_ratio` (or `vllm:kv_cache_usage_perc` / `vllm:gpu_cache_usage_perc`) | `llamacpp:kv_cache_usage_ratio` | `vllm:kv_cache_usage_*` (compat names) |
+| Queue depth | — | — | `radiance:http_queue_depth` |
+| Requests running | — | — | `vllm:num_requests_running` |
+| Speculative acceptance | — | — | `radiance:draft_acceptance_ratio` |
+
+Radiance throughput counters are engine-wide batch aggregates summed across all concurrent streams, not per-stream speed; its rate gauges (`radiance:decode_tokens_per_second`, `radiance:prefill_tokens_per_second`) are used only when the counter pair is absent from the exposition.
+
+Throughput and cache-hit rates require counter movement between two samples, so the first sample after enabling (or after an availability-epoch reset) provides only the current KV-cache usage.
+
+**Adding an engine dialect.** All backend-specific knowledge lives in
+`internal/app/handlers/runtime_dialect`: one file registering a `Dialect`
+(series-name projection, the columns that backend can fill, and whether its
+throughput is an engine-wide aggregate). The sampler, the runtime-metrics
+payload and the dashboard's column manifest read the registry, so a new
+dialect needs no sampler, handler or dashboard edits - a test-registered
+fake dialect is proven end to end by `runtime_metrics_fake_dialect_test.go`.
+Dialects may use the shared unit vocabulary (`tok_s`, `percent`, `count`,
+`ms`).
 
 #### Path Preservation
 
@@ -861,6 +923,63 @@ When enabled, displays:
 - Garbage collection metrics
 - Goroutine counts
 - Runtime information
+
+## Dashboard Metric Source
+
+The admin dashboard's engine-runtime tiles (throughput, cache hit rate, KV
+utilisation, queue depth, speculative acceptance) can be fed from two
+backends. Routing truth (health, models, traffic) always comes from olla
+itself; only these tiles move.
+
+```yaml
+metrics_source:
+  mode: influx            # "" or "sampler" (default) | "influx"
+  influx:
+    url: http://influxdb:8086      # docker-internal DNS; host-published ports are NOT supported
+    org: grafana_org_name
+    token_env: INFLUX_TOKEN        # NAME of the env var holding the API token
+    bucket: llm/metrics            # runtime + power series (ollametrics)
+    costs_bucket: llm/costs        # cost rollups (default: bucket)
+    stale_after: 60s               # tile staleness threshold on sample age
+    power_attribution:             # olla endpoint -> power_target_id measuring its box
+      halogen-395: plug-395
+      radiance-qfn: plug-box
+    gpu_endpoint: radiance-gpus    # Influx endpoint tag carrying GPU device series
+```
+
+| Key | Meaning |
+| --- | --- |
+| `mode` | `sampler`: olla scrapes each endpoint's `/metrics` itself (the `runtime_metrics` blocks per endpoint). `influx`: read the canonical `llm_runtime` series written by the ollametrics stack, so dashboard and Grafana show one truth. |
+| `influx.token_env` | The token is referenced by environment-variable name; it never lives in the YAML. Missing variable at startup logs an error and keeps the sampler - the gateway never fails to boot over metrics plumbing. |
+| `influx.power_attribution` | Maps endpoints to the meter measuring them; enables the dashboard Power section. Power is attributed per meter, never guessed from a device list. |
+| `influx.gpu_endpoint` | Endpoint tag of the GPU device targets in Influx; empty disables the dashboard GPU section. |
+| `influx.stale_after` | Seconds after which tiles render stale when the newest point for an endpoint is older (samples older than 15 minutes disappear entirely). |
+
+In `influx` mode the in-process sampler is not started, the Cost and GPU
+dashboard sections become available (they only exist in that backend), and
+the runtime payload additionally carries `source: "ollametrics"` plus
+`source_age_s` so consumers can see where each number came from and how old
+it is.
+
+### Dashboard Polling
+
+The embedded dashboard polls four stores on fixed default cadences. Each can
+be overridden; the values are published on `/internal/ui/config.json` and
+applied live (the next tick already uses the new cadence):
+
+```yaml
+dashboard:
+  polling:
+    overview_interval: 5s     # status/health poll (default 5s)
+    endpoints_interval: 5s    # endpoints + runtime metrics poll (default 5s)
+    models_interval: 15s      # models poll (default 15s)
+    observe_interval: 10s     # power/cost/GPU rollups (default 10s)
+```
+
+Omit any key to keep its default. These are advisory client poll intervals,
+not server-side load limits: the `observe` polls are Influx rollup queries,
+so a much slower cadence is reasonable on busy deployments.
+
 
 ## Environment Variables
 

@@ -110,12 +110,13 @@ func TestHostEvaluator_ZeroEndpoints_Critical(t *testing.T) {
 func TestHostEvaluator_CustomThresholds(t *testing.T) {
 	e := NewHostEvaluator()
 	all := mkEndpoints(3, 3)
-	// 92% success is healthy under the default 90/95, but with a stricter
-	// 95/99 it must be degraded.
-	in := hostInput(all, all, ports.ProxyStats{TotalRequests: 100, SuccessfulRequests: 92})
+	// 97% success is healthy under the default 90/95 (97 >= 95), but with a
+	// stricter 95/99 it lands inside the degraded band (95 <= 97 < 99); a
+	// rate under the critical bound would escalate to critical instead.
+	in := hostInput(all, all, ports.ProxyStats{TotalRequests: 100, SuccessfulRequests: 97})
 	in.Thresholds = config.SuccessRateThresholds{CriticalBelow: 95, DegradedBelow: 99}
 	res := e.Evaluate(context.Background(), in)
 	if res.Status != StatusDegraded {
-		t.Errorf("92%% success with 95/99 thresholds: got %q, want degraded", res.Status)
+		t.Errorf("97%% success with 95/99 thresholds: got %q, want degraded", res.Status)
 	}
 }
