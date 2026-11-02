@@ -21,23 +21,23 @@ type MetricsSourceConfig struct {
 // inline: the dashboard config file is mounted read-only into the container
 // and gets copied around for backups, while the secret stays in .env.
 type InfluxSourceConfig struct {
-	URL         string `yaml:"url,omitempty"`          // e.g. http://influxdb:8086 (docker-internal DNS)
-	Org         string `yaml:"org,omitempty"`          // Influx org name
-	TokenEnv    string `yaml:"token_env,omitempty"`    // name of the env var holding the API token
-	Bucket      string `yaml:"bucket,omitempty"`       // runtime/power bucket, e.g. llm/metrics
-	CostsBucket string `yaml:"costs_bucket,omitempty"` // cost rollups, e.g. llm/costs (default: Bucket)
-	// StaleAfter marks tiles stale once the newest Influx point for an
-	// endpoint is older than this (default 60s).
-	StaleAfter time.Duration `yaml:"stale_after,omitempty"`
 	// PowerAttribution maps olla endpoint names to the power_target_id of
 	// the meter that measures that endpoint's box. Power is attributed per
 	// meter, never guessed from a device list.
 	PowerAttribution map[string]string `yaml:"power_attribution,omitempty"`
+	URL              string            `yaml:"url,omitempty"`          // e.g. http://influxdb:8086 (docker-internal DNS)
+	Org              string            `yaml:"org,omitempty"`          // Influx org name
+	TokenEnv         string            `yaml:"token_env,omitempty"`    // name of the env var holding the API token
+	Bucket           string            `yaml:"bucket,omitempty"`       // runtime/power bucket, e.g. llm/metrics
+	CostsBucket      string            `yaml:"costs_bucket,omitempty"` // cost rollups, e.g. llm/costs (default: Bucket)
 	// GPUEndpoints are the Influx endpoint tags carrying GPU device series
 	// (one per GPU exporter target, e.g. [radiance-gpus, radiance-gpus-128]).
 	// Grouping is endpoint+gpu because device tags collide across boxes.
 	// Empty disables the GPU section.
 	GPUEndpoints []string `yaml:"gpu_endpoints,omitempty"`
+	// StaleAfter marks tiles stale once the newest Influx point for an
+	// endpoint is older than this (default 60s).
+	StaleAfter time.Duration `yaml:"stale_after,omitempty"`
 }
 
 const (

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/thushan/olla/internal/adapter/balancer"
@@ -958,9 +959,16 @@ func (a *Application) filterEndpointsByCapabilities(endpoints []*domain.Endpoint
 
 	capableModels := a.findCapableModels(requiredCapabilities, logger)
 	if len(capableModels) == 0 {
-		logger.Warn("No models found with required capabilities",
-			"model", profile.ModelName,
-			"capabilities", requiredCapabilities)
+		// Log the FIRST occurrence per model+capability key only: the
+		// registry verdict is static until the metadata changes, and this
+		// path runs on every request (strict tool-calling profiles made it
+		// the loudest WARN line on the box).
+		key := profile.ModelName + "|" + strings.Join(requiredCapabilities, ",")
+		if _, warned := a.capabilityWarned.LoadOrStore(key, struct{}{}); !warned {
+			logger.Warn("No models found with required capabilities (first occurrence; repeats suppressed until restart)",
+				"model", profile.ModelName,
+				"capabilities", requiredCapabilities)
+		}
 		return endpoints, nil
 	}
 

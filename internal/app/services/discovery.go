@@ -24,21 +24,27 @@ import (
 // are validated before the proxy accepts traffic, preventing "no healthy endpoints"
 // errors during the critical startup phase.
 type DiscoveryService struct {
+	statsCollector ports.StatsCollector
+	logger         logger.StyledLogger
+	registry       domain.ModelRegistry
+	endpointRepo   domain.EndpointRepository
+	loadReader     health.LoadReader
 	config         *config.DiscoveryConfig
 	registryConfig *config.ModelRegistryConfig
 	healthChecker  *health.HTTPHealthChecker
-	statsCollector ports.StatsCollector
 	statsService   *StatsService
-	logger         logger.StyledLogger
 	modelDiscovery *discovery.ModelDiscoveryService
-	registry       domain.ModelRegistry
-	endpointRepo   domain.EndpointRepository
 	// purgeDeadFn, when set, is called with the current routable endpoint list
 	// whenever a backend transitions to unhealthy. Wired by the proxy layer so sticky
 	// session entries for dead backends are evicted promptly rather than waiting for TTL.
 	// Stored atomically because SetPurgeDeadEndpointsFn is called from the main goroutine
 	// while the health-check goroutine may concurrently invoke the callback.
 	purgeDeadFn atomic.Pointer[func([]*domain.Endpoint)]
+	// Load-aware Busy grading params (proxy.busy_queue_depth). The health
+	// checker is created in Start(), and the app wiring calls SetLoadAwareness
+	// before any service starts, so the params are stashed here and applied
+	// when the checker comes into existence.
+	busyQueueDepth float64
 }
 
 // NewDiscoveryService creates a new discovery service
@@ -106,6 +112,10 @@ func (s *DiscoveryService) Start(ctx context.Context) error {
 	}
 
 	s.healthChecker = health.NewHTTPHealthCheckerWithDefaults(s.endpointRepo, s.logger)
+	if s.busyQueueDepth > 0 && s.loadReader != nil {
+		s.healthChecker.SetLoadAwareness(s.busyQueueDepth, s.loadReader)
+		s.logger.Info("Load-aware Busy grading armed", "queue_depth_threshold", s.busyQueueDepth)
+	}
 
 	// Evict sticky session entries for backends that LEFT THE FLEET. The purgeFn
 	// is nil when sticky sessions are disabled, making this callback a cheap
@@ -289,10 +299,14 @@ func (s *DiscoveryService) SetStatsService(statsService *StatsService) {
 	s.statsService = statsService
 }
 
-// SetLoadAwareness arms load-aware Busy grading on the health checker
-// (proxy.busy_queue_depth, reader = runtime-metrics sampler). threshold <= 0
-// is inert. Safe before Start(): the checker instance is fixed at construction.
+// SetLoadAwareness arms load-aware Busy grading (proxy.busy_queue_depth,
+// reader = runtime-metrics sampler). threshold <= 0 is inert. Safe at any
+// point in the lifecycle: the checker is created in Start(), which runs AFTER
+// the app wiring phase, so the params are stashed on the service and applied
+// when the checker is constructed (and immediately, if it already exists).
 func (s *DiscoveryService) SetLoadAwareness(threshold float64, reader health.LoadReader) {
+	s.busyQueueDepth = threshold
+	s.loadReader = reader
 	if s.healthChecker != nil {
 		s.healthChecker.SetLoadAwareness(threshold, reader)
 	}

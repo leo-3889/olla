@@ -26,12 +26,12 @@ const (
 // It is independent of HostEvaluator: it never reads the endpoint-fleet ratio,
 // only the healthy-endpoint set (to test model health) and the per-model stats.
 type ModelEvaluator struct {
-	models []string
+	lastStatus map[string]string
+	models     []string
 
 	// lastStatus remembers each model's previous entry status so a change is
 	// logged only on transition, not on every poll. Guarded by mu.
-	mu         sync.Mutex
-	lastStatus map[string]string
+	mu sync.Mutex
 }
 
 // NewModelEvaluator returns a model-mode evaluator for the given configured
@@ -44,9 +44,14 @@ func NewModelEvaluator(models []string) *ModelEvaluator {
 }
 
 // Mode reports the computation kind for the response's health_mode field.
-func (e *ModelEvaluator) Mode() string { return "model" }
+func (e *ModelEvaluator) Mode() string { return ModeModel }
 
-// Evaluate computes the model-mode verdict.
+// Evaluate computes the model-mode verdict: each configured model is scored
+// against endpoint health, alias resolution and its own success-rate
+// thresholds. The branches are the documented precedence table, so the
+// complexity is the specification, not incidental logic.
+//
+//nolint:gocognit // precedence table, not incidental logic - see above
 func (e *ModelEvaluator) Evaluate(ctx context.Context, in *Input) *Result {
 	// healthyURL is the set of endpoint URLs currently healthy. A configured
 	// model is healthy iff at least one of its hosting endpoints is in this set.

@@ -21,10 +21,10 @@ import (
 // transport tried - and this client is only ever pointed at the
 // docker-internal URL anyway.
 type fluxClient struct {
+	client  *http.Client
 	baseURL string
 	org     string
 	token   string
-	client  *http.Client
 }
 
 // fluxClientTimeout bounds one Flux round trip: the metrics provider runs

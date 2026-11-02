@@ -36,7 +36,8 @@ const (
 // Evaluator computes an overall system status verdict from a snapshot of the
 // current fleet, traffic, and (for model mode) the configured model list.
 type Evaluator interface {
-	// Mode reports which computation produced the verdict: "host" or "model".
+	// Mode reports which computation produced the verdict: ModeHost or
+	// ModeModel.
 	Mode() string
 	// Evaluate derives the verdict for the given snapshot.
 	Evaluate(ctx context.Context, in *Input) *Result
@@ -47,6 +48,22 @@ type Evaluator interface {
 // dispatcher stays uniform; each evaluator simply ignores the fields it does
 // not use.
 type Input struct {
+
+	// ModelRegistry maps model names to the endpoints that host them.
+	ModelRegistry domain.ModelRegistry
+
+	// Logger is used by ModelEvaluator for warn-on-change logging.
+	Logger logger.StyledLogger
+
+	// ModelStats is the per-model request stats keyed by the resolved backend
+	// model name. ModelEvaluator aggregates the configured models' traffic
+	// from here.
+	ModelStats map[string]ports.ModelStats
+
+	// AliasResolver expands a configured name that is a model_aliases key into
+	// its actual model names. Nil when no aliases are configured.
+	AliasResolver *registry.AliasResolver
+
 	// All and Healthy are the endpoint fleet as seen by the repository.
 	// HostEvaluator uses both; ModelEvaluator uses Healthy to test whether a
 	// configured model has at least one healthy host.
@@ -58,28 +75,16 @@ type Input struct {
 	// scoped to the configured models' own traffic, from ModelStats).
 	ProxyStats ports.ProxyStats
 
-	// ModelStats is the per-model request stats keyed by the resolved backend
-	// model name. ModelEvaluator aggregates the configured models' traffic
-	// from here.
-	ModelStats map[string]ports.ModelStats
-
-	// ModelRegistry maps model names to the endpoints that host them.
-	ModelRegistry domain.ModelRegistry
-
-	// AliasResolver expands a configured name that is a model_aliases key into
-	// its actual model names. Nil when no aliases are configured.
-	AliasResolver *registry.AliasResolver
-
 	// Thresholds are the success-rate thresholds from config, applied in both
 	// modes.
 	Thresholds config.SuccessRateThresholds
-
-	// Logger is used by ModelEvaluator for warn-on-change logging.
-	Logger logger.StyledLogger
 }
 
 // Result is a verdict plus the detail the handler surfaces on the response.
 type Result struct {
+	// SuccessRate is the success-rate percentage for the relevant scope, or nil
+	// when there is no traffic (undefined).
+	SuccessRate *float64
 	// Status is the overall verdict: StatusHealthy, StatusDegraded, or
 	// StatusCritical.
 	Status string
@@ -97,9 +102,6 @@ type Result struct {
 	// and has_traffic to render: in host mode (and in the model-mode fallback)
 	// it is false and the proxy-wide values are shown.
 	Scoped bool
-	// SuccessRate is the success-rate percentage for the relevant scope, or nil
-	// when there is no traffic (undefined).
-	SuccessRate *float64
 	// HasTraffic is true when the relevant scope has seen at least one request.
 	HasTraffic bool
 }
@@ -109,11 +111,11 @@ type Result struct {
 // references this type directly rather than redefining it.
 type ModelHealthEntry struct {
 	Name               string `json:"name"`
-	Status             string `json:"status"` // healthy | unhealthy | unknown
+	Status             string `json:"status"`       // healthy | unhealthy | unknown
+	SuccessRate        string `json:"success_rate"` // "N/A" when there is no traffic
 	TotalRequests      int64  `json:"total_requests"`
 	SuccessfulRequests int64  `json:"successful_requests"`
 	FailedRequests     int64  `json:"failed_requests"`
-	SuccessRate        string `json:"success_rate"` // "N/A" when there is no traffic
 }
 
 // severity ranks a system verdict for comparison: higher is worse. An
