@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"sort"
 
 	"github.com/thushan/olla/internal/core/domain"
 	"github.com/thushan/olla/internal/logger"
@@ -90,4 +91,14 @@ func (r *AliasResolver) ResolveEndpoints(
 	}
 
 	return endpointToModel, nil
+}
+
+// Names returns the sorted list of all configured alias names.
+func (r *AliasResolver) Names() []string {
+	names := make([]string, 0, len(r.aliases))
+	for name := range r.aliases {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }

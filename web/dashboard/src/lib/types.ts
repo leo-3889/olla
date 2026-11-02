@@ -476,6 +476,10 @@ export interface ShepherdResponse {
   available: boolean;
   enabled: boolean;
   dry_run: boolean;
+  /** False when the config file is unreadable (permissions, corruption).
+   *  The UI renders dashes in all config tiles and humanize cells.
+   *  Undefined is treated as true for rollout compatibility. */
+  config_readable?: boolean;
   config: ShepherdConfig;
   state: ShepherdState;
   editable: ShepherdEditable;

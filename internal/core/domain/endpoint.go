@@ -29,7 +29,14 @@ type Endpoint struct {
 	ModelUrl         *url.URL
 	ModelFilter      *FilterConfig
 	// Headers holds verbatim outbound headers copied from endpoint config at load time.
-	Headers               map[string]string `json:"-"`
+	Headers map[string]string `json:"-"`
+	// BusyQueueDepth is the per-host override of proxy.busy_queue_depth
+	// (nil = inherit the fleet default). Graded against the engine's
+	// admitted-request count at health-probe grade time.
+	BusyQueueDepth *int `json:"busy_queue_depth,omitempty"`
+	// DisableCircuitBreaker excludes this endpoint from the request-path
+	// circuit breaker (see config.EndpointConfig.DisableCircuitBreaker).
+	DisableCircuitBreaker bool `json:"disable_circuit_breaker,omitempty"`
 	Name                  string
 	Type                  string `json:"type,omitempty"`
 	Status                EndpointStatus
@@ -51,15 +58,11 @@ type Endpoint struct {
 	RuntimeMetricsKind string
 	// RuntimeMetricsPath overrides the metrics scrape path (an absolute URL
 	// is honoured too); empty means "/metrics".
-	RuntimeMetricsPath string
-	LastLatency        time.Duration
-	CheckInterval      time.Duration
-	CheckTimeout       time.Duration
-	Priority           int
-	// BusyQueueDepth is the per-host override of proxy.busy_queue_depth
-	// (nil = inherit the fleet default). Graded against the engine's
-	// admitted-request count at health-probe grade time.
-	BusyQueueDepth         *int `json:"busy_queue_depth,omitempty"`
+	RuntimeMetricsPath     string
+	LastLatency            time.Duration
+	CheckInterval          time.Duration
+	CheckTimeout           time.Duration
+	Priority               int
 	ConsecutiveFailures    int
 	BackoffMultiplier      int
 	RuntimeMetricsInterval time.Duration

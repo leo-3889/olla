@@ -68,6 +68,13 @@ func (s *Service) proxyToSingleEndpoint(ctx context.Context, w http.ResponseWrit
 	// closed); it is threaded through to the recorder calls below so a late
 	// result from a superseded probe can't clobber the replacement's state.
 	cb := s.GetCircuitBreaker(endpoint.Name)
+	if cb != nil && endpoint.DisableCircuitBreaker {
+		// Per-endpoint opt-out (disable_circuit_breaker: true): failures keep
+		// counting in stats/metrics, but this endpoint is never refused as
+		// "circuit breaker open". The health checker still demotes it, so the
+		// opt-out is not a blindfold - it only removes breaker refusals.
+		cb = nil
+	}
 	var attempt int64
 	if cb != nil {
 		var open bool

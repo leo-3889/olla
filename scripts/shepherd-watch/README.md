@@ -14,7 +14,8 @@ endpoint names matching `^[A-Za-z0-9._-]{1,128}$`, applied to EVERY node -
 the editable list is global, the YAML list is per-node).
 
 The dashboard writes them to `shepherd-overrides.json` - same directory as
-`shepherd-enabled` (env `OLLA_SHEPHERD_DIR`, default `/config/watch`),
+`shepherd-enabled` (env `OLLA_SHEPHERD_DIR`, default `/config/watch`; the
+enable flag resolves from this same knob, one directory for both),
 format exactly `{"wake_window_seconds": int, "keep_asleep_if_up": [...]}`,
 atomic tmp+rename. The watcher applies the file over `shepherd-watch.yaml`
 on every run: missing file = pure YAML; corrupt JSON and out-of-range values

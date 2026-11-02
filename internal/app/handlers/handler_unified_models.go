@@ -44,6 +44,7 @@ type UnifiedModelSummary struct {
 	Endpoints        []string           `json:"endpoints"`        // Endpoint names only
 	LoadedEndpoints  []string           `json:"loaded_endpoints"` // Where model is loaded (names only)
 	Capabilities     []string           `json:"capabilities"`
+	IsAlias          bool               `json:"is_alias,omitempty"`
 	ParameterCount   int64              `json:"parameter_count"`
 }
 
@@ -135,6 +136,15 @@ func (a *Application) unifiedModelsHandler(w http.ResponseWriter, r *http.Reques
 	// Note: When include_unavailable=true, the converter already includes
 	// availability info showing endpoint state. The filtering above ensures
 	// only models from healthy endpoints are shown when include_unavailable=false.
+
+	// Append alias entries (virtual models) with union-of-carriers capabilities.
+	// ponytail: when an endpoint filter is active, skip alias injection —
+	// alias rows span endpoints the client excluded; filtering them correctly
+	// requires per-carrier endpoint resolution, which is over-engineering for
+	// a rare query shape. The honest response is: no alias rows under filter.
+	if filters.Endpoint == "" {
+		response = a.appendAliasesToModelResponse(ctx, response, unifiedModels)
+	}
 
 	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 	w.WriteHeader(http.StatusOK)

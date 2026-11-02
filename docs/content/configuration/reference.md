@@ -364,6 +364,7 @@ discovery:
 | `static.endpoints[].model_filter` | object | No | Model filtering for this endpoint |
 | `static.endpoints[].auth` | object | No | Outbound authentication credentials (see below) |
 | `static.endpoints[].headers` | map[string]string | No | Custom outbound headers applied on every forwarded request |
+| `static.endpoints[].disable_circuit_breaker` | bool | No | Per-endpoint circuit-breaker opt-out (default: `false`). When `true`, refusals on this endpoint are never counted toward breaker trip: requests keep routing through persistent failures (the health checker still demotes). Intended for engines whose refusals are load signals, not faults (e.g. batch-1 NPU queues). |
 
 #### Endpoint Authentication (`auth:`)
 

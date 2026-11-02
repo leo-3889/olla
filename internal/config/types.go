@@ -326,9 +326,16 @@ func (s StickySessionConfig) Validate() error {
 // ProxyConfig holds proxy-specific configuration
 type ProxyConfig struct {
 	ProfileFilter *domain.FilterConfig `yaml:"profile_filter,omitempty"`
-	Engine        string               `yaml:"engine"`
-	LoadBalancer  string               `yaml:"load_balancer"`
-	Profile       string               `yaml:"profile"`
+
+	// LoadProbe arms the assignment-time occupancy probe used by
+	// proxy.load_balancer: "least-load". Off by default: with Enabled false, or
+	// with any other balancer, the gateway is byte-identical to a build without
+	// the feature - no probe round is ever issued. Boot-validated via
+	// LoadProbeConfig.Validate.
+	LoadProbe    LoadProbeConfig `yaml:"load_probe"`
+	Engine       string          `yaml:"engine"`
+	LoadBalancer string          `yaml:"load_balancer"`
+	Profile      string          `yaml:"profile"`
 	// RetryOnStatus arms backend-error failover: backend HTTP status codes
 	// (4xx/5xx, e.g. [429, 503]) that rotate the request to the next endpoint
 	// BEFORE the first response byte reaches the client. A rotated-away refusal
@@ -365,13 +372,6 @@ type ProxyConfig struct {
 	StreamBufferSize      int           `yaml:"stream_buffer_size"`
 	MaxRetries            int           `yaml:"max_retries"` // Deprecated: unused, set proxy.retry instead. TODO: Removal: v0.1.0
 	Retry                 RetryConfig   `yaml:"retry"`
-
-	// LoadProbe arms the assignment-time occupancy probe used by
-	// proxy.load_balancer: "least-load". Off by default: with Enabled false, or
-	// with any other balancer, the gateway is byte-identical to a build without
-	// the feature - no probe round is ever issued. Boot-validated via
-	// LoadProbeConfig.Validate.
-	LoadProbe LoadProbeConfig `yaml:"load_probe"`
 }
 
 // RetryConfig controls failover between endpoints for a single request. Only
@@ -413,8 +413,13 @@ func (p ProxyConfig) Validate() error {
 // Timeout is therefore ~250x the observed cost and only pays out when an
 // engine is wedged.
 type LoadProbeConfig struct {
-	// Enabled is the master switch: false = no probe round is ever issued.
-	Enabled bool `yaml:"enabled"`
+	// HealthPath is the endpoint path probed first (default "/health").
+	HealthPath string `yaml:"health_path"`
+	// ActiveField is the JSON number in that response counting admitted
+	// requests (default "in_flight": radiance's field). When the path or field
+	// is absent the probe falls back to the endpoint's /metrics gauges via the
+	// runtime dialect, and finally to the gateway's own connection count.
+	ActiveField string `yaml:"active_field"`
 	// Timeout bounds ONE endpoint probe. An endpoint that does not answer
 	// inside it is reported as unknown and ranks on the gateway's own live
 	// connection count, not on a fabricated zero.
@@ -424,13 +429,8 @@ type LoadProbeConfig struct {
 	// was still within its own allowance). Keep it small: this is added to the
 	// first request of a new conversation.
 	FanOutBudget time.Duration `yaml:"fan_out_budget"`
-	// HealthPath is the endpoint path probed first (default "/health").
-	HealthPath string `yaml:"health_path"`
-	// ActiveField is the JSON number in that response counting admitted
-	// requests (default "in_flight": radiance's field). When the path or field
-	// is absent the probe falls back to the endpoint's /metrics gauges via the
-	// runtime dialect, and finally to the gateway's own connection count.
-	ActiveField string `yaml:"active_field"`
+	// Enabled is the master switch: false = no probe round is ever issued.
+	Enabled bool `yaml:"enabled"`
 }
 
 // Validate rejects a load_probe configuration that cannot do its job. Boot
@@ -528,15 +528,21 @@ type EndpointConfig struct {
 	// Busy grading threshold on the engine's admitted-request count
 	// (processing + queued). Unset = inherit the global (default 8);
 	// 0 = this host is never graded Busy. Negative is a boot error.
-	BusyQueueDepth *int          `yaml:"busy_queue_depth,omitempty"`
-	URL            string        `yaml:"url"`
-	Name           string        `yaml:"name"`
-	Type           string        `yaml:"type"`
-	HealthCheckURL string        `yaml:"health_check_url"`
-	ModelURL       string        `yaml:"model_url"`
-	CheckInterval  time.Duration `yaml:"check_interval"`
-	CheckTimeout   time.Duration `yaml:"check_timeout"`
-	PreservePath   bool          `yaml:"preserve_path"`
+	BusyQueueDepth *int `yaml:"busy_queue_depth,omitempty"`
+	// DisableCircuitBreaker excludes THIS endpoint from the request-path
+	// circuit breaker: failures are still counted in stats, but requests are
+	// never refused with "circuit breaker open". Intended for endpoints that
+	// share a failure domain with bursty low-timeout clients (e.g. NPU models
+	// queued behind a batch-1 engine on the same port). Default false.
+	DisableCircuitBreaker bool          `yaml:"disable_circuit_breaker,omitempty"`
+	URL                   string        `yaml:"url"`
+	Name                  string        `yaml:"name"`
+	Type                  string        `yaml:"type"`
+	HealthCheckURL        string        `yaml:"health_check_url"`
+	ModelURL              string        `yaml:"model_url"`
+	CheckInterval         time.Duration `yaml:"check_interval"`
+	CheckTimeout          time.Duration `yaml:"check_timeout"`
+	PreservePath          bool          `yaml:"preserve_path"`
 }
 
 // LoggingConfig holds logging configuration

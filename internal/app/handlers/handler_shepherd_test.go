@@ -564,3 +564,73 @@ func TestShepherdConfigHandlerRejectsGET(t *testing.T) {
 		t.Errorf("GET on the config route = %d, want 405", rec.Code)
 	}
 }
+
+// --- sanitizeLastError defense-in-depth (finding 1c Go) ------------------
+
+func TestShepherdLastErrorSanitization(t *testing.T) {
+	cases := []struct{ name, raw, want string }{
+		{"clean message", "gpu-box-1: ValueError", "gpu-box-1: ValueError"},
+		{"MAC leaks suppressed", "gpu-box-1: ValueError: bad mac aa:bb:cc:dd:ee:ff",
+			"error detail suppressed (site data)"},
+		{"IPv4 leaks suppressed", "gpu-box-1: ValueError: connect to 192.168.1.50",
+			"error detail suppressed (site data)"},
+		{"empty passes", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sanitizeLastError(tc.raw)
+			if got != tc.want {
+				t.Errorf("sanitizeLastError(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestShepherdLastErrorCap200(t *testing.T) {
+	long := strings.Repeat("x", 300)
+	got := sanitizeLastError(long)
+	if len(got) != 200 {
+		t.Errorf("len = %d, want 200 (capped)", len(got))
+	}
+}
+
+func TestShepherdGETLastErrorSuppressedFromStateFile(t *testing.T) {
+	// State file carries a last_error with a MAC -> API must suppress it.
+	state := `{"last_error":"gpu-box-1: ValueError: bad mac aa:bb:cc:dd:ee:ff"}`
+	shepherdDirWith(t, shepherdFixtureYAML, state)
+	body := getShepherd(t, newShepherdApp())
+	if body.State.LastError != "error detail suppressed (site data)" {
+		t.Errorf("last_error = %q, want suppressed", body.State.LastError)
+	}
+}
+
+func TestShepherdGETCleanLastErrorPassesThrough(t *testing.T) {
+	state := `{"last_error":"gpu-box-1: TimeoutExpired"}`
+	shepherdDirWith(t, shepherdFixtureYAML, state)
+	body := getShepherd(t, newShepherdApp())
+	if body.State.LastError != "gpu-box-1: TimeoutExpired" {
+		t.Errorf("last_error = %q, want passthrough", body.State.LastError)
+	}
+}
+
+// --- config_readable (finding 6) -----------------------------------------
+
+func TestShepherdGETConfigReadableTrue(t *testing.T) {
+	shepherdDirWith(t, shepherdFixtureYAML, shepherdFixtureState)
+	body := getShepherd(t, newShepherdApp())
+	if !body.ConfigReadable {
+		t.Error("config_readable must be true when the YAML decodes successfully")
+	}
+}
+
+func TestShepherdGETConfigReadableFalseWhenYAMLMissing(t *testing.T) {
+	// Dir exists (available=true) but no YAML file => config_readable=false.
+	shepherdDirWith(t, "", shepherdFixtureState)
+	body := getShepherd(t, newShepherdApp())
+	if body.ConfigReadable {
+		t.Error("config_readable must be false when the YAML is absent")
+	}
+	if !body.Available {
+		t.Error("available must be true (the dir exists)")
+	}
+}

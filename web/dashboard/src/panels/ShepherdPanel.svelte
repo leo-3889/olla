@@ -42,6 +42,7 @@
   // fmtDuration, so the idle timeout reads like every other duration in the
   // dashboard. Non-finite/negative -> dash, never a 0 that implies "immediately".
   function humanize(seconds: number | null | undefined): string {
+    if (data?.config_readable === false) return '\u2014';
     if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) return '\u2014';
     return fmtDuration(seconds * 1000);
   }
@@ -62,16 +63,19 @@
 
   $effect(() => {
     if (data?.editable) {
-      formWindow = data.editable.wake_window_seconds;
-      formKeepAsleep = [...data.editable.keep_asleep_if_up];
+      formWindow = Number.isFinite(data.editable.wake_window_seconds)
+        ? data.editable.wake_window_seconds
+        : 0;
+      formKeepAsleep = [...(data.editable.keep_asleep_if_up ?? [])];
     }
   });
 
+  const formValid = $derived(Number.isFinite(formWindow) && formWindow >= 0);
   const isDirty = $derived(
     data?.editable != null &&
     (formWindow !== data.editable.wake_window_seconds ||
-     formKeepAsleep.length !== data.editable.keep_asleep_if_up.length ||
-     formKeepAsleep.some((v, i) => v !== data.editable.keep_asleep_if_up[i]))
+     formKeepAsleep.length !== (data.editable.keep_asleep_if_up ?? []).length ||
+     formKeepAsleep.some((v, i) => v !== (data.editable.keep_asleep_if_up ?? [])[i]))
   );
 
   // Revert to YAML defaults: POST the defaults object as-is to /internal/shepherd/config.
@@ -85,10 +89,7 @@
   }
 
   async function revertToDefaults(): Promise<void> {
-    if (!data?.defaults) return;
-    // Implement revert as POST config with the defaults object (documented:
-    // the server treats the defaults as a valid config payload that clears overrides).
-    await shepherd.saveConfig({ ...data.defaults });
+    await shepherd.revertConfig();
   }
 
   // Tag-list editor for keep_asleep_if_up
@@ -151,6 +152,12 @@
         </button>
       </div>
 
+      {#if shepherd.saveBanner}
+        <div class="mutation-error" role="alert">
+          <span class="glyph g-amber" aria-hidden="true">◐</span>
+          {shepherd.saveBanner}
+        </div>
+      {/if}
       {#if shepherd.mutationError}
         <div class="mutation-error" role="alert">
           <span class="glyph g-amber" aria-hidden="true">◐</span>
@@ -161,8 +168,8 @@
       <div class="section">
         <div class="section-head"><h2>Configuration</h2></div>
         <div class="tile-grid">
-          <StatTile label="Node" value={text(data.config.node_name)} />
-          <StatTile label="MAC" value={text(data.config.mac_masked)} sub="masked at source" />
+          <StatTile label="Node" value={data.config_readable === false ? '\u2014' : text(data.config.node_name)} />
+          <StatTile label="MAC" value={data.config_readable === false ? '\u2014' : text(data.config.mac_masked)} sub="masked at source" />
           <StatTile label="Idle shutdown" value={humanize(data.config.idle_shutdown_seconds)} />
           <StatTile label="Wake window" value={humanize(data.config.wake_window_seconds)} />
         </div>
@@ -209,14 +216,14 @@
             </div>
 
             <div class="field-row">
-              <div class="field-label">
+              <label class="field-label" for="wol-keep-asleep-input">
                 Keep asleep if up (patterns)
                 {#if isOverride('keep_asleep_if_up')}
                   <span class="chip override">override</span>
                 {:else}
                   <span class="chip yaml-default">yaml default</span>
                 {/if}
-              </div>
+              </label>
               <div class="tag-list" role="list">
                 {#each formKeepAsleep as tag, i}
                   <span class="chip tag-chip" role="listitem">
@@ -227,13 +234,14 @@
               </div>
               <div class="tag-input-row">
                 <input
+                  id="wol-keep-asleep-input"
                   class="field-input"
                   type="text"
                   placeholder="add pattern…"
                   bind:value={tagInput}
                   onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTag(); } }}
                 />
-                <button type="button" class="tag-add-btn" onclick={addTag} disabled={!tagCanAdd}>Add</button>
+                <button type="button" class="tag-add-btn" onclick={addTag} disabled={!tagCanAdd} aria-label="Add pattern">Add</button>
               </div>
               {#if tagInput && !tagPatternOk}
                 <span class="field-error" role="alert">does not match required pattern</span>
@@ -252,7 +260,7 @@
               type="button"
               class="theme-toggle save-btn"
               onclick={save}
-              disabled={!isDirty || shepherd.saving}
+              disabled={!isDirty || !formValid || shepherd.saving}
             >
               {shepherd.saving ? 'Saving\u2026' : 'Save'}
             </button>

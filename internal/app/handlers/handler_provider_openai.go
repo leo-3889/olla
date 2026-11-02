@@ -26,6 +26,9 @@ func (a *Application) openaiModelsHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Append alias entries so clients discover alias model IDs.
+	response = a.appendAliasesToModelResponse(ctx, response, models)
+
 	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)

@@ -270,3 +270,67 @@ describe('App settings panel', () => {
     expect(heading!.textContent).toContain('Shepherd');
   });
 });
+
+describe('App settings>shepherd accessibility (axe-core)', () => {
+  it('the shepherd panel in settings has no axe violations', async () => {
+    const axe = (await import('axe-core')).default;
+    // Ensure sampler-mode manifest (prior influx test may have mutated CONFIG_BODY)
+    CONFIG_BODY = {
+      ...CONFIG_BODY,
+      metrics_source: 'sampler',
+      sections: [
+        { id: 'overview', enabled: true },
+        { id: 'endpoints', enabled: true },
+        { id: 'models', enabled: true },
+        { id: 'settings', enabled: true },
+        { id: 'power', enabled: false, reason: 'requires influx' },
+        { id: 'cost', enabled: false, reason: 'requires influx' },
+        { id: 'gpu', enabled: false, reason: 'requires influx' },
+      ],
+    };
+    await bootstrap.load(true);
+
+    const SHEPHERD_BODY = {
+      available: true,
+      enabled: true,
+      dry_run: false,
+      config: { node_name: 'node-a', mac_masked: 'aa:bb:**:**:**:**', idle_shutdown_seconds: 1800, wake_window_seconds: 300 },
+      state: { last_check: '2026-10-13T09:00:00Z', last_action: 'idle-shutdown', last_wake: '2026-10-13T07:30:00Z', last_shutdown: '2026-10-13T08:15:00Z', last_error: '' },
+      editable: { wake_window_seconds: 300, keep_asleep_if_up: ['eth0'] },
+      defaults: { wake_window_seconds: 180, keep_asleep_if_up: [] },
+      constraints: { wake_window_seconds: { min: 10, max: 3600 }, keep_asleep_if_up: { max_items: 5, pattern: '^[a-zA-Z0-9_.-]+$' } },
+    };
+    global.fetch = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.includes('/internal/ui/config.json')) return jsonResponse(CONFIG_BODY);
+      if (url.includes('/internal/shepherd')) return jsonResponse(SHEPHERD_BODY);
+      return jsonResponse(STATUS_BODY);
+    }) as ReturnType<typeof vi.fn>;
+
+    window.history.replaceState(null, '', '/');
+    navigation.set('overview');
+    component = mount(App, { target: document.body });
+    flushSync();
+    navigation.set('settings');
+    flushSync();
+
+    // Wait for shepherd payload to render (tag chips visible)
+    await vi.waitFor(() => expect(document.body.textContent).toContain('eth0'), { timeout: 3000 });
+
+    const results = await axe.run(document.body, {
+      rules: { 'color-contrast': { enabled: false }, 'meta-viewport': { enabled: false } },
+    });
+    const pretty = results.violations.map(
+      (v) => `${v.id} (${v.impact}): ${v.nodes.map((n) => n.html).join(' | ')}`
+    );
+    expect(pretty).toEqual([]);
+
+    // Reset fetch mock for subsequent tests
+    global.fetch = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.includes('/internal/ui/config.json')) return jsonResponse(CONFIG_BODY);
+      if (url.includes('/internal/ui/observe.json')) return jsonResponse(OBSERVE_BODY);
+      return jsonResponse(STATUS_BODY);
+    }) as ReturnType<typeof vi.fn>;
+  });
+});

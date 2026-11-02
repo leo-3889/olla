@@ -87,11 +87,12 @@ type ShepherdTriggers struct {
 // body returned by POST /internal/shepherd/enabled, POST and DELETE
 // /internal/shepherd/config).
 type ShepherdResponse struct {
-	Config    ShepherdConfig `json:"config"`
-	State     ShepherdState  `json:"state"`
-	Available bool           `json:"available"`
-	Enabled   bool           `json:"enabled"`
-	DryRun    bool           `json:"dry_run"`
+	Config         ShepherdConfig `json:"config"`
+	State          ShepherdState  `json:"state"`
+	Available      bool           `json:"available"`
+	Enabled        bool           `json:"enabled"`
+	DryRun         bool           `json:"dry_run"`
+	ConfigReadable bool           `json:"config_readable"`
 	// Editable = EFFECTIVE triggers: YAML with shepherd-overrides.json
 	// applied (missing file => pure YAML). Defaults = the YAML-only values,
 	// so the UI can show what an override changed. Constraints = the exact
@@ -147,15 +148,15 @@ type shepherdYAML struct {
 	} `yaml:"nodes"`
 }
 
-func shepherdConfigFrom(dir string) ShepherdConfig {
+func shepherdConfigFrom(dir string) (ShepherdConfig, bool) {
 	var out ShepherdConfig
 	raw, err := os.ReadFile(filepath.Join(dir, shepherdYAMLFile))
 	if err != nil {
-		return out
+		return out, false
 	}
 	var cfg shepherdYAML
 	if err := yaml.Unmarshal(raw, &cfg); err != nil {
-		return out
+		return out, false
 	}
 	out.IdleShutdownSeconds = cfg.IdleSeconds
 	out.WakeWindowSeconds = cfg.WakeDemandWindow
@@ -163,7 +164,7 @@ func shepherdConfigFrom(dir string) ShepherdConfig {
 		out.NodeName = cfg.Nodes[0].Name
 		out.MACMasked = maskMAC(cfg.Nodes[0].MAC)
 	}
-	return out
+	return out, true
 }
 
 // validateWakeWindow / validateKeepAsleep return "" when the value is legal
@@ -279,7 +280,7 @@ func shepherdStateFrom(dir string) (ShepherdState, bool) {
 	state.LastAction = firstNonEmpty(jsonString(doc["last_action"]), jsonString(doc["action"]))
 	state.LastWake = jsonString(doc["last_wake"])
 	state.LastShutdown = jsonString(doc["last_shutdown"])
-	state.LastError = jsonString(doc["last_error"])
+	state.LastError = sanitizeLastError(jsonString(doc["last_error"]))
 
 	latest := func(key string) string {
 		var best float64
@@ -323,6 +324,25 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+// siteDataRE matches MAC-like colon-hex sequences (6+ groups) or IPv4 dotted
+// quads in a LastError string — defense-in-depth: the watcher is sanitised
+// upstream, this catches hand-edited state files and future regressions.
+var siteDataRE = regexp.MustCompile(`[0-9a-fA-F]{2}([:\-][0-9a-fA-F]{2}){3,}|\d{1,3}(\.\d{1,3}){3}`)
+
+// sanitizeLastError caps length and suppresses site data (MACs, IPs).
+func sanitizeLastError(s string) string {
+	if s == "" {
+		return ""
+	}
+	if len(s) > 200 {
+		s = s[:200]
+	}
+	if siteDataRE.MatchString(s) {
+		return "error detail suppressed (site data)"
+	}
+	return s
+}
+
 // shepherdPayload assembles the GET payload. Any unreadable piece degrades to
 // its zero value rather than an error: the toggle's availability is the only
 // fact the UI needs to render honestly.
@@ -333,15 +353,17 @@ func (a *Application) shepherdPayload() ShepherdResponse {
 	}
 	state, dryRun := shepherdStateFrom(dir)
 	editable, defaults := a.shepherdTriggersFrom(dir)
+	cfg, readable := shepherdConfigFrom(dir)
 	return ShepherdResponse{
-		Available:   true,
-		Enabled:     fileExists(filepath.Join(dir, shepherdFlagFile)),
-		DryRun:      dryRun,
-		Config:      shepherdConfigFrom(dir),
-		State:       state,
-		Editable:    editable,
-		Defaults:    defaults,
-		Constraints: shepherdConstraints(),
+		Available:      true,
+		Enabled:        fileExists(filepath.Join(dir, shepherdFlagFile)),
+		DryRun:         dryRun,
+		ConfigReadable: readable,
+		Config:         cfg,
+		State:          state,
+		Editable:       editable,
+		Defaults:       defaults,
+		Constraints:    shepherdConstraints(),
 	}
 }
 

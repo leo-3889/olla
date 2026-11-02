@@ -26,6 +26,7 @@ let lastMutationError = $state<string | null>(null);
 let saving = $state(false);
 let saveErrors = $state<Record<string, string> | null>(null);
 let dirNotWritable = $state(false);
+let saveBanner = $state<string | null>(null);
 
 export interface ShepherdStore {
   readonly name: string;
@@ -47,11 +48,14 @@ export interface ShepherdStore {
   readonly saveErrors: Record<string, string> | null;
   /** True when the last save failed with 409 (watcher dir not writable). */
   readonly dirNotWritable: boolean;
+  /** Non-null when a 400 response carried a generic {"error":"text"} shape (banner). */
+  readonly saveBanner: string | null;
   start(): void;
   stop(): void;
   refresh(): void;
   setEnabled(enabled: boolean): Promise<void>;
   saveConfig(payload: ShepherdEditable): Promise<void>;
+  revertConfig(): Promise<void>;
 }
 
 export const shepherd: ShepherdStore = {
@@ -85,6 +89,9 @@ export const shepherd: ShepherdStore = {
   get dirNotWritable() {
     return dirNotWritable;
   },
+  get saveBanner() {
+    return saveBanner;
+  },
   start() {
     poll.start();
   },
@@ -116,6 +123,7 @@ export const shepherd: ShepherdStore = {
   async saveConfig(payload: ShepherdEditable): Promise<void> {
     saving = true;
     saveErrors = null;
+    saveBanner = null;
     dirNotWritable = false;
     try {
       const resp = await fetch(CONFIG_URL, {
@@ -128,8 +136,44 @@ export const shepherd: ShepherdStore = {
         return;
       }
       if (resp.status === 400) {
-        const body = (await resp.json()) as { errors: Record<string, string> };
-        saveErrors = body.errors;
+        const body = (await resp.json()) as { errors?: Record<string, string>; error?: string };
+        if (body.errors) {
+          saveErrors = body.errors;
+        } else if (body.error) {
+          saveBanner = body.error;
+        }
+        return;
+      }
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const body = (await resp.json()) as ShepherdResponse;
+      poll.refreshWith(body);
+    } catch (e) {
+      lastMutationError = e instanceof Error ? e.message : String(e);
+    } finally {
+      saving = false;
+    }
+  },
+  async revertConfig(): Promise<void> {
+    saving = true;
+    saveErrors = null;
+    saveBanner = null;
+    dirNotWritable = false;
+    try {
+      const resp = await fetch(CONFIG_URL, {
+        method: 'DELETE',
+        headers: { Accept: 'application/json' },
+      });
+      if (resp.status === 409) {
+        dirNotWritable = true;
+        return;
+      }
+      if (resp.status === 400) {
+        const body = (await resp.json()) as { errors?: Record<string, string>; error?: string };
+        if (body.errors) {
+          saveErrors = body.errors;
+        } else if (body.error) {
+          saveBanner = body.error;
+        }
         return;
       }
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);

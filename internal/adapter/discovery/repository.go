@@ -212,6 +212,7 @@ func (r *StaticEndpointRepository) LoadFromConfig(ctx context.Context, configs [
 			RuntimeMetricsKind:     runtimeMetricsKind(cfg.RuntimeMetrics),
 			RuntimeMetricsPath:     runtimeMetricsPath(cfg.RuntimeMetrics),
 			BusyQueueDepth:         cfg.BusyQueueDepth,
+			DisableCircuitBreaker:  cfg.DisableCircuitBreaker,
 		}
 
 		if cfg.Auth != nil {

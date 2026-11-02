@@ -107,6 +107,9 @@ func (a *Application) modelsStatusHandler(w http.ResponseWriter, r *http.Request
 
 	allModels := a.buildModelSummaries(modelMap, endpointNames, endpointIDs, aliases)
 
+	// Append alias virtual-model entries with union-of-carriers capabilities.
+	allModels = a.appendAliasModelSummaries(ctx, allModels)
+
 	response := ModelStatusResponse{
 		Timestamp:      time.Now(),
 		TotalModels:    len(allModels),

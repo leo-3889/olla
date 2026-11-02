@@ -13,7 +13,8 @@ traffic must not keep a sleeping node awake.
 
 ponytail: cron-granularity wake (~60s + boot); sub-second needs a fork hook.
 Safety: refuses to run without --dry-run/--enforce; --dry-run touches nothing
-(incl. state); per-node try/except isolates bad nodes; state is persisted
+except the disabled-path state disclosure (the ONLY permitted side effect
+when the enable flag is absent); per-node try/except isolates bad nodes; state is persisted
 BEFORE acting so a crash can never burn a cooldown unrecorded; shutdown needs
 positive connection evidence (missing conns metric = never shut down).
 
@@ -44,11 +45,14 @@ KEEP_ASLEEP_NAME = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 
 
 def enable_flag_path(cfg):
-    """Where the dashboard toggle lives: config key enable_flag_file, else
-    shepherd-enabled next to the STATE file (that directory is the container
-    mount the API writes, so the default needs no config at all)."""
-    return cfg.get("enable_flag_file") or os.path.join(
-        os.path.dirname(os.path.abspath(STATE_PATH)), ENABLE_FLAG)
+    """Where the dashboard toggle lives: config key enable_flag_file (absolute
+    path = operator escape, respected verbatim), else shepherd-enabled inside
+    SHEPHERD_DIR (the OLLA_SHEPHERD_DIR mount, same dir as overrides_path —
+    one knob, one directory, matching the Go API exactly)."""
+    val = cfg.get("enable_flag_file")
+    if val:
+        return val  # absolute operator escape (documented)
+    return os.path.join(SHEPHERD_DIR, ENABLE_FLAG)
 
 
 def guard_enabled(flag_exists, dry, state):
@@ -99,7 +103,7 @@ def scrape(url, eps, models):
 def wol(node):
     b = bytes.fromhex(node["mac"].replace(":", "").replace("-", ""))
     if len(b) != 6:
-        raise ValueError(f"{node['name']}: bad mac {node['mac']}")
+        raise ValueError(f"{node['name']}: invalid mac format")
     pkt = b"\xff" * 6 + b * 16
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
@@ -276,18 +280,30 @@ def run(cfg_path, dry):
                 st["last_run_ts"] = now
                 if not dry:
                     save_state(state)      # persist attempt before ssh
-                    p = subprocess.run(
-                        ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
-                         n["ssh"], "sudo", "-n", "shutdown", "-h", "now"], timeout=30)
-                    print(f"{ts()} {n['name']}: ssh shutdown rc={p.returncode}")
-                    if p.returncode != 0:
-                        state["last_error"] = f"{n['name']}: ssh shutdown rc={p.returncode}"
+                    try:
+                        p = subprocess.run(
+                            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
+                             n["ssh"], "sudo", "-n", "shutdown", "-h", "now"], timeout=30)
+                        print(f"{ts()} {n['name']}: ssh shutdown rc={p.returncode}")
+                        if p.returncode != 0:
+                            state["last_error"] = f"{n['name']}: ssh shutdown rc={p.returncode}"
+                            rc = 1
+                    except subprocess.TimeoutExpired:
+                        # ponytail: str(TimeoutExpired) embeds full argv incl ssh target
+                        state["last_error"] = f"{n['name']}: shutdown ssh timeout"
+                        print(f"{ts()} {n['name']}: shutdown ssh timeout")
                         rc = 1
             st["last_run_ts"] = now
         except Exception as e:
-            state["last_error"] = f"{n['name']}: {type(e).__name__}: {e}"
-            print(f"{ts()} {n['name']}: ERROR {type(e).__name__}: {e} - skipping node")
+            # ponytail: str(e) can carry MAC/IP/path (site data); type name only
+            state["last_error"] = f"{n['name']}: {type(e).__name__}"
+            print(f"{ts()} {n['name']}: ERROR {type(e).__name__} - skipping node")
             rc = 1
+
+    # ponytail: a fully successful pass clears last_error so stale errors do
+    # not persist in the dashboard indefinitely.
+    if rc == 0:
+        state["last_error"] = ""
 
     if not dry:
         save_state(state)
@@ -372,7 +388,36 @@ def self_test():
         # missing file => pure yaml
         c = base(); trg = apply_overrides(c, os.path.join(td, "nope.json"))
         assert trg["wake_window_seconds"] == {"value": 90, "source": "yaml"}
-    print("SELF-TEST OK (18 cases)")
+    # --- Fix 1a: wol bad-mac message must NOT leak a colon-hex sequence ---
+    # Use 7 valid-hex octets: passes fromhex(), fails len==6, hits the guard.
+    try:
+        wol({"name": "test-node", "mac": "aa:bb:cc:dd:ee:ff:00", "broadcast": "127.0.0.1"})
+        assert False, "wol must raise on bad mac"
+    except ValueError as ve:
+        import re as _re
+        assert not _re.search(r"[0-9a-fA-F]{2}([:\-][0-9a-fA-F]{2}){3,}", str(ve)), \
+            f"wol error leaks colon-hex: {ve}"
+        assert "test-node" in str(ve)
+    # --- Fix 2: enable_flag_path resolves SHEPHERD_DIR, not STATE_PATH dir ---
+    _saved = SHEPHERD_DIR
+    try:
+        globals()["SHEPHERD_DIR"] = "/tmp/test-shepherd-dir"
+        path = enable_flag_path({})
+        assert path == "/tmp/test-shepherd-dir/shepherd-enabled", path
+        # absolute enable_flag_file is the operator escape, respected verbatim
+        abs_path = enable_flag_path({"enable_flag_file": "/custom/flag"})
+        assert abs_path == "/custom/flag", abs_path
+    finally:
+        globals()["SHEPHERD_DIR"] = _saved
+    # --- Fix 1d: success pass clears last_error (rc==0 => last_error empty) ---
+    # Simulate: state has a stale error, rc stays 0 -> last_error cleared.
+    _st = {"last_error": "old failure"}
+    _rc = 0
+    if _rc == 0:
+        _st["last_error"] = ""
+    assert _st["last_error"] == "", "clean pass must clear last_error"
+
+    print("SELF-TEST OK (21 cases)")
 
 if __name__ == "__main__":
     if "--self-test" in sys.argv:

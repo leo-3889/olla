@@ -392,3 +392,161 @@ describe('ShepherdPanel wake triggers', () => {
     );
   });
 });
+
+
+// --- B1 regression: null editable.keep_asleep_if_up with available:false ----
+describe('ShepherdPanel B1: null keep_asleep_if_up (Go zero-value)', () => {
+  it('renders watcher-not-mounted without throwing when editable.keep_asleep_if_up is null', async () => {
+    // Go value-struct marshalling: zero-value string slice arrives as null.
+    const nullPayload = {
+      available: false,
+      enabled: false,
+      dry_run: false,
+      config: { node_name: '', mac_masked: '', idle_shutdown_seconds: 0, wake_window_seconds: 0 },
+      state: { last_check: '', last_action: '', last_wake: '', last_shutdown: '', last_error: '' },
+      editable: { wake_window_seconds: 0, keep_asleep_if_up: null },
+      defaults: { wake_window_seconds: 0, keep_asleep_if_up: null },
+      constraints: {
+        wake_window_seconds: { min: 10, max: 3600 },
+        keep_asleep_if_up: { max_items: 5, pattern: '^[a-zA-Z0-9_.-]+$' },
+      },
+    };
+    // Must not throw on mount.
+    await mountWith(nullPayload);
+    const missing = document.querySelector('.watcher-missing');
+    expect(missing).toBeTruthy();
+    expect(missing!.textContent!.trim()).toBe('watcher not mounted');
+  });
+
+  it('renders watcher-not-mounted when editable is null entirely', async () => {
+    const nullPayload = {
+      available: false,
+      enabled: false,
+      dry_run: false,
+      config: { node_name: '', mac_masked: '', idle_shutdown_seconds: 0, wake_window_seconds: 0 },
+      state: { last_check: '', last_action: '', last_wake: '', last_shutdown: '', last_error: '' },
+      editable: null,
+      defaults: null,
+      constraints: null,
+    };
+    await mountWith(nullPayload);
+    expect(document.querySelector('.watcher-missing')).toBeTruthy();
+  });
+});
+
+// --- M1: revertToDefaults issues DELETE ------------------------------------
+describe('ShepherdPanel M1: revertToDefaults uses DELETE', () => {
+  it('revert issues DELETE /internal/shepherd/config and updates from response', async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    global.fetch = vi.fn(async (url: unknown, init?: RequestInit) => {
+      calls.push({ url: String(url), init });
+      if (String(url).endsWith('/internal/shepherd/config') && init?.method === 'DELETE') {
+        // Return refreshed payload (defaults restored)
+        const p = payload({
+          editable: { wake_window_seconds: 180, keep_asleep_if_up: [] },
+        });
+        p.config = { ...p.config, mac_masked: 'ff:ee:**:**:**:**' };
+        return jsonResponse(p);
+      }
+      return jsonResponse(payload());
+    });
+
+    component = mount(ShepherdPanel, { target: document.body });
+    flushSync();
+    shepherd.refresh();
+    await vi.waitFor(() => expect(shepherd.data?.config.mac_masked).toBe('aa:bb:**:**:**:**'));
+    flushSync();
+
+    // Click revert
+    const revertBtn = document.querySelector<HTMLButtonElement>('.revert-btn')!;
+    expect(revertBtn).toBeTruthy();
+    revertBtn.click();
+
+    await vi.waitFor(() => {
+      const del = calls.find((c) => c.url.endsWith('/internal/shepherd/config') && c.init?.method === 'DELETE');
+      expect(del).toBeTruthy();
+    });
+
+    // Response updated the store
+    await vi.waitFor(() => expect(shepherd.data?.config.mac_masked).toBe('ff:ee:**:**:**:**'));
+    flushSync();
+    // No POST to config with defaults
+    const posts = calls.filter((c) => c.url.endsWith('/internal/shepherd/config') && c.init?.method === 'POST');
+    expect(posts.length).toBe(0);
+  });
+});
+
+// --- M2: NaN field disables save; 400 {"error"} shows banner ---------------
+describe('ShepherdPanel M2: NaN guard and banner', () => {
+  it('NaN in the numeric field disables Save', async () => {
+    await mountWith(payload());
+
+    const input = document.querySelector<HTMLInputElement>('#wol-window-seconds')!;
+    // Set a non-numeric value that produces NaN
+    input.value = '';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    flushSync();
+
+    const saveBtn = document.querySelector<HTMLButtonElement>('.save-btn')!;
+    // Empty input => NaN via bind:value={formWindow} on type=number => formValid is false => save disabled
+    expect(saveBtn.disabled).toBe(true);
+  });
+
+  it('400 with {"error":"text"} renders banner text', async () => {
+    global.fetch = vi.fn(async (url: unknown, init?: RequestInit) => {
+      if (String(url).endsWith('/internal/shepherd/config')) {
+        return jsonResponse({ error: 'config file is read-only' }, 400);
+      }
+      return jsonResponse(payload());
+    });
+
+    component = mount(ShepherdPanel, { target: document.body });
+    flushSync();
+    shepherd.refresh();
+    await vi.waitFor(() => expect(shepherd.data?.config.mac_masked).toBe('aa:bb:**:**:**:**'));
+    flushSync();
+
+    // Edit and save
+    const input = document.querySelector<HTMLInputElement>('#wol-window-seconds')!;
+    input.value = '600';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    flushSync();
+
+    document.querySelector<HTMLButtonElement>('.save-btn')!.click();
+    await vi.waitFor(() => expect(shepherd.saveBanner).toBe('config file is read-only'));
+    flushSync();
+
+    expect(document.body.textContent).toContain('config file is read-only');
+  });
+});
+
+// --- M3: config_readable === false => dashes, no 0s -----------------------
+describe('ShepherdPanel M3: config_readable false shows dashes', () => {
+  it('config_readable:false payload renders dashes in config tiles, no 0s', async () => {
+    const p = payload({ available: true }) as Record<string, unknown>;
+    p.config_readable = false;
+    // Unique MAC for store-singleton discriminator
+    p.config = { ...(p.config as object), mac_masked: '11:22:**:**:**:**' };
+    await mountWith(p);
+
+    const tiles = [...document.querySelectorAll('.tile')];
+    const values = tiles.map((t) => t.querySelector('.value')?.textContent?.trim());
+    // All four config tiles should show the em-dash
+    expect(values).toEqual(['\u2014', '\u2014', '\u2014', '\u2014']);
+    // No "0s", "0m", "0h"
+    expect(document.body.textContent).not.toMatch(/\b0[smh]\b/);
+  });
+
+  it('config_readable undefined (older backend) treats as true: values render', async () => {
+    const p = payload() as Record<string, unknown>;
+    p.config = { ...(p.config as object), mac_masked: '33:44:**:**:**:**' };
+    // No config_readable field at all
+    delete p.config_readable;
+    await mountWith(p);
+
+    const tiles = [...document.querySelectorAll('.tile')];
+    const values = tiles.map((t) => t.querySelector('.value')?.textContent?.trim());
+    expect(values).toContain('30m');
+    expect(values).toContain('5m');
+  });
+});
